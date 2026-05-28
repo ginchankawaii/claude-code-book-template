@@ -1,0 +1,51 @@
+trading:
+  mode: paper                    # "paper" or "live"
+  initial_capital: 3000000      # 300万円 (JPY) / equivalent USD
+  currency: JPY                  # JPY or USD
+  max_positions: 8               # 最大同時保有ポジション数
+  risk_per_trade: 0.015          # 1トレードあたりリスク (1.5%)
+  max_position_pct: 0.15         # 1ポジション最大比率 (15%)
+  min_cash_reserve: 0.10         # 最低現金比率 (10%)
+
+markets:
+  us:
+    enabled: true
+    exchange: ["NYSE", "NASDAQ"]
+    data_source: alpaca           # alpaca or yfinance
+    universe: sp500_top100        # sp500_top100 or custom
+  japan:
+    enabled: true
+    exchange: ["TSE"]
+    data_source: yfinance
+    universe: topix100            # topix100 or custom
+
+strategy:
+  name: multi_signal_swing
+  timeframe: 1d                  # Daily candles
+  lookback_days: 365             # 学習・分析期間
+  signal_threshold: 4            # 5つのシグナルのうち最低4つ一致で発注
+  market_filter: true            # 市場全体のトレンドフィルター有効
+
+risk:
+  stop_loss_atr_multiplier: 2.5  # Stop = entry - 2.5×ATR
+  take_profit_1_pct: 0.06        # TP1: +6% で半分決済
+  take_profit_2_pct: 0.10        # TP2: +10% で残り全決済
+  trailing_stop_trigger_pct: 0.04 # +4% 到達後トレーリングストップ発動
+  trailing_stop_atr_multiplier: 2.0
+  max_drawdown_halt: 0.10        # 10% ドローダウンで取引停止
+
+ml:
+  enabled: true
+  model_type: lightgbm
+  retrain_interval_days: 7       # 週次再学習
+  min_probability: 0.55          # ML フィルター通過の最低確率
+  training_days: 504             # 学習データ期間 (2年)
+  forward_days: 5                # 予測ホライゾン (5日後方向)
+  target_return: 0.02            # 陽性ラベル: 5日後 +2% 以上
+
+scheduler:
+  scan_time_us: "09:35"         # US市場スキャン時刻 (ET)
+  scan_time_jp: "09:05"         # 日本市場スキャン時刻 (JST)
+  eod_report_time: "16:00"      # EODレポート時刻 (ET)
+  timezone_us: America/New_York
+  timezone_jp: Asia/Tokyo
