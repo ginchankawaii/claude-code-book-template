@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash fxsim/scripts/setup.sh 2>&1 | tail -3 || true"
+          }
+        ]
+      }
+    ]
+  }
+}
