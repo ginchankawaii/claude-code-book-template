@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# 環境変数（APIキー等）
+.env
+
+# データベース（仮想取引データはローカルのみ）
+data/*.db
+data/*.sqlite3
+
+# OS / エディタ
+.DS_Store
+.idea/
+.vscode/

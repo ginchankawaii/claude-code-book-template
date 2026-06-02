@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>日本株 投資シミュレーター</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="/vendor/chart.umd.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>📈 日本株 投資シミュレーター <span class="virtual">仮想資金</span></h1>
+    <div id="status" class="status"></div>
+  </header>
+
+  <main>
+    <!-- サマリー -->
+    <section class="cards" id="summary"></section>
+
+    <div class="grid">
+      <!-- 左カラム: ウォッチリスト & チャート -->
+      <div class="col">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>ウォッチリスト</h2>
+            <form id="add-form" class="inline-form">
+              <input id="add-code" placeholder="証券コード 例:7203" />
+              <button type="submit">追加</button>
+            </form>
+          </div>
+          <table class="data-table" id="watchlist-table">
+            <thead>
+              <tr><th>コード</th><th>銘柄</th><th>現在値</th><th>前日比</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2 id="chart-title">価格チャート</h2>
+            <span id="chart-source" class="badge"></span>
+          </div>
+          <canvas id="price-chart" height="120"></canvas>
+          <div id="indicators" class="indicators"></div>
+        </section>
+      </div>
+
+      <!-- 右カラム: AI判断 & 取引 -->
+      <div class="col">
+        <section class="panel ai-panel">
+          <div class="panel-head">
+            <h2>🤖 AI売買判断 (Claude)</h2>
+          </div>
+          <div class="ai-controls">
+            <label class="checkbox">
+              <input type="checkbox" id="auto-exec" />
+              判断結果を自動で売買執行する
+            </label>
+            <div class="btn-row">
+              <button id="ai-one" class="primary">選択銘柄を判断</button>
+              <button id="ai-all">ウォッチリスト全件を判断</button>
+            </div>
+          </div>
+          <div id="ai-result" class="ai-result"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>手動売買</h2></div>
+          <form id="trade-form" class="trade-form">
+            <input id="trade-code" placeholder="コード 例:7203" required />
+            <input id="trade-qty" type="number" min="1" step="100" value="100" required />
+            <button type="button" id="buy-btn" class="buy">買い</button>
+            <button type="button" id="sell-btn" class="sell">売り</button>
+          </form>
+          <p class="hint">数量は単元株(100株)単位を推奨。価格は現在値で約定します。</p>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>保有銘柄</h2></div>
+          <table class="data-table" id="holdings-table">
+            <thead>
+              <tr><th>銘柄</th><th>数量</th><th>取得単価</th><th>現在値</th><th>評価損益</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </section>
+      </div>
+    </div>
+
+    <!-- 下段: 履歴 -->
+    <div class="grid">
+      <section class="panel col">
+        <div class="panel-head"><h2>🧠 AI判断ログ</h2></div>
+        <table class="data-table" id="decisions-table">
+          <thead>
+            <tr><th>日時</th><th>銘柄</th><th>判断</th><th>数量</th><th>確信度</th><th>根拠</th><th>執行</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <section class="panel col">
+        <div class="panel-head">
+          <h2>取引履歴</h2>
+          <button id="reset-btn" class="danger">シミュレーションをリセット</button>
+        </div>
+        <table class="data-table" id="trades-table">
+          <thead>
+            <tr><th>日時</th><th>銘柄</th><th>売買</th><th>数量</th><th>価格</th><th>金額</th><th>実現損益</th><th>判断者</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </div>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
