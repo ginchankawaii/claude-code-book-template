@@ -20,7 +20,8 @@ def main() -> None:
     p.add_argument("--instrument", default=settings.instruments[0])
     p.add_argument("--granularity", default=settings.granularity)
     p.add_argument("--bars", type=int, default=1500)
-    p.add_argument("--provider", default=settings.data_provider, choices=["sample", "oanda"])
+    p.add_argument("--provider", default=settings.data_provider,
+                   choices=["sample", "oanda", "csv"])
     p.add_argument("--no-persist", action="store_true")
     args = p.parse_args()
 

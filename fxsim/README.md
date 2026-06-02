@@ -41,7 +41,7 @@ Web GUI でグラフィカルに確認できます。
 |---|---|---|
 | 設定 | `app/config.py` | 環境変数で全挙動を制御 |
 | 保存 | `app/db.py` | SQLite スキーマと CRUD |
-| データ取得 | `app/providers/` | `oanda`（実レート） / `sample`（オフライン） |
+| データ取得 | `app/providers/` | `oanda`（実レート） / `csv`（ブローカー書出しの実データ） / `sample`（オフライン） |
 | テクニカル | `app/indicators.py`, `app/strategies/technical.py` | SMA/EMA/RSI/MACD/Bollinger/ATR のアンサンブル |
 | ファンダ | `app/fundamental/`, `app/strategies/fundamental.py` | Claude がニュースを分析しバイアスを生成 |
 | 統合戦略 | `app/strategies/combined.py` | テクニカル＋ファンダの加重ブレンド |
@@ -83,7 +83,29 @@ python -m app.server      # http://localhost:8000
 - 取引履歴テーブル、ファンダメンタル見解
 - 画面から新規バックテストを実行可能
 
-### 3. 実レートでのバックテスト / ライブ（OANDA）
+### 3. 自分のブローカーのCSVで実データ・バックテスト（許可リスト不要）
+
+セントラル短資FX など、外部APIを持たないブローカーでも、書き出した
+ヒストリカルCSVをそのまま使えます。**ネットワーク設定は一切不要**です。
+
+```bash
+# data/USD_JPY.csv に置く（列名は日本語/英語どちらでも自動判定）
+python -m scripts.run_backtest --provider csv --instrument USD_JPY --bars 5000
+```
+
+対応フォーマット（自動判定）:
+- 区切り: カンマ / タブ / セミコロン
+- 文字コード: UTF-8 / Shift-JIS(cp932)
+- 列名: `日時/始値/高値/安値/終値/出来高` や `Date,Time,Open,High,Low,Close`、
+  ヘッダ無しの MT4/MT5 形式（`date time o h l c vol`）など
+- ファイル名: `USD_JPY.csv` / `USDJPY.csv` / `usd_jpy.csv` 等
+
+> 注: セントラル短資FXは外部から呼べる売買APIを公開していないため、**ライブ**の
+> リアルタイム取得はできません。実データのバックテストは上記CSVで、ライブの
+> リアルタイム判定が必要なら無料の OANDA practice 口座を「データ取得専用」に
+> 使うのがおすすめです（入金・発注は不要）。
+
+### 4. 実レートでのバックテスト / ライブ（OANDA）
 
 ```bash
 export FXSIM_PROVIDER=oanda

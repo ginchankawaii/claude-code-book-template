@@ -12,6 +12,10 @@ def get_provider(name: str | None = None) -> DataProvider:
         from .oanda import OandaProvider  # imported lazily so offline use needs no token
 
         return OandaProvider()
+    if name == "csv":
+        from .csv import CsvProvider  # real data exported from any broker
+
+        return CsvProvider()
     if name == "sample":
         return SampleProvider()
     raise ValueError(f"Unknown data provider: {name!r}")
