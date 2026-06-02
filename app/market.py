@@ -156,10 +156,17 @@ def _stooq_history(code: str, days: int) -> list[dict]:
 # --------------------------------------------------------------------------
 # モックデータ（オフライン・再現性あり）
 # --------------------------------------------------------------------------
+# 擬似系列の正準長（営業日数）。常にこの長さの系列を生成し、末尾を返すことで
+# 要求日数 days に依存せず最新の終値が一定になるようにする。
+_MOCK_CANON_DAYS = 400
+
+
 def _mock_history(code: str, days: int) -> list[dict]:
     """証券コードから決定論的に生成する擬似的な株価履歴。
 
     乱数シードをコードから作るため、同じ銘柄は毎回同じ系列になる。
+    常に固定長の正準系列を生成して末尾 days 件を返すので、要求する days が
+    変わっても最新終値（=現在値）は一定になる。
     """
     seed = int(hashlib.sha256(code.encode()).hexdigest(), 16)
     rng = _Lcg(seed)
@@ -168,14 +175,18 @@ def _mock_history(code: str, days: int) -> list[dict]:
     base = 1000 + (seed % 7000)
     price = float(base)
     drift = ((seed >> 8) % 7 - 3) * 0.0004  # わずかな上昇/下降トレンド
+
+    # 今日から遡って固定数の営業日を用意（古い順）
+    dates: list[date] = []
+    d = date.today()
+    while len(dates) < _MOCK_CANON_DAYS:
+        if d.weekday() < 5:  # 平日のみ
+            dates.append(d)
+        d -= timedelta(days=1)
+    dates.reverse()
+
     out: list[dict] = []
-    today = date.today()
-    start = today - timedelta(days=days - 1)
-    for i in range(days):
-        d = start + timedelta(days=i)
-        # 平日のみ（土日はスキップ）
-        if d.weekday() >= 5:
-            continue
+    for i, dd in enumerate(dates):
         shock = (rng.next() - 0.5) * 0.03  # ±1.5% 程度の日次変動
         wave = math.sin(i / 9.0) * 0.004
         price = max(50.0, price * (1 + drift + shock + wave))
@@ -185,7 +196,7 @@ def _mock_history(code: str, days: int) -> list[dict]:
         volume = int(100000 + rng.next() * 2000000)
         out.append(
             {
-                "date": d.strftime("%Y-%m-%d"),
+                "date": dd.strftime("%Y-%m-%d"),
                 "open": round(open_p, 1),
                 "high": round(high, 1),
                 "low": round(low, 1),
@@ -193,7 +204,7 @@ def _mock_history(code: str, days: int) -> list[dict]:
                 "volume": volume,
             }
         )
-    return out
+    return out[-days:]
 
 
 class _Lcg:
