@@ -151,6 +151,45 @@ def test_hybrid_claude_can_only_shrink_not_amplify():
     assert abs(out2.score) == abs(base.score)
 
 
+# --- HybridDecider memory: reuse the verdict while the view holds ---------- #
+def _consult(h, tech, fund, minutes=None, et=0.20):
+    ctx = _ctx(tech=tech, fund=fund, minutes_to_high=minutes)
+    ctx.entry_threshold = et
+    import math
+    sign = lambda x: 0 if x == 0 else int(math.copysign(1, x))
+    return h.decide(ctx, Signal(sign(tech), tech), Signal(sign(fund), fund))
+
+
+def test_hybrid_reuses_verdict_while_steady():
+    fake = _FakeClaude(Signal(1, 0.9, "agree"))
+    h = HybridDecider(claude=fake)
+    out1 = _consult(h, 0.30, 0.30)   # first actionable bar -> real call
+    out2 = _consult(h, 0.31, 0.31)   # same dir, same 0.3 bucket -> reuse
+    out3 = _consult(h, 0.29, 0.29)   # rounds to 0.3 too -> reuse
+    assert fake.calls == 1
+    assert out2.components["claude_cached"] is True
+    assert out3.components["claude_cached"] is True
+    assert out1.direction == out2.direction == 1
+
+
+def test_hybrid_refreshes_on_bucket_or_direction_change():
+    fake = _FakeClaude(Signal(1, 0.9, "agree"))
+    h = HybridDecider(claude=fake)
+    _consult(h, 0.30, 0.30)          # call #1 (bucket 0.3)
+    _consult(h, 0.50, 0.50)          # bucket 0.5 -> call #2
+    _consult(h, -0.50, -0.50)        # direction flip -> call #3
+    assert fake.calls == 3
+
+
+def test_hybrid_refreshes_when_event_enters_window():
+    fake = _FakeClaude(Signal(1, 0.9, "agree"))
+    h = HybridDecider(claude=fake)
+    _consult(h, 0.30, 0.30)              # call #1
+    _consult(h, 0.30, 0.30)              # steady -> reuse
+    _consult(h, 0.30, 0.30, minutes=90)  # event in caution window -> fresh call
+    assert fake.calls == 2
+
+
 def test_ai_strategy_is_deterministic():
     now = datetime(2026, 6, 3, 12, 0, tzinfo=timezone.utc)
     cal = EconomicCalendar([])

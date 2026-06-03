@@ -233,14 +233,32 @@ class HybridDecider(Decider):
       * Claude opposite to rule -> stand aside (don't chase either way);
       * Claude agrees           -> keep the rule's side, size = min(rule, Claude)
                                    so Claude can only reduce conviction.
+
+    Memory: while the rule's view holds steady (same direction, same ~0.1 score
+    bucket) and nothing material changes, the previous Claude verdict is reused
+    instead of paying for another call. A fresh call is forced when the rule
+    flips/changes bucket, the pillars start disagreeing, or a high-impact event
+    enters the caution window — i.e. only at the meaningful turning points.
     """
 
     name = "hybrid"
 
     def __init__(self, claude: Decider | None = None, rule: Decider | None = None,
-                 model: str | None = None) -> None:
+                 model: str | None = None, reuse: bool = True) -> None:
         self.rule = rule or RuleDecider()
         self.claude = claude or AnthropicDecider(model)
+        self.reuse = reuse
+        self._cache_fp: tuple | None = None
+        self._cache_cl: Signal | None = None
+
+    @staticmethod
+    def _disagree(tech: Signal, fund: Signal) -> bool:
+        return abs(fund.score) >= 1e-6 and tech.score != 0 and (tech.score > 0) != (fund.score > 0)
+
+    @staticmethod
+    def _near_event(ctx: DecisionContext) -> bool:
+        m = ctx.minutes_to_high_impact
+        return m is not None and 0 <= m <= ctx.event_caution_min
 
     def _should_consult(self, ctx: DecisionContext, tech: Signal, fund: Signal,
                         base: Signal) -> bool:
@@ -252,11 +270,10 @@ class HybridDecider(Decider):
         if et * 0.6 <= abs(base.score) < et:
             return True
         # technical vs fundamental disagreement
-        if abs(fund.score) >= 1e-6 and tech.score != 0 and (tech.score > 0) != (fund.score > 0):
+        if self._disagree(tech, fund):
             return True
         # high-impact event on the near horizon (blackout is handled upstream)
-        m = ctx.minutes_to_high_impact
-        if m is not None and 0 <= m <= ctx.event_caution_min:
+        if self._near_event(ctx):
             return True
         return False
 
@@ -266,11 +283,30 @@ class HybridDecider(Decider):
             base.components["consulted_claude"] = False
             return base
 
-        cl = self.claude.decide(ctx, tech, fund)
+        # Reuse the cached Claude verdict while the situation is unchanged,
+        # forcing a fresh call only at meaningful turning points.
+        fp = (base.direction, round(base.score, 1))
+        must_refresh = (
+            not self.reuse
+            or self._cache_cl is None
+            or fp != self._cache_fp
+            or self._disagree(tech, fund)
+            or self._near_event(ctx)
+        )
+        if must_refresh:
+            cl = self.claude.decide(ctx, tech, fund)
+            self._cache_cl, self._cache_fp = cl, fp
+            cached = False
+        else:
+            cl = self._cache_cl
+            cached = True
+
         if cl.direction == 0:
-            out = Signal.flat(f"hybrid: Claude veto -> stand aside | {cl.reason}")
+            tag = "Claude veto -> stand aside"
+            out = Signal.flat(f"hybrid: {tag} | {cl.reason}")
         elif cl.direction != base.direction:
-            out = Signal.flat(f"hybrid: Claude disagrees with rule -> stand aside | {cl.reason}")
+            tag = "Claude disagrees with rule -> stand aside"
+            out = Signal.flat(f"hybrid: {tag} | {cl.reason}")
         else:
             size = min(abs(base.score), abs(cl.score))  # Claude may only reduce
             out = Signal(
@@ -281,6 +317,7 @@ class HybridDecider(Decider):
         out.components = {
             **base.components,
             "consulted_claude": True,
+            "claude_cached": cached,
             "rule_score": base.score,
             "claude_dir": cl.direction,
             "claude_score": cl.score,
