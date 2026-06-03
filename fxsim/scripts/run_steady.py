@@ -24,7 +24,7 @@ def main() -> None:
     ap.add_argument("--granularity", default="D")
     ap.add_argument("--since", type=int, default=None)
     ap.add_argument("--sma", type=int, default=150)
-    ap.add_argument("--risk", type=float, default=0.01)
+    ap.add_argument("--risk", type=float, default=0.03)
     ap.add_argument("--pace", type=float, default=0.0, help="seconds to sleep per bar")
     args = ap.parse_args()
 
@@ -34,7 +34,8 @@ def main() -> None:
         candles = [c for c in candles if c.time >= cut]
 
     cfg = Settings(strategy="trend", granularity=args.granularity, trend_sma=args.sma,
-                   risk_per_trade=args.risk, use_take_profit=False, initial_balance=100000)
+                   risk_per_trade=args.risk, use_take_profit=False, initial_balance=100000,
+                   max_position_units=10_000_000)
     trader = SteadyTrader(args.instrument, candles, cfg=cfg,
                           adaptive=AdaptiveConfig(base_risk=args.risk))
     print(f"[steady] run #{trader.run_id} starting: {len(candles)} bars, "
