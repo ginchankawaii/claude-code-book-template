@@ -38,6 +38,8 @@ _DATETIME_FORMATS = [
     "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y/%m/%d",
     "%Y.%m.%d %H:%M:%S", "%Y.%m.%d %H:%M", "%Y%m%d %H%M%S", "%Y%m%d",
     "%Y-%m-%d", "%d/%m/%Y %H:%M:%S", "%d.%m.%Y %H:%M:%S",
+    # Japanese-style dates (e.g. Central Tanshi intraday export)
+    "%Y年%m月%d日 %H:%M:%S", "%Y年%m月%d日 %H:%M", "%Y年%m月%d日",
 ]
 
 
