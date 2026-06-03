@@ -114,6 +114,10 @@ class Settings:
 
     @property
     def oanda_host(self) -> str:
+        # explicit override wins (e.g. OANDA Japan / a regional v20 endpoint)
+        override = os.getenv("FXSIM_OANDA_HOST", "").strip()
+        if override:
+            return override.rstrip("/")
         if self.oanda_env == "live":
             return "https://api-fxtrade.oanda.com"
         return "https://api-fxpractice.oanda.com"
