@@ -6,6 +6,7 @@ node_modules/
 package-lock.json
 data/*.db
 data/*.db-journal
+data/*.png
 .env
 .pytest_cache/
 *.log
