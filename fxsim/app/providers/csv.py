@@ -117,6 +117,14 @@ def _parse_dt(value: str) -> datetime:
         raise ValueError(f"Unrecognised datetime: {value!r}") from exc
 
 
+def _is_datetime(value: str) -> bool:
+    try:
+        _parse_dt(value)
+        return True
+    except ValueError:
+        return False
+
+
 def load_csv_file(path: Path, instrument: str, granularity: str) -> list[Candle]:
     text = _read_text(Path(path))
     sample = "\n".join(text.splitlines()[:5])
@@ -144,10 +152,17 @@ def load_csv_file(path: Path, instrument: str, granularity: str) -> list[Candle]
         i_c = _find(header, _CLOSE_ALIASES)
         i_v = _find(header, _VOL_ALIASES)
     else:
-        # assume MT-style: date,time,open,high,low,close,volume  OR  dt,o,h,l,c
         body = rows
         ncol = len(rows[0])
-        if ncol >= 6:
+        col0 = rows[0][0].strip()
+        if (" " in col0 or "T" in col0) and _is_datetime(col0):
+            # HistData/Dukascopy style: one combined datetime, then OHLC[V]
+            #   e.g. 20240101 170000;O;H;L;C;V
+            i_dt, i_o, i_h, i_l, i_c = 0, 1, 2, 3, 4
+            i_date = i_clock = None
+            i_v = 5 if ncol >= 6 else None
+        elif ncol >= 6:
+            # MT-style separate columns: date,time,open,high,low,close[,volume]
             i_date, i_clock, i_o, i_h, i_l, i_c = 0, 1, 2, 3, 4, 5
             i_dt = None
             i_v = 6 if ncol >= 7 else None
