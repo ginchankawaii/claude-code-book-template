@@ -7,7 +7,25 @@ from app.events import EconomicCalendar, EconomicEvent
 from app.indicators import candles_to_df, enrich
 from app.models import Signal
 from app.providers.sample import SampleProvider
-from app.strategies.ai import AIDecisionStrategy, DecisionContext, RuleDecider
+from app.strategies.ai import (
+    AIDecisionStrategy,
+    Decider,
+    DecisionContext,
+    HybridDecider,
+    RuleDecider,
+)
+
+
+class _FakeClaude(Decider):
+    """Records calls and returns a fixed signal — no API."""
+
+    def __init__(self, sig):
+        self.sig = sig
+        self.calls = 0
+
+    def decide(self, ctx, tech, fund):
+        self.calls += 1
+        return self.sig
 
 
 def _df(now=None, bars=120):
@@ -72,6 +90,65 @@ def test_no_blackout_when_event_is_far():
                                calendar=cal, decider=RuleDecider())
     sig = strat.generate("USD_JPY", _df(now=now))
     assert not sig.components.get("event_blackout")
+
+
+# --- HybridDecider: consult triggers + veto gate -------------------------- #
+def _hctx(score_inputs, minutes=None):
+    tech, fund = score_inputs
+    return _ctx(minutes_to_high=minutes, tech=tech, fund=fund)
+
+
+def test_hybrid_skips_claude_on_quiet_bar():
+    # weak aligned conviction, no event, no disagreement -> rule decides for free
+    fake = _FakeClaude(Signal.flat("should not be called"))
+    h = HybridDecider(claude=fake)
+    ctx = _ctx(tech=0.05, fund=0.05); ctx.entry_threshold = 0.20
+    out = h.decide(ctx, Signal(1, 0.05), Signal(1, 0.05))
+    assert fake.calls == 0
+    assert out.components["consulted_claude"] is False
+
+
+def test_hybrid_consults_claude_on_actionable_signal():
+    fake = _FakeClaude(Signal(1, 0.9, "agree"))
+    h = HybridDecider(claude=fake)
+    ctx = _ctx(tech=0.6, fund=0.6); ctx.entry_threshold = 0.20
+    out = h.decide(ctx, Signal(1, 0.6), Signal(1, 0.6))
+    assert fake.calls == 1 and out.components["consulted_claude"] is True
+
+
+def test_hybrid_claude_veto_forces_flat():
+    fake = _FakeClaude(Signal.flat("too risky"))
+    h = HybridDecider(claude=fake)
+    ctx = _ctx(tech=0.6, fund=0.6); ctx.entry_threshold = 0.20
+    out = h.decide(ctx, Signal(1, 0.6), Signal(1, 0.6))
+    assert out.direction == 0 and out.score == 0.0
+
+
+def test_hybrid_claude_opposite_stands_aside():
+    fake = _FakeClaude(Signal(-1, -0.8, "I'd short"))
+    h = HybridDecider(claude=fake)
+    ctx = _ctx(tech=0.6, fund=0.6); ctx.entry_threshold = 0.20
+    out = h.decide(ctx, Signal(1, 0.6), Signal(1, 0.6))
+    assert out.direction == 0  # never flips to Claude's side
+
+
+def test_hybrid_claude_can_only_shrink_not_amplify():
+    rule_score = 0.30
+    # Claude agrees but with lower confidence -> size is the smaller of the two
+    fake = _FakeClaude(Signal(1, 0.12, "agree, low conviction"))
+    h = HybridDecider(claude=fake)
+    ctx = _ctx(tech=rule_score, fund=rule_score); ctx.entry_threshold = 0.20
+    base = RuleDecider().decide(ctx, Signal(1, rule_score), Signal(1, rule_score))
+    out = h.decide(ctx, Signal(1, rule_score), Signal(1, rule_score))
+    assert out.direction == 1
+    assert abs(out.score) <= abs(base.score)        # never amplified
+    assert abs(out.score) == min(abs(base.score), 0.12)
+
+    # and a very confident Claude still cannot push above the rule's size
+    fake2 = _FakeClaude(Signal(1, 0.99, "very confident"))
+    h2 = HybridDecider(claude=fake2)
+    out2 = h2.decide(ctx, Signal(1, rule_score), Signal(1, rule_score))
+    assert abs(out2.score) == abs(base.score)
 
 
 def test_ai_strategy_is_deterministic():

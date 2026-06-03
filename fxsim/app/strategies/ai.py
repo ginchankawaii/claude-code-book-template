@@ -57,6 +57,7 @@ class DecisionContext:
     w_tech: float
     w_fund: float
     event_caution_min: float
+    entry_threshold: float = 0.20
 
     def to_payload(self) -> dict:
         return {
@@ -216,12 +217,85 @@ def _parse_decision(text: str) -> tuple[str, float, str]:
     return action, confidence, str(obj.get("reason", ""))
 
 
+class HybridDecider(Decider):
+    """Free rule decider by default; consult Claude only on the bars that matter.
+
+    Claude is asked for a view ONLY when one of these triggers fires (everything
+    else is decided for free by the rule decider):
+      * the rule signal is actionable — would open or reverse a position;
+      * conviction is borderline (just under the entry threshold) or the
+        technical and fundamental pillars disagree;
+      * a high-impact event is on the near horizon (caution window).
+
+    When consulted, Claude is a RISK-FIRST GATE with veto power only — it can
+    stand the trade down or shrink it, but never amplify it or flip its side:
+      * Claude flat            -> stand aside (veto);
+      * Claude opposite to rule -> stand aside (don't chase either way);
+      * Claude agrees           -> keep the rule's side, size = min(rule, Claude)
+                                   so Claude can only reduce conviction.
+    """
+
+    name = "hybrid"
+
+    def __init__(self, claude: Decider | None = None, rule: Decider | None = None,
+                 model: str | None = None) -> None:
+        self.rule = rule or RuleDecider()
+        self.claude = claude or AnthropicDecider(model)
+
+    def _should_consult(self, ctx: DecisionContext, tech: Signal, fund: Signal,
+                        base: Signal) -> bool:
+        et = ctx.entry_threshold
+        # actionable: rule would open/reverse a position
+        if abs(base.score) >= et and base.direction != 0:
+            return True
+        # borderline conviction just under the entry bar
+        if et * 0.6 <= abs(base.score) < et:
+            return True
+        # technical vs fundamental disagreement
+        if abs(fund.score) >= 1e-6 and tech.score != 0 and (tech.score > 0) != (fund.score > 0):
+            return True
+        # high-impact event on the near horizon (blackout is handled upstream)
+        m = ctx.minutes_to_high_impact
+        if m is not None and 0 <= m <= ctx.event_caution_min:
+            return True
+        return False
+
+    def decide(self, ctx: DecisionContext, tech: Signal, fund: Signal) -> Signal:
+        base = self.rule.decide(ctx, tech, fund)
+        if not self._should_consult(ctx, tech, fund, base):
+            base.components["consulted_claude"] = False
+            return base
+
+        cl = self.claude.decide(ctx, tech, fund)
+        if cl.direction == 0:
+            out = Signal.flat(f"hybrid: Claude veto -> stand aside | {cl.reason}")
+        elif cl.direction != base.direction:
+            out = Signal.flat(f"hybrid: Claude disagrees with rule -> stand aside | {cl.reason}")
+        else:
+            size = min(abs(base.score), abs(cl.score))  # Claude may only reduce
+            out = Signal(
+                direction=base.direction,
+                score=size * base.direction,
+                reason=f"hybrid: rule+Claude agree (size={size:.2f}) | {cl.reason}",
+            )
+        out.components = {
+            **base.components,
+            "consulted_claude": True,
+            "rule_score": base.score,
+            "claude_dir": cl.direction,
+            "claude_score": cl.score,
+        }
+        return out
+
+
 def get_decider(mode: str | None = None) -> Decider:
     mode = (mode or default_settings.decision_mode).lower()
     if mode == "rule":
         return RuleDecider()
     if mode == "anthropic":
         return AnthropicDecider()
+    if mode == "hybrid":
+        return HybridDecider()
     raise ValueError(f"Unknown decision mode: {mode!r}")
 
 
@@ -315,5 +389,6 @@ class AIDecisionStrategy(Strategy):
             w_tech=self.w_tech,
             w_fund=self.w_fund,
             event_caution_min=self.caution_min,
+            entry_threshold=self.cfg.entry_threshold,
         )
         return self.decider.decide(ctx, tech, fund)
