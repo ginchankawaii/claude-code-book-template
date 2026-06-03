@@ -1,0 +1,12 @@
+{
+  "_comment": "Sample economic calendar. Replace via FXSIM_CALENDAR_MODE=anthropic (Claude + web search) or let the agent rewrite this file. Times are UTC. impact: high|medium|low.",
+  "events": [
+    {"time": "2026-06-03T14:00:00+00:00", "currency": "USD", "title": "ISM Services PMI", "impact": "high", "forecast": "52.1", "previous": "51.6"},
+    {"time": "2026-06-05T12:30:00+00:00", "currency": "USD", "title": "Nonfarm Payrolls", "impact": "high", "forecast": "175K", "previous": "139K"},
+    {"time": "2026-06-05T12:30:00+00:00", "currency": "USD", "title": "Unemployment Rate", "impact": "high", "forecast": "4.2%", "previous": "4.2%"},
+    {"time": "2026-06-10T12:30:00+00:00", "currency": "USD", "title": "CPI (YoY)", "impact": "high", "forecast": "2.5%", "previous": "2.4%"},
+    {"time": "2026-06-12T01:30:00+00:00", "currency": "JPY", "title": "BOJ Gov Ueda speech", "impact": "medium", "forecast": "", "previous": ""},
+    {"time": "2026-06-16T03:00:00+00:00", "currency": "JPY", "title": "BOJ Policy Rate Decision", "impact": "high", "forecast": "0.50%", "previous": "0.50%"},
+    {"time": "2026-06-17T18:00:00+00:00", "currency": "USD", "title": "FOMC Rate Decision", "impact": "high", "forecast": "4.25%", "previous": "4.25%"}
+  ]
+}

@@ -78,6 +78,30 @@ class Settings:
         default_factory=lambda: os.getenv("FXSIM_FUND_MODEL", "claude-opus-4-8")
     )
 
+    # --- AI decision layer ---------------------------------------------------
+    # Who makes the final call:
+    #   "rule"      = deterministic, offline-capable risk-aware decider (default)
+    #   "anthropic" = Claude weighs technicals + fundamentals + the upcoming
+    #                 event calendar and decides (needs key + allow-listed host)
+    decision_mode: str = field(
+        default_factory=lambda: os.getenv("FXSIM_DECISION_MODE", "rule")
+    )
+    decision_model: str = field(
+        default_factory=lambda: os.getenv("FXSIM_DECISION_MODEL", "claude-opus-4-8")
+    )
+    # Economic-calendar backend: "file" (data/calendar.json), "stub", "anthropic"
+    calendar_mode: str = field(
+        default_factory=lambda: os.getenv("FXSIM_CALENDAR_MODE", "file")
+    )
+    # Stand aside this many minutes on EITHER side of a high-impact event.
+    event_blackout_min: float = field(
+        default_factory=lambda: _get_float("FXSIM_EVENT_BLACKOUT_MIN", 60.0)
+    )
+    # Trim conviction when a high-impact event is within this many minutes ahead.
+    event_caution_min: float = field(
+        default_factory=lambda: _get_float("FXSIM_EVENT_CAUTION_MIN", 360.0)
+    )
+
     @property
     def oanda_host(self) -> str:
         if self.oanda_env == "live":

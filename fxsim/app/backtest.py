@@ -15,7 +15,8 @@ from .config import Settings, settings as default_settings
 from .engine import PaperTradingEngine, enrich_candles
 from .indicators import candles_to_df, enrich
 from .models import Candle
-from .strategies.combined import CombinedStrategy
+from .strategies import build_strategy
+from .strategies.base import Strategy
 
 WARMUP = 35  # bars needed before indicators are valid
 
@@ -100,10 +101,10 @@ def run_backtest(
     instrument: str,
     cfg: Settings | None = None,
     persist: bool = True,
-    strategy: CombinedStrategy | None = None,
+    strategy: Strategy | None = None,
 ) -> BacktestStats:
     cfg = cfg or default_settings
-    strategy = strategy or CombinedStrategy()
+    strategy = strategy or build_strategy(cfg)
 
     df_full = enrich(candles_to_df(candles))
     run_id = 0

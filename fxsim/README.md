@@ -18,13 +18,14 @@ Web GUI でグラフィカルに確認できます。
    OANDA v20 ──▶│  providers  │── sample(オフライン合成データ) も選択可
    (実レート)    └──────┬──────┘
                        │ candles
-                ┌──────▼──────┐   ┌──────────────┐
-                │ indicators  │   │ fundamental  │ Claude API + web 検索
-                │ (テクニカル) │   │ (ニュース分析) │ → bias [-1,1]
-                └──────┬──────┘   └──────┬───────┘
-                       └────────┬────────┘
-                          ┌─────▼─────┐  weighted blend (技術60% / ファンダ40%)
-                          │ strategy  │
+                ┌──────▼──────┐ ┌──────────────┐ ┌──────────────┐
+                │ indicators  │ │ fundamental  │ │   calendar   │ 予定イベントを
+                │ (テクニカル) │ │ (ニュース分析) │ │ (要人/指標発表) │ 事前取得
+                └──────┬──────┘ └──────┬───────┘ └──────┬───────┘
+                       └────────┬──────┴────────────────┘
+                          ┌─────▼─────┐  AI 判断レイヤー (rule / Claude)
+                          │ strategy  │  ・高インパクト指標の前後はブラックアウト(回避)
+                          │  (ai)     │  ・テクニカルとファンダが不一致なら確信度を半減
                           └─────┬─────┘  signal score [-1,1]
                           ┌─────▼─────┐  リスクベースのサイズ計算 + ATR ストップ
                           │  engine   │  spread / commission のコストモデル
@@ -44,7 +45,9 @@ Web GUI でグラフィカルに確認できます。
 | データ取得 | `app/providers/` | `oanda`（実レート） / `csv`（ブローカー書出しの実データ） / `sample`（オフライン） |
 | テクニカル | `app/indicators.py`, `app/strategies/technical.py` | SMA/EMA/RSI/MACD/Bollinger/ATR のアンサンブル |
 | ファンダ | `app/fundamental/`, `app/strategies/fundamental.py` | Claude がニュースを分析しバイアスを生成 |
-| 統合戦略 | `app/strategies/combined.py` | テクニカル＋ファンダの加重ブレンド |
+| イベント | `app/events.py`, `data/calendar.json` | 要人発言・重要指標の予定を**事前取得**（file / Claude+web検索） |
+| AI判断 | `app/strategies/ai.py` | テクニカル＋ファンダ＋予定イベントを**総合判断**。指標前後は自動回避（既定） |
+| 統合戦略(旧) | `app/strategies/combined.py` | テクニカル＋ファンダの固定加重ブレンド（`FXSIM_DECISION_MODE=off`） |
 | 約定エンジン | `app/engine.py` | ペーパートレード、コスト/サイズ/ストップ管理 |
 | バックテスト | `app/backtest.py` | 履歴をバー単位で再生し成績を算出 |
 | ライブ | `app/live.py` | 新しいバー毎に1ステップ実行（実レート・仮想約定） |

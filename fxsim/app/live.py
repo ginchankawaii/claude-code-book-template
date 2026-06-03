@@ -17,7 +17,7 @@ from .config import Settings, settings as default_settings
 from .engine import PaperTradingEngine
 from .indicators import candles_to_df, enrich
 from .providers import get_provider
-from .strategies.combined import CombinedStrategy
+from .strategies import build_strategy
 
 _GRAN_SECONDS = {
     "M1": 60, "M5": 300, "M15": 900, "M30": 1800,
@@ -36,7 +36,7 @@ class LiveTrader:
         self.instrument = instrument
         self.history_bars = history_bars
         self.provider = get_provider(self.cfg.data_provider)
-        self.strategy = CombinedStrategy()
+        self.strategy = build_strategy(self.cfg)
         self._stop = False
 
         db.init_db()
@@ -93,10 +93,16 @@ class LiveTrader:
         signal.signal(signal.SIGTERM, self.stop)
         interval = poll_seconds or max(15, _GRAN_SECONDS.get(self.cfg.granularity, 900) // 4)
         # refresh fundamental view at the start
+        # Refresh news + event calendar at the start (AI strategy) or just the
+        # fundamental view (plain combined strategy). Network/key issues here
+        # must not kill the loop.
         try:
-            self.strategy.fundamental.refresh(self.instrument)
-        except Exception as exc:  # network / key issues shouldn't kill the loop
-            print(f"[live] fundamental refresh skipped: {exc}")
+            if hasattr(self.strategy, "refresh"):
+                self.strategy.refresh(self.instrument)
+            else:
+                self.strategy.fundamental.refresh(self.instrument)
+        except Exception as exc:
+            print(f"[live] context refresh skipped: {exc}")
 
         print(
             f"[live] run #{self.run_id} {self.instrument} {self.cfg.granularity} "
