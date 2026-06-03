@@ -67,6 +67,11 @@ class Settings:
     fundamental_weight: float = field(default_factory=lambda: _get_float("FXSIM_W_FUND", 0.4))
     entry_threshold: float = field(default_factory=lambda: _get_float("FXSIM_ENTRY_TH", 0.20))
     exit_threshold: float = field(default_factory=lambda: _get_float("FXSIM_EXIT_TH", 0.08))
+    # Fixed 2:1 take-profit suits mean-reversion but caps trend winners short.
+    # Trend strategies set this False so exits come from the signal or the stop.
+    use_take_profit: bool = field(
+        default_factory=lambda: os.getenv("FXSIM_USE_TAKE_PROFIT", "1") not in ("0", "false", "")
+    )
 
     # --- fundamental analyzer ---
     # "stub" (neutral), "file" (data/fundamental.json), or "anthropic" (live LLM)
@@ -77,6 +82,11 @@ class Settings:
     anthropic_model: str = field(
         default_factory=lambda: os.getenv("FXSIM_FUND_MODEL", "claude-opus-4-8")
     )
+
+    # --- strategy selection --------------------------------------------------
+    # "trend" (OOS-validated daily trend filter), "ai", "combined"/"off"
+    strategy: str = field(default_factory=lambda: os.getenv("FXSIM_STRATEGY", "ai"))
+    trend_sma: int = field(default_factory=lambda: int(_get_float("FXSIM_TREND_SMA", 150)))
 
     # --- AI decision layer ---------------------------------------------------
     # Who makes the final call:

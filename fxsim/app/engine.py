@@ -84,9 +84,12 @@ class PaperTradingEngine:
             return
         fill = price + self._half_spread() * (1 if direction > 0 else -1)
         stop_distance = max(atr * 1.5, self.pip * 5)
-        target_distance = stop_distance * 2.0  # 2:1 reward:risk
         stop = fill - stop_distance * direction
-        target = fill + target_distance * direction
+        if self.cfg.use_take_profit:
+            target = fill + stop_distance * 2.0 * direction  # 2:1 reward:risk
+        else:
+            # trend mode: let winners run; exit via signal-fade or the stop
+            target = float("inf") if direction > 0 else float("-inf")
 
         trade_id = None
         if self.persist:
