@@ -165,6 +165,68 @@ def trigger_backtest(payload: dict) -> dict:
         _backtest_lock.release()
 
 
+@app.get("/api/runs/{run_id}/adjustments")
+def get_adjustments(run_id: int) -> list[dict]:
+    rows = db.load_adjustments(run_id)
+    for r in rows:
+        if r.get("metrics"):
+            try:
+                r["metrics"] = json.loads(r["metrics"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+    return rows
+
+
+@app.get("/live", response_class=HTMLResponse)
+def live_page() -> str:
+    return (STATIC_DIR / "live.html").read_text()
+
+
+@app.get("/api/live")
+def get_live(run_id: int | None = None) -> dict:
+    """Everything the live view needs for the latest (or given) run."""
+    rid = run_id or db.latest_run_id()
+    if not rid:
+        return {"run": None}
+    run = db.get_run(rid)
+    equity = db.load_equity(rid)
+    trades = db.list_trades(rid)
+    adjustments = db.load_adjustments(rid)
+    closed = [t for t in trades if t["status"] == "CLOSED"]
+    open_pos = [t for t in trades if t["status"] == "OPEN"]
+
+    eq_vals = [e["equity"] for e in equity]
+    cur_eq = eq_vals[-1] if eq_vals else (run["initial_balance"] if run else 0)
+    peak = max(eq_vals) if eq_vals else cur_eq
+    drawdown = (peak - cur_eq) / peak * 100 if peak else 0.0
+    params = {}
+    try:
+        params = json.loads(run["params"]) if run and run.get("params") else {}
+    except (json.JSONDecodeError, TypeError):
+        params = {}
+    base_risk = params.get("base_risk")
+    cur_risk = adjustments[-1]["new_val"] if adjustments else base_risk
+    wins = [t for t in closed if (t["pnl"] or 0) > 0]
+
+    return {
+        "run": run,
+        "status": "running" if run and not run.get("ended_at") else "finished",
+        "current_equity": cur_eq,
+        "initial_balance": run["initial_balance"] if run else 0,
+        "return_pct": (cur_eq / run["initial_balance"] - 1) * 100 if run else 0,
+        "drawdown_pct": drawdown,
+        "base_risk": base_risk,
+        "current_risk": cur_risk,
+        "open_position": open_pos[0] if open_pos else None,
+        "n_trades": len(closed),
+        "win_rate": (len(wins) / len(closed) * 100) if closed else 0,
+        "equity": [{"time": e["time"], "equity": e["equity"]} for e in equity],
+        "recent_trades": closed[-10:][::-1],
+        "recent_adjustments": adjustments[-12:][::-1],
+        "last_price": equity[-1]["price"] if equity else None,
+    }
+
+
 # static assets (chart.js, css, js)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 

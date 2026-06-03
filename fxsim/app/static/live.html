@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steady — ライブ状況</title>
+<script src="/static/chart.umd.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; margin: 0; background:#0f1115; color:#e6e6e6; }
+  header { padding:14px 20px; background:#161a22; border-bottom:1px solid #2a2f3a; display:flex; align-items:center; gap:14px; }
+  header h1 { font-size:17px; margin:0; }
+  .dot { width:10px; height:10px; border-radius:50%; background:#3fb950; box-shadow:0 0 8px #3fb950; }
+  .dot.off { background:#777; box-shadow:none; }
+  main { padding:20px; max-width:1100px; margin:0 auto; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+  .card { background:#161a22; border:1px solid #2a2f3a; border-radius:10px; padding:14px; }
+  .card .label { font-size:12px; color:#8b949e; }
+  .card .val { font-size:22px; font-weight:600; margin-top:4px; }
+  .pos { color:#58a6ff; } .neg { color:#f85149; } .ok { color:#3fb950; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:18px; }
+  @media(max-width:800px){ .grid2{grid-template-columns:1fr;} }
+  h2 { font-size:14px; color:#8b949e; margin:0 0 8px; font-weight:600; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid #222831; }
+  th { color:#8b949e; font-weight:500; }
+  .panel { background:#161a22; border:1px solid #2a2f3a; border-radius:10px; padding:14px; }
+  .muted { color:#8b949e; font-size:12px; }
+  .riskbar { height:8px; background:#222831; border-radius:4px; overflow:hidden; margin-top:6px; }
+  .riskbar > div { height:100%; background:#58a6ff; }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>Steady ライブ状況</h1>
+  <span class="muted" id="meta"></span>
+  <span class="muted" style="margin-left:auto" id="updated"></span>
+</header>
+<main>
+  <div class="cards" id="cards"></div>
+  <div class="grid2">
+    <div class="panel"><h2>エクイティ推移</h2><canvas id="eq" height="150"></canvas></div>
+    <div class="panel"><h2>自己調整の履歴（結果に応じてリスクを自動変更）</h2>
+      <table id="adj"><thead><tr><th>日時</th><th>リスク</th><th>理由</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+  <div class="panel" style="margin-top:16px"><h2>直近の取引</h2>
+    <table id="trades"><thead><tr><th>方向</th><th>建値→決済</th><th>損益</th><th>理由</th></tr></thead><tbody></tbody></table>
+  </div>
+</main>
+<script>
+let chart;
+const fmt = n => (n==null?"–":Number(n).toLocaleString(undefined,{maximumFractionDigits:0}));
+const pct = n => (n==null?"–":(n>=0?"+":"")+Number(n).toFixed(2)+"%");
+function card(label,val,cls){ return `<div class="card"><div class="label">${label}</div><div class="val ${cls||''}">${val}</div></div>`; }
+
+async function tick(){
+  let d;
+  try { d = await (await fetch('/api/live')).json(); }
+  catch(e){ document.getElementById('meta').textContent='接続待ち...'; return; }
+  if(!d.run){ document.getElementById('meta').textContent='まだ稼働データがありません（scripts.run_steady を実行）'; return; }
+
+  const running = d.status==='running';
+  document.getElementById('dot').className = 'dot'+(running?'':' off');
+  document.getElementById('meta').textContent = `run #${d.run.id} · ${d.run.instrument} ${d.run.granularity} · ${d.status}`;
+  document.getElementById('updated').textContent = '更新 '+new Date().toLocaleTimeString();
+
+  const retCls = d.return_pct>=0?'pos':'neg';
+  const riskPctOfBase = d.base_risk? Math.round(d.current_risk/d.base_risk*100):100;
+  const pos = d.open_position;
+  document.getElementById('cards').innerHTML =
+    card('現在エクイティ', fmt(d.current_equity)) +
+    card('損益', pct(d.return_pct), retCls) +
+    card('ドローダウン', '-'+d.drawdown_pct.toFixed(1)+'%', d.drawdown_pct>10?'neg':'') +
+    card('現在リスク/トレード', (d.current_risk*100).toFixed(2)+'%' +
+        `<div class="riskbar"><div style="width:${riskPctOfBase}%"></div></div>`+
+        `<span class="muted">基準 ${(d.base_risk*100).toFixed(2)}% の ${riskPctOfBase}%</span>`) +
+    card('ポジション', pos?`<span class="${pos.side==='LONG'?'pos':'neg'}">${pos.side}</span>`:'なし（待機）') +
+    card('取引数 / 勝率', d.n_trades+' / '+d.win_rate.toFixed(0)+'%');
+
+  // equity chart
+  const labels = d.equity.map(e=>e.time.slice(0,10));
+  const vals = d.equity.map(e=>e.equity);
+  if(!chart){
+    chart = new Chart(document.getElementById('eq'),{type:'line',
+      data:{labels,datasets:[{data:vals,borderColor:'#58a6ff',borderWidth:1.5,pointRadius:0,fill:false}]},
+      options:{plugins:{legend:{display:false}},scales:{x:{ticks:{maxTicksLimit:6,color:'#8b949e'}},y:{ticks:{color:'#8b949e'}}}}});
+  } else { chart.data.labels=labels; chart.data.datasets[0].data=vals; chart.update('none'); }
+
+  const adj = d.recent_adjustments.map(a=>`<tr><td>${a.time.slice(0,10)}</td><td>${(a.new_val*100).toFixed(2)}%</td><td class="muted">${a.reason||''}</td></tr>`).join('');
+  document.querySelector('#adj tbody').innerHTML = adj || '<tr><td colspan=3 class="muted">まだ調整なし</td></tr>';
+  const tr = d.recent_trades.map(t=>{const p=(t.pnl||0); return `<tr><td class="${t.side==='LONG'?'pos':'neg'}">${t.side}</td><td>${Number(t.entry_price).toFixed(3)} → ${t.exit_price?Number(t.exit_price).toFixed(3):'—'}</td><td class="${p>=0?'ok':'neg'}">${p>=0?'+':''}${fmt(p)}</td><td class="muted">${t.reason||''}</td></tr>`;}).join('');
+  document.querySelector('#trades tbody').innerHTML = tr || '<tr><td colspan=4 class="muted">まだ取引なし</td></tr>';
+}
+tick(); setInterval(tick, 3000);
+</script>
+</body>
+</html>

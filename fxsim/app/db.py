@@ -81,6 +81,18 @@ CREATE TABLE IF NOT EXISTS signals (
 CREATE INDEX IF NOT EXISTS idx_trades_run ON trades(run_id);
 CREATE INDEX IF NOT EXISTS idx_equity_run ON equity(run_id);
 CREATE INDEX IF NOT EXISTS idx_signals_run ON signals(run_id);
+
+CREATE TABLE IF NOT EXISTS adjustments (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id  INTEGER NOT NULL REFERENCES runs(id),
+    time    TEXT NOT NULL,
+    param   TEXT NOT NULL,             -- e.g. 'risk_per_trade'
+    old_val REAL,
+    new_val REAL,
+    reason  TEXT,                      -- why the controller changed it
+    metrics TEXT                       -- json snapshot of perf metrics at decision
+);
+CREATE INDEX IF NOT EXISTS idx_adj_run ON adjustments(run_id);
 """
 
 
@@ -322,3 +334,26 @@ def load_signals(run_id: int, db_path: Optional[str] = None) -> list[dict]:
             "SELECT * FROM signals WHERE run_id=? ORDER BY time ASC", (run_id,)
         )
         return [dict(r) for r in cur.fetchall()]
+
+
+def record_adjustment(
+    run_id: int, time: datetime, param: str, old_val: Optional[float],
+    new_val: Optional[float], reason: str, metrics: Optional[dict] = None,
+    db_path: Optional[str] = None,
+) -> None:
+    with connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO adjustments (run_id, time, param, old_val, new_val, reason, metrics) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (run_id, _iso(time), param, old_val, new_val, reason,
+             json.dumps(metrics) if metrics is not None else None),
+        )
+
+
+def load_adjustments(run_id: int, db_path: Optional[str] = None) -> list[dict]:
+    with connect(db_path) as conn:
+        cur = conn.execute(
+            "SELECT * FROM adjustments WHERE run_id=? ORDER BY time ASC", (run_id,)
+        )
+        return [dict(r) for r in cur.fetchall()]
+
