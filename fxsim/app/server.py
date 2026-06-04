@@ -32,7 +32,7 @@ def _startup() -> None:
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
-    return (STATIC_DIR / "dashboard.html").read_text()
+    return (STATIC_DIR / "dashboard.html").read_text(encoding="utf-8")
 
 
 @app.get("/api/config")
@@ -179,7 +179,7 @@ def get_adjustments(run_id: int) -> list[dict]:
 
 @app.get("/live", response_class=HTMLResponse)
 def live_page() -> str:
-    return (STATIC_DIR / "live.html").read_text()
+    return (STATIC_DIR / "live.html").read_text(encoding="utf-8")
 
 
 @app.get("/api/live")
