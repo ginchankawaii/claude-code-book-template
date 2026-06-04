@@ -193,7 +193,7 @@ def get_live(run_id: int | None = None) -> dict:
     trades = db.list_trades(rid)
     adjustments = db.load_adjustments(rid)
     closed = [t for t in trades if t["status"] == "CLOSED"]
-    open_pos = [t for t in trades if t["status"] == "OPEN"]
+    open_db = [t for t in trades if t["status"] == "OPEN"]
 
     eq_vals = [e["equity"] for e in equity]
     cur_eq = eq_vals[-1] if eq_vals else (run["initial_balance"] if run else 0)
@@ -208,6 +208,24 @@ def get_live(run_id: int | None = None) -> dict:
     cur_risk = adjustments[-1]["new_val"] if adjustments else base_risk
     wins = [t for t in closed if (t["pnl"] or 0) > 0]
 
+    # Live truth from the EA status file (the bridge persists trades in MT5, not
+    # our DB), so prefer it for current equity + open position when available.
+    open_pos = None
+    try:
+        from . import bridge as _bridge
+        live = _bridge.read_status()
+    except Exception:
+        live = None
+    if live and live.get("equity", 0) > 0:
+        cur_eq = live["equity"]
+        peak = max(peak, cur_eq)
+        drawdown = (peak - cur_eq) / peak * 100 if peak else 0.0
+        pl = live.get("position_lots", 0.0)
+        if abs(pl) > 1e-9:
+            open_pos = {"side": "LONG" if pl > 0 else "SHORT", "units": pl * 100000}
+    if open_pos is None and open_db:
+        open_pos = open_db[0]
+
     return {
         "run": run,
         "status": "running" if run and not run.get("ended_at") else "finished",
@@ -217,7 +235,7 @@ def get_live(run_id: int | None = None) -> dict:
         "drawdown_pct": drawdown,
         "base_risk": base_risk,
         "current_risk": cur_risk,
-        "open_position": open_pos[0] if open_pos else None,
+        "open_position": open_pos,
         "n_trades": len(closed),
         "win_rate": (len(wins) / len(closed) * 100) if closed else 0,
         "equity": [{"time": e["time"], "equity": e["equity"]} for e in equity],

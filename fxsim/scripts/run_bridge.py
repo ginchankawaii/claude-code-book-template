@@ -26,12 +26,12 @@ from app.strategies.trend import TrendRegimeStrategy
 UNITS_PER_LOT = 100_000.0
 
 
-def _ongoing_run(cfg: Settings) -> int:
+def _ongoing_run(cfg: Settings, start_balance: float) -> int:
     for r in db.list_runs():
         if not r.get("ended_at") and "steady-bridge" in (r.get("params") or ""):
             return r["id"]
     return db.create_run(mode="live", instrument="USD_JPY", granularity=cfg.granularity,
-                         initial_balance=cfg.initial_balance,
+                         initial_balance=start_balance,
                          params={"system": "steady-bridge", "trend_sma": cfg.trend_sma,
                                  "base_risk": cfg.risk_per_trade})
 
@@ -58,12 +58,17 @@ def cycle(cfg: Settings, instrument: str, max_lots: float, dry: bool,
               flush=True)
         return False
 
-    run_id = _ongoing_run(cfg)
+    balance, equity = status["balance"], status["equity"]
+    if equity <= 0 or balance <= 0:
+        print("[bridge] account status not ready yet (balance/equity = 0). "
+              "Waiting for MT5 to sync; retry shortly.", flush=True)
+        return False
+
+    run_id = _ongoing_run(cfg, balance)   # baseline = real account balance
     df = enrich(candles_to_df(candles))
     strat = TrendRegimeStrategy(sma=cfg.trend_sma)
     sig = strat.generate(instrument, df)
 
-    balance, equity = status["balance"], status["equity"]
     now = df.iloc[-1]["time"]
     now = now.to_pydatetime() if hasattr(now, "to_pydatetime") else now
     db.record_equity(run_id, datetime.now(timezone.utc), balance, equity,
@@ -93,8 +98,11 @@ def cycle(cfg: Settings, instrument: str, max_lots: float, dry: bool,
     else:
         lots, action = 0.0, "FLAT"
 
+    comp = dict(sig.components)
+    comp.update(action=action, target_lots=lots,
+                position_lots=status.get("position_lots", 0.0), risk=target_risk)
     db.record_signal(run_id, now, instrument, "combined",
-                     sig.direction, sig.score, sig.reason, sig.components)
+                     sig.direction, sig.score, sig.reason, comp)
     if dry:
         print(f"[bridge][DRY] {action} {lots:.2f} lots (risk {target_risk:.4f}, "
               f"bars={len(candles)}, last={now:%Y-%m-%d}) — {sig.reason}")
