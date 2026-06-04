@@ -77,16 +77,37 @@ class MT5Broker:
         return self._mt5
 
     def connect(self) -> None:
+        import time
         mt5 = self._api()
-        kwargs = {}
+        kwargs = {"timeout": 60000, "portable": False}
         if self.terminal_path:
             kwargs["path"] = self.terminal_path
         if self.login:
             kwargs.update(login=int(self.login), password=self.password, server=self.server)
-        if not mt5.initialize(**kwargs):
-            raise RuntimeError(f"MT5 initialize failed: {mt5.last_error()}")
+        last_err = None
+        for attempt in range(1, 4):
+            if mt5.initialize(**kwargs):
+                last_err = None
+                break
+            last_err = mt5.last_error()
+            print(f"[mt5] initialize attempt {attempt}/3 failed: {last_err}", flush=True)
+            mt5.shutdown()
+            time.sleep(3)
+        if last_err is not None:
+            raise RuntimeError(
+                f"MT5 initialize failed: {last_err}\n"
+                "  Checklist:\n"
+                "   1) The MT5 terminal is OPEN and logged in to the demo account.\n"
+                "   2) MT5: ツール>オプション>エキスパートアドバイザー>『アルゴリズム取引を許可する』ON,\n"
+                "      and the toolbar 'アルゴ取引' button is green.\n"
+                "   3) Same privilege level: do NOT run PowerShell as Administrator if MT5 is normal.\n"
+                "   4) Set the terminal path, e.g. in PowerShell:\n"
+                "      $env:MT5_PATH='C:\\Program Files\\OANDA MetaTrader 5\\terminal64.exe'"
+            )
         if not mt5.symbol_select(self.symbol, True):
-            raise RuntimeError(f"symbol_select({self.symbol}) failed: {mt5.last_error()}")
+            raise RuntimeError(
+                f"symbol_select({self.symbol}) failed: {mt5.last_error()} — "
+                f"check the exact symbol name in MT5 'Market Watch' (e.g. USDJPY vs USDJPY.sml)")
         info = mt5.account_info()
         mode = "DRY-RUN (no orders sent)" if self.dry_run else "LIVE ORDERS"
         print(f"[mt5] connected: account {getattr(info,'login','?')} "
