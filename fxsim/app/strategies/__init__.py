@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from ..config import Settings, settings
 from .ai import AIDecisionStrategy
 from .base import Strategy
