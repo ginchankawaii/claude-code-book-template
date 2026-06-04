@@ -36,12 +36,26 @@ def _ongoing_run(cfg: Settings) -> int:
                                  "base_risk": cfg.risk_per_trade})
 
 
-def cycle(cfg: Settings, instrument: str, max_lots: float, dry: bool) -> bool:
+def cycle(cfg: Settings, instrument: str, max_lots: float, dry: bool,
+          history_csv: str = "data/USD_JPY_D.csv") -> bool:
     candles = bridge.read_bars(instrument, cfg.granularity)
     status = bridge.read_status()
-    if not candles or status is None:
-        print("[bridge] waiting for EA files (steady_bars.csv / steady_status.csv). "
-              "Is the SteadyBridge EA attached to USDJPY,D1 with algo-trading on?", flush=True)
+    if status is None:
+        print("[bridge] waiting for EA status file (steady_status.csv). "
+              "Is the SteadyBridge EA attached with algo-trading on?", flush=True)
+        return False
+
+    # MT5's local daily history can be short/stale; fall back to the bundled
+    # 55y daily CSV for the trend computation (decision is daily-close based).
+    from pathlib import Path
+    from app.providers.csv import load_csv_file
+    if len(candles) < cfg.trend_sma and Path(history_csv).exists():
+        candles = load_csv_file(Path(history_csv), instrument, cfg.granularity)
+        print(f"[bridge] MT5 daily history short; using {history_csv} "
+              f"({len(candles)} bars)", flush=True)
+    if len(candles) < cfg.trend_sma:
+        print(f"[bridge] not enough daily history ({len(candles)} bars) for SMA{cfg.trend_sma}",
+              flush=True)
         return False
 
     run_id = _ongoing_run(cfg)
@@ -101,6 +115,8 @@ def main() -> None:
     ap.add_argument("--poll", type=int, default=60)
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--dry", action="store_true", help="compute but do NOT write the signal file")
+    ap.add_argument("--history", default="data/USD_JPY_D.csv",
+                    help="daily CSV used when MT5's own history is too short/stale")
     args = ap.parse_args()
 
     cfg = Settings(strategy="trend", granularity="D", trend_sma=args.sma,
@@ -108,13 +124,13 @@ def main() -> None:
                    initial_balance=args.balance)
     db.init_db()
     if args.once:
-        cycle(cfg, args.instrument, args.max_lots, args.dry)
+        cycle(cfg, args.instrument, args.max_lots, args.dry, args.history)
     else:
         print(f"[bridge] resident (poll {args.poll}s). Common files: {bridge.common_files_dir()}",
               flush=True)
         while True:
             try:
-                cycle(cfg, args.instrument, args.max_lots, args.dry)
+                cycle(cfg, args.instrument, args.max_lots, args.dry, args.history)
             except Exception as exc:
                 print(f"[bridge] error: {exc}", flush=True)
             _time.sleep(args.poll)
