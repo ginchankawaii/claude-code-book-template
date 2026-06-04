@@ -82,7 +82,8 @@ def cycle(cfg: Settings, instrument: str, max_lots: float, dry: bool) -> bool:
     db.record_signal(run_id, now, instrument, "combined",
                      sig.direction, sig.score, sig.reason, sig.components)
     if dry:
-        print(f"[bridge][DRY] {action} {lots:.2f} lots (risk {target_risk:.4f}) — signal NOT written")
+        print(f"[bridge][DRY] {action} {lots:.2f} lots (risk {target_risk:.4f}, "
+              f"bars={len(candles)}, last={now:%Y-%m-%d}) — {sig.reason}")
     else:
         bridge.write_signal(action, lots)
         print(f"[bridge] wrote signal: {action} {lots:.2f} lots | eq={equity:,.0f} "
