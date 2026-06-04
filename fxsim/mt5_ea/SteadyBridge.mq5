@@ -105,7 +105,7 @@ double NormalizeLots(double lots)
    return lots;
 }
 
-void CloseLong()
+void CloseAll()
 {
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
@@ -118,6 +118,7 @@ void CloseLong()
 }
 
 //--- read + act on the Python signal -------------------------------
+//  signal: "LONG <lots>" | "SHORT <lots>" | "FLAT 0"
 void ProcessSignal()
 {
    if(!FileIsExist(InpSignalFile, FILE_COMMON)) return;
@@ -131,17 +132,23 @@ void ProcessSignal()
    if(k < 1) return;
    string action = parts[0];
    double lots = (k >= 2) ? StringToDouble(parts[1]) : 0.0;
+   lots = NormalizeLots(lots);
 
-   double cur = CurrentLots();
+   double cur = CurrentLots();   // signed: + long / - short
+
    if(action == "FLAT")
    {
-      if(cur > 0) CloseLong();
+      if(MathAbs(cur) > 0) CloseAll();
    }
    else if(action == "LONG")
    {
-      lots = NormalizeLots(lots);
-      if(cur <= 0 && lots > 0)
-         trade.Buy(lots, InpSymbol);     // open on flat -> long transition
+      if(cur < 0) { CloseAll(); return; }        // flip: close short first
+      if(cur == 0 && lots > 0) trade.Buy(lots, InpSymbol);
+   }
+   else if(action == "SHORT")
+   {
+      if(cur > 0) { CloseAll(); return; }         // flip: close long first
+      if(cur == 0 && lots > 0) trade.Sell(lots, InpSymbol);
    }
 }
 //+------------------------------------------------------------------+
