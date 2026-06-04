@@ -28,10 +28,11 @@ class AIDecision:
     reason: str
     factors: list        # short bullet list of what drove it
     raw: str = ""
+    ok: bool = True      # False = error/no-key fallback (caller should HOLD, not act)
 
     @classmethod
     def flat(cls, why: str) -> "AIDecision":
-        return cls("flat", 0.0, why, [], "")
+        return cls("flat", 0.0, why, [], "", ok=False)
 
 
 PROMPT = """\

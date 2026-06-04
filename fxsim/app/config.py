@@ -13,6 +13,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
+# Auto-load fxsim/.env (and cwd .env) so credentials work without manual sourcing
+# on Windows. Must run before Settings() reads the environment below.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / ".env")
+    load_dotenv()
+except Exception:
+    pass
+
 DEFAULT_DB_PATH = DATA_DIR / "fxsim.db"
 
 

@@ -90,6 +90,12 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
     print(f"[ai] ({trigger}) consulting Opus... trend={ctx['technical']['trend']} "
           f"price={ctx['technical']['price']} pos={status.get('position_lots')}", flush=True)
     decision = trader.decide(ctx)
+    if not decision.ok:
+        # could not get a real decision (no key / API / parse error) -> HOLD the
+        # current position; never flatten on an error.
+        print(f"[ai] no decision ({decision.reason}); HOLDING current position, "
+              f"no signal written", flush=True)
+        return False
 
     # drawdown brake on the hard cap (capital preservation)
     run_id = _ongoing_run(balance, trader.model, max_risk)
