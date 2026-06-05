@@ -22,6 +22,8 @@ input int    InpTimerSec   = 30;         // export/check interval
 input string InpBarsFile   = "steady_bars.csv";
 input string InpStatusFile = "steady_status.csv";
 input string InpSignalFile = "steady_signal.txt";
+input double InpResizeMinLots = 0.10;    // resize open pos only if lot diff >= this ...
+input double InpResizePct     = 0.20;    // ... or >= this fraction of current size (deadband)
 
 CTrade trade;
 
@@ -117,8 +119,28 @@ void CloseAll()
    }
 }
 
+// reduce our net exposure by `vol` lots (partial/full closes across tickets)
+void ReduceBy(double vol)
+{
+   for(int i = PositionsTotal() - 1; i >= 0 && vol > 0; i--)
+   {
+      ulong tk = PositionGetTicket(i);
+      if(!PositionSelectByTicket(tk)) continue;
+      if(PositionGetString(POSITION_SYMBOL) != InpSymbol ||
+         PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+      double pv = PositionGetDouble(POSITION_VOLUME);
+      double cv = NormalizeLots(MathMin(pv, vol));
+      if(cv <= 0) continue;
+      if(cv >= pv) trade.PositionClose(tk);
+      else         trade.PositionClosePartial(tk, cv);
+      vol -= cv;
+   }
+}
+
 //--- read + act on the Python signal -------------------------------
 //  signal: "LONG <lots>" | "SHORT <lots>" | "FLAT 0"
+//  Tracks the AI's target size: opens, flips, and RESIZES an open position
+//  (add / partial-close) toward the target, with a deadband to avoid churn.
 void ProcessSignal()
 {
    if(!FileIsExist(InpSignalFile, FILE_COMMON)) return;
@@ -131,24 +153,38 @@ void ProcessSignal()
    int k = StringSplit(line, ' ', parts);
    if(k < 1) return;
    string action = parts[0];
-   double lots = (k >= 2) ? StringToDouble(parts[1]) : 0.0;
-   lots = NormalizeLots(lots);
+   double lots = (k >= 2) ? NormalizeLots(StringToDouble(parts[1])) : 0.0;
 
-   double cur = CurrentLots();   // signed: + long / - short
+   double target = 0.0;                       // signed target
+   if(action == "LONG")  target = lots;
+   else if(action == "SHORT") target = -lots;
 
-   if(action == "FLAT")
+   double cur = CurrentLots();                // signed: + long / - short
+
+   // 1) FLAT -> close everything
+   if(target == 0.0) { if(MathAbs(cur) > 0) CloseAll(); return; }
+   // 2) opposite sign -> flip: close now, reopen on next tick
+   if(cur != 0.0 && (cur > 0) != (target > 0)) { CloseAll(); return; }
+   // 3) flat -> open fresh in the target direction
+   if(cur == 0.0)
    {
-      if(MathAbs(cur) > 0) CloseAll();
+      if(target > 0) trade.Buy(MathAbs(target), InpSymbol);
+      else           trade.Sell(MathAbs(target), InpSymbol);
+      return;
    }
-   else if(action == "LONG")
+   // 4) same direction -> resize toward target if outside the deadband
+   double cur_abs = MathAbs(cur), tgt_abs = MathAbs(target);
+   double diff = tgt_abs - cur_abs;
+   double band = MathMax(InpResizeMinLots, cur_abs * InpResizePct);
+   if(MathAbs(diff) < band) return;           // close enough -> hold (no churn)
+   if(diff > 0)
    {
-      if(cur < 0) { CloseAll(); return; }        // flip: close short first
-      if(cur == 0 && lots > 0) trade.Buy(lots, InpSymbol);
+      double add = NormalizeLots(diff);
+      if(add > 0) { if(target > 0) trade.Buy(add, InpSymbol); else trade.Sell(add, InpSymbol); }
    }
-   else if(action == "SHORT")
+   else
    {
-      if(cur > 0) { CloseAll(); return; }         // flip: close long first
-      if(cur == 0 && lots > 0) trade.Sell(lots, InpSymbol);
+      ReduceBy(NormalizeLots(-diff));          // trim toward target
    }
 }
 //+------------------------------------------------------------------+
