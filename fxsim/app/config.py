@@ -61,10 +61,17 @@ class Settings:
 
     # --- account / risk ---
     initial_balance: float = field(default_factory=lambda: _get_float("FXSIM_BALANCE", 100_000.0))
-    risk_per_trade: float = field(default_factory=lambda: _get_float("FXSIM_RISK", 0.02))
+    risk_per_trade: float = field(default_factory=lambda: _get_float("FXSIM_RISK", 0.04))
     max_position_units: int = field(
         default_factory=lambda: int(_get_float("FXSIM_MAX_UNITS", 100_000))
     )
+    # Hard leverage ceiling: notional (units * price) may never exceed
+    # max_leverage * equity, regardless of risk_per_trade or ATR. This is both
+    # the "aggression dial" and a safety brake — without it a small ATR (e.g.
+    # intraday, or the old fixed-rate era) lets risk-based sizing explode to
+    # absurd leverage. Set 0 to disable. docs/RESEARCH.md has the return/DD
+    # trade-off across leverage levels.
+    max_leverage: float = field(default_factory=lambda: _get_float("FXSIM_MAX_LEVERAGE", 5.0))
     # cost model
     spread_pips: float = field(default_factory=lambda: _get_float("FXSIM_SPREAD_PIPS", 0.8))
     commission_per_million: float = field(

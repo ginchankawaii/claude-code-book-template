@@ -34,6 +34,30 @@ def test_position_sizing_respects_cap():
     assert abs(eng.state.position.units) <= 5000
 
 
+def test_leverage_ceiling_caps_notional():
+    # Tiny ATR + huge risk would size an absurd position; the leverage cap must
+    # hold notional (units * price) at or below max_leverage * equity.
+    cfg = Settings(initial_balance=100000, risk_per_trade=0.99,
+                   max_position_units=10**12, max_leverage=5.0)
+    eng = PaperTradingEngine(0, "USD_JPY", TechnicalStrategy(), cfg, persist=False)
+    df = _df()
+    eng.step(df.iloc[:60], Signal(direction=1, score=0.9))
+    price = eng.state.position.entry_price
+    notional = abs(eng.state.position.units) * price
+    assert notional <= 5.0 * eng.balance * 1.001  # within rounding
+
+
+def test_leverage_disabled_when_zero():
+    cfg = Settings(initial_balance=100000, risk_per_trade=0.02,
+                   max_position_units=10**12, max_leverage=0.0)
+    eng = PaperTradingEngine(0, "USD_JPY", TechnicalStrategy(), cfg, persist=False)
+    df = _df()
+    eng.step(df.iloc[:60], Signal(direction=1, score=0.9))
+    price = eng.state.position.entry_price
+    # with the cap off, notional can exceed 5x (risk-based sizing rules)
+    assert abs(eng.state.position.units) * price > 5.0 * eng.balance
+
+
 def test_stop_loss_triggers():
     cfg = Settings(initial_balance=100000)
     eng = PaperTradingEngine(0, "USD_JPY", TechnicalStrategy(), cfg, persist=False)

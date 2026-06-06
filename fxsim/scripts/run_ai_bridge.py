@@ -106,7 +106,8 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
 
     pip = pip_size(instrument)
     lots = size_lots(decision.action, decision.conviction, balance,
-                     ctx["technical"]["atr"], pip, max_risk, max_lots, brake)
+                     ctx["technical"]["atr"], pip, max_risk, max_lots, brake,
+                     price=ctx["technical"]["price"], max_leverage=cfg.max_leverage)
     action = decision.action.upper()
     if lots <= 0:
         action = "FLAT"

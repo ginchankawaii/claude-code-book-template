@@ -56,12 +56,17 @@ class MT5LiveTrader:
     def stop(self, *_: object) -> None:
         self._stop = True
 
-    def _target_units(self, direction: int, balance: float, atr: float) -> float:
+    def _target_units(self, direction: int, balance: float, atr: float,
+                      price: float = 0.0) -> float:
         if direction <= 0:
             return 0.0
         stop_distance = max(atr * 1.5, self.pip * 5)
         units = (balance * self.cfg.risk_per_trade) / stop_distance
-        return float(min(units, self.cfg.max_position_units))
+        units = min(units, self.cfg.max_position_units)
+        # hard leverage ceiling: notional (units * price) <= max_leverage * equity
+        if self.cfg.max_leverage > 0 and price > 0:
+            units = min(units, self.cfg.max_leverage * balance / price)
+        return float(units)
 
     def _track_and_adapt(self, equity: float, is_long: bool, when: datetime) -> None:
         # approximate per-trade pnl from equity at entry/exit (long-or-flat)
@@ -94,11 +99,12 @@ class MT5LiveTrader:
         atr = df.iloc[-1]["atr"]
         if math.isnan(atr):
             atr = self.pip * 10
-        target = self._target_units(sig.direction, acct.balance, atr)
+        price = float(df.iloc[-1]["close"])
+        target = self._target_units(sig.direction, acct.balance, atr, price)
 
         # adapt FIRST (so the new risk sizes this bar's target), then reconcile
         self._track_and_adapt(acct.equity, sig.direction > 0, latest.time)
-        target = self._target_units(sig.direction, acct.balance, atr)
+        target = self._target_units(sig.direction, acct.balance, atr, price)
         self.broker.set_target_units(target, reason=sig.reason[:24])
 
         db.record_signal(self.run_id, latest.time, self.instrument, "combined",

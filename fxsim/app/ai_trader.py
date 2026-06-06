@@ -132,11 +132,15 @@ UNITS_PER_LOT = 100_000.0
 
 def size_lots(action: str, conviction: float, balance: float, atr: float, pip: float,
               max_risk: float, max_lots: float, brake: float = 1.0,
-              min_lot: float = 0.01) -> float:
+              min_lot: float = 0.01, price: float = 0.0,
+              max_leverage: float = 0.0) -> float:
     """Convert an AI decision into MT5 lots within the hard risk cap.
 
     risk_used = max_risk * conviction * brake   (brake<1 after drawdowns)
     units = balance * risk_used / stop_distance ; lots = units / 100k (capped).
+
+    When price and max_leverage are given, also cap notional (lots * 100k * price)
+    at max_leverage * balance — the same hard leverage ceiling the engine applies.
     """
     if action == "flat" or conviction <= 0 or balance <= 0:
         return 0.0
@@ -144,5 +148,7 @@ def size_lots(action: str, conviction: float, balance: float, atr: float, pip: f
     risk_used = max_risk * max(0.0, min(1.0, conviction)) * max(0.0, min(1.0, brake))
     units = (balance * risk_used) / stop
     lots = min(units / UNITS_PER_LOT, max_lots)
+    if max_leverage > 0 and price > 0:
+        lots = min(lots, max_leverage * balance / (price * UNITS_PER_LOT))
     lots = round(lots / min_lot) * min_lot
     return lots if lots >= min_lot else 0.0

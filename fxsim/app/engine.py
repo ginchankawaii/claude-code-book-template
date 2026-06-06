@@ -65,7 +65,13 @@ class PaperTradingEngine:
         stop_distance = max(atr * 1.5, self.pip * 5)
         risk_cash = self.balance * self.cfg.risk_per_trade
         units = int(risk_cash / stop_distance)
-        return max(0, min(units, self.cfg.max_position_units))
+        units = min(units, self.cfg.max_position_units)
+        # Hard leverage ceiling: notional (units * price) <= max_leverage * equity.
+        # Balance and price are both in the quote currency, so units * price is the
+        # notional in quote terms and balance is the equity in quote terms.
+        if self.cfg.max_leverage > 0 and price > 0:
+            units = min(units, int(self.cfg.max_leverage * self.balance / price))
+        return max(0, units)
 
     # ------------------------------------------------------------------ #
     # equity
