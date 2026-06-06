@@ -207,7 +207,7 @@ def get_live(run_id: int | None = None, kind: str | None = None) -> dict:
         params = json.loads(run["params"]) if run and run.get("params") else {}
     except (json.JSONDecodeError, TypeError):
         params = {}
-    base_risk = params.get("base_risk")
+    base_risk = params.get("base_risk") or params.get("max_risk")
     cur_risk = adjustments[-1]["new_val"] if adjustments else base_risk
     wins = [t for t in closed if (t["pnl"] or 0) > 0]
 
@@ -247,8 +247,23 @@ def get_live(run_id: int | None = None, kind: str | None = None) -> dict:
         "recent_trades": closed[-10:][::-1],
         "recent_adjustments": adjustments[-12:][::-1],
         "decisions": _recent_decisions(rid),
+        "holdings": _latest_holdings(rid),
         "last_price": equity[-1]["price"] if equity else None,
     }
+
+
+def _latest_holdings(run_id: int) -> list | None:
+    """Most recent portfolio snapshot (stock system writes one per cycle)."""
+    latest = None
+    for s in db.load_signals(run_id):
+        if s.get("source") == "portfolio":
+            latest = s
+    if not latest or not latest.get("components"):
+        return None
+    try:
+        return json.loads(latest["components"]).get("holdings")
+    except (json.JSONDecodeError, TypeError):
+        return None
 
 
 def _recent_decisions(run_id: int, limit: int = 15) -> list[dict]:

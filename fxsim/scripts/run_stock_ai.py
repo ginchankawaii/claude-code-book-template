@@ -122,6 +122,19 @@ def cycle(kabu: KabuStation, trader: AIStockTrader, max_risk: float, max_positio
             print(f"      - {f}", flush=True)
         if call.plan:
             print(f"      ↳ 保有方針: {call.plan}", flush=True)
+
+    # portfolio snapshot for the dashboard (separate source so it does NOT show
+    # up in the decision log, which only reads source="combined").
+    holds = kabu.positions()
+    hold_rows = []
+    for p in holds:
+        cur = kabu.price(p.symbol) or p.price
+        hold_rows.append({"symbol": p.symbol, "qty": int(p.qty), "price": cur,
+                          "value": int(p.qty * cur), "pnl": int(p.qty * (cur - p.price))})
+    total_val = sum(h["value"] for h in hold_rows)
+    db.record_signal(run_id, datetime.now(timezone.utc), "PORTFOLIO", "portfolio",
+                     len(hold_rows), float(total_val), f"{len(hold_rows)}銘柄保有",
+                     {"holdings": hold_rows, "trigger": trigger})
     return True
 
 

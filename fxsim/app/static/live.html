@@ -93,6 +93,20 @@ async function tick(){
   const retCls = d.return_pct>=0?'pos':'neg';
   const riskPctOfBase = d.base_risk? Math.round(d.current_risk/d.base_risk*100):100;
   const pos = d.open_position;
+  const H = d.holdings;   // array for the stock system, null for FX
+  let posCard, lastCard;
+  if (H) {                // --- 信用株: show actual holdings ---
+    const n = H.length;
+    const chips = H.map(h=>{
+      const pl = h.pnl||0, c = pl>=0?'pos':'neg';
+      return `<span style="white-space:nowrap">${h.symbol} <span class="${c}">${pl>=0?'+':''}${fmt(pl)}</span></span>`;
+    }).join(' ・ ');
+    posCard = card('保有銘柄', n>0?`<span style="font-size:14px">${chips}</span>`:'なし（待機）');
+    lastCard = card('保有数 / 評価額', n+'銘柄 / ¥'+fmt(H.reduce((a,h)=>a+(h.value||0),0)));
+  } else {                // --- FX: position lots + trade count ---
+    posCard = card('ポジション', pos?`<span class="${pos.side==='LONG'?'pos':'neg'}">${pos.side}</span>`:'なし（待機）');
+    lastCard = card('取引数 / 勝率', d.n_trades+' / '+d.win_rate.toFixed(0)+'%');
+  }
   document.getElementById('cards').innerHTML =
     card('現在エクイティ', fmt(d.current_equity)) +
     card('損益', pct(d.return_pct), retCls) +
@@ -100,8 +114,7 @@ async function tick(){
     card('現在リスク/トレード', (d.current_risk*100).toFixed(2)+'%' +
         `<div class="riskbar"><div style="width:${riskPctOfBase}%"></div></div>`+
         `<span class="muted">基準 ${(d.base_risk*100).toFixed(2)}% の ${riskPctOfBase}%</span>`) +
-    card('ポジション', pos?`<span class="${pos.side==='LONG'?'pos':'neg'}">${pos.side}</span>`:'なし（待機）') +
-    card('取引数 / 勝率', d.n_trades+' / '+d.win_rate.toFixed(0)+'%');
+    posCard + lastCard;
 
   // equity chart
   const labels = d.equity.map(e=>e.time.slice(0,10));
