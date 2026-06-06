@@ -38,11 +38,12 @@ from app.indicators import candles_to_df, enrich
 from app.providers.csv import load_csv_file
 
 
-def _ongoing_run(start_balance: float, model: str, max_risk: float) -> int:
+def _ongoing_run(start_balance: float, model: str, max_risk: float,
+                 granularity: str = "H1") -> int:
     for r in db.list_runs():
         if not r.get("ended_at") and "steady-ai" in (r.get("params") or ""):
             return r["id"]
-    return db.create_run(mode="live", instrument="USD_JPY", granularity="D",
+    return db.create_run(mode="live", instrument="USD_JPY", granularity=granularity,
                          initial_balance=start_balance,
                          params={"system": "steady-ai", "model": model, "max_risk": max_risk})
 
@@ -126,7 +127,7 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
             factors = decision.factors
 
     # drawdown brake on the hard cap (capital preservation)
-    run_id = _ongoing_run(balance, trader.model, max_risk)
+    run_id = _ongoing_run(balance, trader.model, max_risk, granularity)
     db.record_equity(run_id, datetime.now(timezone.utc), balance, equity, price)
     eq_hist = [e["equity"] for e in db.load_equity(run_id)] or [equity]
     brake, _, _ = AdaptiveController(AdaptiveConfig(base_risk=1.0, min_risk=0.2)).evaluate(eq_hist, [])
