@@ -132,7 +132,7 @@ Claude Code on the web の実行環境はネットワークポリシーで外部
 | OANDA 実レート（live） | `api-fxtrade.oanda.com` |
 | ファンダ分析（Claude API） | `api.anthropic.com` |
 
-許可リスト設定前は `FXSIM_PROVIDER=sample` / `FXSIM_FUND_MODE=file` で
+許可リスト設定前は `FXSIM_PROVIDER=sample` / `FXSIM_FUND_MODE=stub` で
 完全オフライン動作します。
 詳細: https://code.claude.com/docs/en/claude-code-on-the-web
 
@@ -140,10 +140,11 @@ Claude Code on the web の実行環境はネットワークポリシーで外部
 
 ## ファンダメンタル分析の3モード（`FXSIM_FUND_MODE`）
 
-- `stub` … 常に中立（テクニカルのみで評価したいとき）
-- `file` … `data/fundamental.json` のキャッシュを読む（既定）。Claude が随時更新可能
+- `stub` … 常に中立（**既定**）。検証済みのトレンドエッジをそのまま走らせる
+- `file` … `data/fundamental.json` のキャッシュを読む。Claude が随時更新可能
 - `anthropic` … Claude API + web 検索で実ニュースを読み、`{bias, reason, half_life_hours}`
-  を生成して `data/fundamental.json` にキャッシュ（`ANTHROPIC_API_KEY` が必要）
+  を生成して `data/fundamental.json` にキャッシュ（`ANTHROPIC_API_KEY` が必要）。
+  「ここぞでOpusがファンダ判断」を本当に効かせるならこれ
 
 バイアスは `asof` からの経過時間で線形に減衰し、古いニュースが取引を支配しないように
 なっています。

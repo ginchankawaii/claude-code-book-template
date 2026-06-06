@@ -361,7 +361,8 @@ class AIDecisionStrategy(Strategy):
             self.technical = TrendRegimeStrategy(sma=self.cfg.trend_sma)
         else:
             self.technical = TechnicalStrategy()
-        self.fundamental = FundamentalStrategy(fundamental_mode)
+        # cfg is authoritative when no explicit mode is passed (mirrors calendar).
+        self.fundamental = FundamentalStrategy(fundamental_mode or self.cfg.fundamental_mode)
         self._calendar_mode = calendar_mode or self.cfg.calendar_mode
         self.calendar = calendar if calendar is not None else get_calendar(self._calendar_mode)
         self.decider = decider or get_decider(decision_mode)

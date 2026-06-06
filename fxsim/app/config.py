@@ -92,9 +92,12 @@ class Settings:
     )
 
     # --- fundamental analyzer ---
-    # "stub" (neutral), "file" (data/fundamental.json), or "anthropic" (live LLM)
+    # "stub" (neutral), "file" (data/fundamental.json), or "anthropic" (live LLM).
+    # Default "stub": the shipped default reduces to the bare trend edge offline
+    # (no static sample bias polluting it). Set "anthropic" (+ key) for the real
+    # Opus news/macro bias at the key moments.
     fundamental_mode: str = field(
-        default_factory=lambda: os.getenv("FXSIM_FUND_MODE", "file")
+        default_factory=lambda: os.getenv("FXSIM_FUND_MODE", "stub")
     )
     anthropic_api_key: str = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", ""))
     anthropic_model: str = field(

@@ -21,7 +21,7 @@ from .adaptive import AdaptiveConfig, AdaptiveController
 from .brokers import MT5Broker
 from .config import Settings, pip_size, settings as default_settings
 from .indicators import candles_to_df, enrich
-from .strategies.trend import TrendRegimeStrategy
+from .strategies import build_strategy
 
 _GRAN_SECONDS = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800,
                  "H1": 3600, "H4": 14400, "D": 86400}
@@ -33,9 +33,18 @@ class MT5LiveTrader:
         self.cfg = cfg or default_settings
         self.instrument = instrument
         self.broker = broker
-        self.history_bars = history_bars
         self.pip = pip_size(instrument)
-        self.strategy = TrendRegimeStrategy(sma=self.cfg.trend_sma)
+        # The shared "brain": same factory the backtest/paper paths use, so live
+        # runs the configured strategy (default: trend edge + Opus/event overlay).
+        self.strategy = build_strategy(self.cfg)
+        # Need at least trend_sma + warmup bars of history for the filter to wake.
+        self.history_bars = max(history_bars, self.cfg.trend_sma + 64)
+        # Refresh the live fundamental view + economic calendar ~once per day of
+        # bars (so Opus sees fresh macro/event data), if the strategy supports it.
+        self._can_refresh = hasattr(self.strategy, "refresh")
+        gs = _GRAN_SECONDS.get(self.cfg.granularity, 86400)
+        self._refresh_every = max(1, 86400 // gs)
+        self._bars_seen = 0
         self.controller = AdaptiveController(AdaptiveConfig(base_risk=self.cfg.risk_per_trade))
         self._stop = False
         self._last_bar_time: Optional[datetime] = None
@@ -43,15 +52,30 @@ class MT5LiveTrader:
         self._pnls: list[float] = []
         self._in_pos = False
         self._entry_equity = 0.0
+        # Long-or-flat book; mirror the engine's entry/exit hysteresis so live
+        # acts on the SAME thresholds as the backtest (not just the signal sign).
+        self._want_long = False
 
         db.init_db()
         self.run_id = db.create_run(
             mode="live", instrument=instrument, granularity=self.cfg.granularity,
             initial_balance=self.cfg.initial_balance,
-            params={"system": "steady-mt5", "trend_sma": self.cfg.trend_sma,
+            params={"system": "steady-mt5", "strategy": self.cfg.strategy,
+                    "trend_sma": self.cfg.trend_sma, "decision_mode": self.cfg.decision_mode,
                     "base_risk": self.controller.cfg.base_risk,
                     "dry_run": self.broker.dry_run},
         )
+
+    def _want_long_after(self, direction: int, score: float) -> bool:
+        """Engine-equivalent long-or-flat gate with entry/exit hysteresis."""
+        if not self._want_long:
+            if direction > 0 and abs(score) >= self.cfg.entry_threshold:
+                return True
+            return False
+        # currently long: stay unless the signal fades or turns non-long
+        if direction <= 0 or abs(score) < self.cfg.exit_threshold:
+            return False
+        return True
 
     def stop(self, *_: object) -> None:
         self._stop = True
@@ -92,6 +116,12 @@ class MT5LiveTrader:
             return False
         self._last_bar_time = latest.time
 
+        # Refresh the live macro/event view at the configured cadence (Opus only
+        # actually fires in anthropic/hybrid modes; offline this is a cheap no-op).
+        if self._can_refresh and self._bars_seen % self._refresh_every == 0:
+            self.strategy.refresh(self.instrument)
+        self._bars_seen += 1
+
         db.upsert_candles(candles)
         df = enrich(candles_to_df(candles))
         sig = self.strategy.generate(self.instrument, df)
@@ -100,18 +130,22 @@ class MT5LiveTrader:
         if math.isnan(atr):
             atr = self.pip * 10
         price = float(df.iloc[-1]["close"])
-        target = self._target_units(sig.direction, acct.balance, atr, price)
+
+        # Gate to long-or-flat using the engine's entry/exit thresholds so the
+        # live book matches the backtest (not just the raw signal sign).
+        self._want_long = self._want_long_after(sig.direction, sig.score)
+        live_dir = 1 if self._want_long else 0
 
         # adapt FIRST (so the new risk sizes this bar's target), then reconcile
-        self._track_and_adapt(acct.equity, sig.direction > 0, latest.time)
-        target = self._target_units(sig.direction, acct.balance, atr, price)
+        self._track_and_adapt(acct.equity, self._want_long, latest.time)
+        target = self._target_units(live_dir, acct.balance, atr, price)
         self.broker.set_target_units(target, reason=sig.reason[:24])
 
         db.record_signal(self.run_id, latest.time, self.instrument, "combined",
-                         sig.direction, sig.score, sig.reason, sig.components)
+                         live_dir, sig.score, sig.reason, sig.components)
         db.record_equity(self.run_id, latest.time, acct.balance, acct.equity,
                          float(df.iloc[-1]["close"]))
-        print(f"[mt5-live] {latest.time:%Y-%m-%d} {'LONG' if sig.direction>0 else 'FLAT'} "
+        print(f"[mt5-live] {latest.time:%Y-%m-%d %H:%M} {'LONG' if self._want_long else 'FLAT'} "
               f"target={target:,.0f}u eq={acct.equity:,.0f} risk={self.cfg.risk_per_trade:.4f} "
               f":: {sig.reason}", flush=True)
         return True

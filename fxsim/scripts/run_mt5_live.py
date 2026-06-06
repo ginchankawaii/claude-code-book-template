@@ -26,18 +26,23 @@ from app.mt5_live import MT5LiveTrader
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--instrument", default="USD_JPY")
-    ap.add_argument("--granularity", default="D")
-    ap.add_argument("--sma", type=int, default=150)
-    ap.add_argument("--risk", type=float, default=0.03)
-    ap.add_argument("--balance", type=float, default=100000)
+    # Defaults = the OOS-validated aggressive recipe (docs/RESEARCH.md):
+    # H1 / ~100-day trend filter / trend edge + Opus-at-key-moments / ¥500k / 5x.
+    ap.add_argument("--strategy", default="ai", choices=["ai", "trend"],
+                    help="'ai' = trend edge + Opus/event overlay; 'trend' = bare filter")
+    ap.add_argument("--granularity", default="H1")
+    ap.add_argument("--sma", type=int, default=2400)
+    ap.add_argument("--risk", type=float, default=0.04)
+    ap.add_argument("--balance", type=float, default=500000)
+    ap.add_argument("--leverage", type=float, default=5.0, help="hard leverage ceiling")
     ap.add_argument("--max-lots", type=float, default=5.0)
     ap.add_argument("--poll", type=int, default=None)
     ap.add_argument("--live", action="store_true", help="send REAL orders (default: dry-run)")
     ap.add_argument("--once", action="store_true", help="check once and exit (cron)")
     args = ap.parse_args()
 
-    cfg = Settings(strategy="trend", granularity=args.granularity, trend_sma=args.sma,
-                   risk_per_trade=args.risk, use_take_profit=False,
+    cfg = Settings(strategy=args.strategy, granularity=args.granularity, trend_sma=args.sma,
+                   risk_per_trade=args.risk, use_take_profit=False, max_leverage=args.leverage,
                    initial_balance=args.balance, max_position_units=10_000_000)
     broker = MT5Broker(
         instrument=args.instrument,
