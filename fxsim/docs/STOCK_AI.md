@@ -46,6 +46,8 @@ py -3.12 -m scripts.run_stock_ai
 py -3.12 -m scripts.run_stock_ai --prod --live
 ```
 - `--watch 7203,6758` で候補に銘柄を追加できる。
+- `--exclude 7518,9719,8053` で **インサイダー規制等の売買禁止銘柄を完全除外**（候補から外し、
+  万一AIが選んでも発注前に弾く二重防御）。勤務先・グループ銘柄は必ず指定すること。
 - ダッシュボード：`py -3.12 -m app.server` → `http://localhost:8000/live`
   （判断ログに **銘柄コード・BUY/HOLD/CLOSE・株数・確信度・理由・根拠・保有方針** が出る）
 
