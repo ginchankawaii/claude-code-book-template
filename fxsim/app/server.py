@@ -183,11 +183,14 @@ def live_page() -> str:
 
 
 @app.get("/api/live")
-def get_live(run_id: int | None = None) -> dict:
-    """Everything the live view needs for the latest (or given) run."""
-    rid = run_id or db.latest_run_id()
+def get_live(run_id: int | None = None, kind: str | None = None) -> dict:
+    """Everything the live view needs for the latest (or given) run.
+
+    kind="fx" or "stocks" picks the latest run of that system so the FX and
+    margin-stock dashboards don't overwrite each other."""
+    rid = run_id or db.latest_run_id(kind)
     if not rid:
-        return {"run": None}
+        return {"run": None, "kind": kind}
     run = db.get_run(rid)
     equity = db.load_equity(rid)
     trades = db.list_trades(rid)
@@ -210,10 +213,12 @@ def get_live(run_id: int | None = None) -> dict:
 
     # Live truth from the EA status file (the bridge persists trades in MT5, not
     # our DB), so prefer it for current equity + open position when available.
+    # Only for FX runs — the MT5 bridge has nothing to do with the stock system.
+    is_fx = bool(run and run.get("instrument") != "JP-STOCKS")
     open_pos = None
     try:
         from . import bridge as _bridge
-        live = _bridge.read_status()
+        live = _bridge.read_status() if is_fx else None
     except Exception:
         live = None
     if live and live.get("equity", 0) > 0:

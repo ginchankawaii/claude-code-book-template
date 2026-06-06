@@ -216,9 +216,17 @@ def get_run(run_id: int, db_path: Optional[str] = None) -> Optional[dict]:
         return dict(row) if row else None
 
 
-def latest_run_id(db_path: Optional[str] = None) -> Optional[int]:
+def latest_run_id(kind: Optional[str] = None, db_path: Optional[str] = None) -> Optional[int]:
+    """Latest run id. kind="fx" or "stocks" filters by instrument so the FX and
+    margin-stock systems get separate live views (JP-STOCKS == the stock system)."""
+    sql = "SELECT id FROM runs"
+    if kind == "stocks":
+        sql += " WHERE instrument = 'JP-STOCKS'"
+    elif kind == "fx":
+        sql += " WHERE instrument <> 'JP-STOCKS'"
+    sql += " ORDER BY id DESC LIMIT 1"
     with connect(db_path) as conn:
-        cur = conn.execute("SELECT id FROM runs ORDER BY id DESC LIMIT 1")
+        cur = conn.execute(sql)
         row = cur.fetchone()
         return int(row["id"]) if row else None
 

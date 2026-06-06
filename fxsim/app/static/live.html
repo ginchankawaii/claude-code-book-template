@@ -12,6 +12,9 @@
   header h1 { font-size:17px; margin:0; }
   .dot { width:10px; height:10px; border-radius:50%; background:#3fb950; box-shadow:0 0 8px #3fb950; }
   .dot.off { background:#777; box-shadow:none; }
+  #kindsw button { background:#0f1115; color:#8b949e; border:1px solid #2a2f3a; border-radius:6px;
+    padding:4px 12px; font-size:13px; cursor:pointer; }
+  #kindsw button.on { background:#1f6feb; color:#fff; border-color:#1f6feb; }
   main { padding:20px; max-width:1100px; margin:0 auto; }
   .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
   .card { background:#161a22; border:1px solid #2a2f3a; border-radius:10px; padding:14px; }
@@ -41,6 +44,10 @@
 <header>
   <span class="dot" id="dot"></span>
   <h1>Steady ライブ状況</h1>
+  <span id="kindsw" style="margin-left:12px">
+    <button id="kfx" onclick="setKind('fx')">FX</button>
+    <button id="kstk" onclick="setKind('stocks')">信用株</button>
+  </span>
   <span class="muted" id="meta"></span>
   <span class="muted" style="margin-left:auto" id="updated"></span>
 </header>
@@ -62,11 +69,21 @@ const fmt = n => (n==null?"–":Number(n).toLocaleString(undefined,{maximumFract
 const pct = n => (n==null?"–":(n>=0?"+":"")+Number(n).toFixed(2)+"%");
 function card(label,val,cls){ return `<div class="card"><div class="label">${label}</div><div class="val ${cls||''}">${val}</div></div>`; }
 
+let kind = new URLSearchParams(location.search).get('kind') || 'fx';
+function setKind(k){ kind=k; paintSwitch(); tick(); }
+function paintSwitch(){
+  document.getElementById('kfx').className = kind==='fx'?'on':'';
+  document.getElementById('kstk').className = kind==='stocks'?'on':'';
+}
+
 async function tick(){
   let d;
-  try { d = await (await fetch('/api/live')).json(); }
+  try { d = await (await fetch('/api/live?kind='+kind)).json(); }
   catch(e){ document.getElementById('meta').textContent='接続待ち...'; return; }
-  if(!d.run){ document.getElementById('meta').textContent='まだ稼働データがありません（scripts.run_steady を実行）'; return; }
+  if(!d.run){ document.getElementById('meta').textContent =
+      (kind==='stocks'?'信用株の':'FXの')+'稼働データがまだありません';
+    document.getElementById('cards').innerHTML=''; document.getElementById('decisions').innerHTML='';
+    return; }
 
   const running = d.status==='running';
   document.getElementById('dot').className = 'dot'+(running?'':' off');
@@ -118,7 +135,7 @@ async function tick(){
   }).join('');
   document.getElementById('decisions').innerHTML = dec || '<div class="muted">まだ判断ログがありません（次の判断で表示されます）</div>';
 }
-tick(); setInterval(tick, 3000);
+paintSwitch(); tick(); setInterval(tick, 3000);
 </script>
 </body>
 </html>
