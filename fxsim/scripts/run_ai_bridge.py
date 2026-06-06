@@ -1,16 +1,25 @@
-"""AI-driven live trader on the MT5 file-bridge (Opus + web search).
+"""Live trader on the MT5 file-bridge: validated trend edge + Opus overlay.
 
-Opus decides direction + leverage at KEY MOMENTS only — once a day and shortly
-after each high-impact USD/JPY economic release — weighing the real macro picture
-(fetched live via web search) against the technical state and current position.
-Sizing is the AI's conviction x a hard max-risk cap, scaled down on drawdown.
+The DECISION is the OOS-validated long-or-flat trend filter (be long only while
+price > its long SMA, else stand aside — docs/RESEARCH.md). Opus is consulted at
+the KEY MOMENTS only (once a day and shortly after each high-impact USD/JPY
+release) as a RISK-FIRST GATE: when the trend says long, Opus can confirm and
+size the conviction, or VETO it (stand aside) — it never shorts and never opens
+a long the trend filter doesn't already justify. With no API key the trend edge
+runs on its own (Opus simply can't veto). Sizing = conviction x hard max-risk x
+the 5x leverage cap, scaled down on drawdown.
 
   python -m scripts.run_ai_bridge --once --dry   # one decision, no order written
   python -m scripts.run_ai_bridge --once          # one decision now (writes signal)
   python -m scripts.run_ai_bridge                 # resident: daily + post-event
 
-Requires: SteadyBridge EA attached in MT5 (writes status/bars, executes signals),
-and ANTHROPIC_API_KEY in fxsim/.env. See docs/AI_TRADER.md.
+Default timeframe is daily (what the SteadyBridge EA feeds). For the stronger H1
+recipe (docs/RESEARCH.md) run `--granularity H1 --sma 2400` AND configure the EA
+to publish H1 bars.
+
+Requires: SteadyBridge EA attached in MT5 (writes status/bars, executes signals).
+ANTHROPIC_API_KEY in fxsim/.env enables the Opus veto; without it the trend edge
+still trades. See docs/AI_TRADER.md.
 """
 from __future__ import annotations
 
@@ -72,61 +81,78 @@ def build_context(instrument: str, candles, status: dict) -> dict:
 
 
 def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float,
-                history_csv: str, trader: AITrader, dry: bool, trigger: str) -> bool:
+                history_csv: str, trader: AITrader, dry: bool, trigger: str,
+                granularity: str = "D", sma_n: int = 90) -> bool:
     status = bridge.read_status()
     if status is None or (status.get("equity") or 0) <= 0:
         print("[ai] waiting for EA status (balance/equity). Is SteadyBridge attached & synced?",
               flush=True)
         return False
-    candles = bridge.read_bars(instrument, "D")
-    if len(candles) < 150 and Path(history_csv).exists():
-        candles = load_csv_file(Path(history_csv), instrument, "D")
-    if len(candles) < 150:
-        print(f"[ai] not enough daily history ({len(candles)} bars)", flush=True)
+    need = sma_n + 5
+    candles = bridge.read_bars(instrument, granularity)
+    if len(candles) < need and Path(history_csv).exists():
+        candles = load_csv_file(Path(history_csv), instrument, granularity)
+    if len(candles) < need:
+        print(f"[ai] not enough {granularity} history ({len(candles)} bars, need {need})", flush=True)
         return False
 
     balance = status["balance"]; equity = status["equity"]
     ctx = build_context(instrument, candles, status)
-    print(f"[ai] ({trigger}) consulting Opus... trend={ctx['technical']['trend']} "
-          f"price={ctx['technical']['price']} pos={status.get('position_lots')}", flush=True)
-    decision = trader.decide(ctx)
-    if not decision.ok:
-        # could not get a real decision (no key / API / parse error) -> HOLD the
-        # current position; never flatten on an error.
-        print(f"[ai] no decision ({decision.reason}); HOLDING current position, "
-              f"no signal written", flush=True)
-        return False
+    # VALIDATED EDGE: long only while price > long SMA, else stand aside.
+    closes = enrich(candles_to_df(candles))["close"]
+    price = float(closes.iloc[-1]); ma = float(closes.iloc[-sma_n:].mean())
+    trend_up = price > ma
+    trend_txt = f"price {price:.3f} {'>' if trend_up else '<'} SMA{sma_n} {ma:.3f}"
+
+    factors: list = []; plan = ""
+    if not trend_up:
+        # Below the trend filter -> flat. No Opus call needed (edge stands aside).
+        action, conviction, reason = "FLAT", 0.0, f"trend-down: {trend_txt} -> stand aside"
+        print(f"[ai] ({trigger}) {reason}", flush=True)
+    else:
+        # Trend says long. Opus is a veto/sizing gate at the key moments.
+        print(f"[ai] ({trigger}) trend-up ({trend_txt}); consulting Opus... "
+              f"pos={status.get('position_lots')}", flush=True)
+        decision = trader.decide(ctx)
+        if not decision.ok:
+            # No key / API error: the deterministic trend edge still says LONG.
+            action, conviction, reason = "LONG", 0.6, f"trend-up; Opus unavailable ({decision.reason})"
+        elif decision.action == "long":
+            action, conviction, reason = "LONG", decision.conviction, decision.reason
+            factors, plan = decision.factors, decision.plan
+        else:
+            # Opus veto (short or flat) -> stand aside. Never short.
+            action, conviction, reason = "FLAT", 0.0, f"trend-up but Opus veto ({decision.action}): {decision.reason}"
+            factors = decision.factors
 
     # drawdown brake on the hard cap (capital preservation)
     run_id = _ongoing_run(balance, trader.model, max_risk)
-    db.record_equity(run_id, datetime.now(timezone.utc), balance, equity,
-                     ctx["technical"]["price"])
+    db.record_equity(run_id, datetime.now(timezone.utc), balance, equity, price)
     eq_hist = [e["equity"] for e in db.load_equity(run_id)] or [equity]
     brake, _, _ = AdaptiveController(AdaptiveConfig(base_risk=1.0, min_risk=0.2)).evaluate(eq_hist, [])
 
     pip = pip_size(instrument)
-    lots = size_lots(decision.action, decision.conviction, balance,
+    lots = size_lots("long" if action == "LONG" else "flat", conviction, balance,
                      ctx["technical"]["atr"], pip, max_risk, max_lots, brake,
-                     price=ctx["technical"]["price"], max_leverage=cfg.max_leverage)
-    action = decision.action.upper()
+                     price=price, max_leverage=cfg.max_leverage)
     if lots <= 0:
         action = "FLAT"
-    direction = {"LONG": 1, "SHORT": -1, "FLAT": 0}[action]
-    risk_used = round(max_risk * decision.conviction * brake, 4)
+    direction = 1 if action == "LONG" else 0   # long-or-flat; never short
+    risk_used = round(max_risk * conviction * brake, 4)
 
     now = datetime.now(timezone.utc)
     db.record_signal(run_id, now, instrument, "combined", direction,
-                     decision.conviction * direction, decision.reason,
-                     {"action": action, "conviction": decision.conviction,
+                     conviction * direction, reason,
+                     {"action": action, "conviction": conviction, "trend_up": trend_up,
                       "risk_used": risk_used, "brake": round(brake, 3),
                       "target_lots": lots, "position_lots": status.get("position_lots", 0.0),
-                      "factors": decision.factors, "plan": decision.plan, "trigger": trigger})
-    print(f"[ai] decision: {action} {lots:.2f} lots | conviction {decision.conviction:.2f} "
-          f"risk {risk_used:.3f} (brake {brake:.2f}) | {decision.reason}", flush=True)
-    for f in decision.factors:
+                      "factors": factors, "plan": plan, "trigger": trigger})
+    print(f"[ai] decision: {action} {lots:.2f} lots | conviction {conviction:.2f} "
+          f"risk {risk_used:.3f} (brake {brake:.2f}) | {reason}", flush=True)
+    for f in factors:
         print(f"      - {f}", flush=True)
-    if decision.plan:
-        print(f"      ↳ 保有方針: {decision.plan}", flush=True)
+    if plan:
+        print(f"      ↳ 保有方針: {plan}", flush=True)
     if dry:
         print("[ai][DRY] signal NOT written", flush=True)
     else:
@@ -138,8 +164,10 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--instrument", default="USD_JPY")
-    ap.add_argument("--max-risk", type=float, default=0.05)
+    ap.add_argument("--max-risk", type=float, default=0.04)
     ap.add_argument("--max-lots", type=float, default=5.0)
+    ap.add_argument("--granularity", default="D", help="bars the EA publishes (D | H1 ...)")
+    ap.add_argument("--sma", type=int, default=90, help="trend-filter SMA (daily 90; H1 2400)")
     ap.add_argument("--model", default=None, help="default claude-opus-4-8")
     ap.add_argument("--history", default="data/USD_JPY_D.csv")
     ap.add_argument("--poll", type=int, default=600, help="resident poll seconds")
@@ -151,13 +179,14 @@ def main() -> None:
     ap.add_argument("--dry", action="store_true")
     args = ap.parse_args()
 
-    cfg = Settings(strategy="ai", granularity="D")
+    cfg = Settings(strategy="ai", granularity=args.granularity)
     db.init_db()
     trader = AITrader(model=args.model)
 
     if args.once:
         decide_once(cfg, args.instrument, args.max_risk, args.max_lots, args.history,
-                    trader, args.dry, trigger="manual")
+                    trader, args.dry, trigger="manual",
+                    granularity=args.granularity, sma_n=args.sma)
         return
 
     print(f"[ai] resident. model={trader.model} max_risk={args.max_risk} "
@@ -189,7 +218,8 @@ def main() -> None:
 
             if trigger:
                 if decide_once(cfg, args.instrument, args.max_risk, args.max_lots,
-                               args.history, trader, args.dry, trigger):
+                               args.history, trader, args.dry, trigger,
+                               granularity=args.granularity, sma_n=args.sma):
                     last_decision = _time.time()
         except Exception as exc:
             print(f"[ai] loop error: {exc}", flush=True)
