@@ -260,9 +260,11 @@ def _recent_decisions(run_id: int, limit: int = 15) -> list[dict]:
                 comp = {}
         out.append({
             "time": s["time"],
+            "symbol": s.get("instrument", ""),
             "action": comp.get("action", "FLAT"),
             "conviction": comp.get("conviction", 0.0),
             "target_lots": comp.get("target_lots", 0.0),
+            "target_shares": comp.get("target_shares", 0),
             "risk_used": comp.get("risk_used", 0.0),
             "reason": s.get("reason", ""),
             "factors": comp.get("factors", []),

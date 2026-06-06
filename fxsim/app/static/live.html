@@ -102,12 +102,13 @@ async function tick(){
     const cls = a==='LONG'?'pos':(a==='SHORT'?'neg':'muted');
     const facts = (x.factors||[]).map(f=>`<li>${f}</li>`).join('');
     const conv = Math.round((x.conviction||0)*100);
-    const lots = Number(x.target_lots||0).toFixed(2);
-    const risk = ((x.risk_used||0)*100).toFixed(1);
+    const sh = Number(x.target_shares||0);
+    const size = sh>0 ? (sh+'株') : (Number(x.target_lots||0).toFixed(2)+'ロット');
+    const sym = x.symbol && x.symbol!=='USD_JPY' ? `<span style="font-weight:700">${x.symbol}</span> ` : '';
     return `<div class="dec">
       <div class="dechead">
-        <span class="${cls}" style="font-weight:700">${a}</span>
-        <span class="muted">${lots}ロット ・ 確信度${conv}% ・ リスク${risk}%</span>
+        ${sym}<span class="${cls}" style="font-weight:700">${a}</span>
+        <span class="muted">${size} ・ 確信度${conv}%</span>
         <span class="muted" style="margin-left:auto">${x.time.slice(0,16).replace('T',' ')} ${x.trigger?('· '+x.trigger):''}</span>
       </div>
       <div class="decreason">${x.reason||''}</div>
