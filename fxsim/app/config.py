@@ -57,10 +57,12 @@ class Settings:
     instruments: list[str] = field(
         default_factory=lambda: _get_list("FXSIM_INSTRUMENTS", ["USD_JPY"])
     )
-    granularity: str = field(default_factory=lambda: os.getenv("FXSIM_GRANULARITY", "M15"))
+    # H1 is the OOS-validated aggressive default (docs/RESEARCH.md, research_run8).
+    granularity: str = field(default_factory=lambda: os.getenv("FXSIM_GRANULARITY", "H1"))
 
     # --- account / risk ---
-    initial_balance: float = field(default_factory=lambda: _get_float("FXSIM_BALANCE", 100_000.0))
+    # Default account = ¥500k. JPY (quote currency for USD_JPY).
+    initial_balance: float = field(default_factory=lambda: _get_float("FXSIM_BALANCE", 500_000.0))
     risk_per_trade: float = field(default_factory=lambda: _get_float("FXSIM_RISK", 0.04))
     max_position_units: int = field(
         default_factory=lambda: int(_get_float("FXSIM_MAX_UNITS", 100_000))
@@ -84,9 +86,9 @@ class Settings:
     entry_threshold: float = field(default_factory=lambda: _get_float("FXSIM_ENTRY_TH", 0.20))
     exit_threshold: float = field(default_factory=lambda: _get_float("FXSIM_EXIT_TH", 0.08))
     # Fixed 2:1 take-profit suits mean-reversion but caps trend winners short.
-    # Trend strategies set this False so exits come from the signal or the stop.
+    # Default OFF: the trend edge needs winners to run (exits via signal/stop).
     use_take_profit: bool = field(
-        default_factory=lambda: os.getenv("FXSIM_USE_TAKE_PROFIT", "1") not in ("0", "false", "")
+        default_factory=lambda: os.getenv("FXSIM_USE_TAKE_PROFIT", "0") not in ("0", "false", "")
     )
 
     # --- fundamental analyzer ---
@@ -100,17 +102,27 @@ class Settings:
     )
 
     # --- strategy selection --------------------------------------------------
-    # "trend" (OOS-validated daily trend filter), "ai", "combined"/"off"
+    # "ai" (trend edge + Opus/event overlay, default), "trend" (bare filter),
+    # "combined"/"off" (plain technical+fundamental blend).
     strategy: str = field(default_factory=lambda: os.getenv("FXSIM_STRATEGY", "ai"))
-    trend_sma: int = field(default_factory=lambda: int(_get_float("FXSIM_TREND_SMA", 150)))
+    # ~100-day trend filter on H1 bars — the OOS-validated edge (research_run8).
+    trend_sma: int = field(default_factory=lambda: int(_get_float("FXSIM_TREND_SMA", 2400)))
+    # What the AI layer uses as its technical base signal:
+    #   "trend"     = the validated trend filter (default; the actual edge)
+    #   "technical" = the mechanical MA/MACD/RSI/BB ensemble (loses OOS — legacy)
+    ai_base: str = field(default_factory=lambda: os.getenv("FXSIM_AI_BASE", "trend"))
 
     # --- AI decision layer ---------------------------------------------------
     # Who makes the final call:
-    #   "rule"      = deterministic, offline-capable risk-aware decider (default)
-    #   "anthropic" = Claude weighs technicals + fundamentals + the upcoming
-    #                 event calendar and decides (needs key + allow-listed host)
+    #   "rule"      = deterministic, offline-capable risk-aware decider
+    #   "anthropic" = Claude weighs technicals + fundamentals + events and decides
+    #   "hybrid"    = rule for free on quiet bars; consult Opus only at the moments
+    #                 that matter (actionable / borderline / disagreement / event),
+    #                 as a veto-only gate. Falls back to rule with no API key.
+    # Default "hybrid": keep the Opus fundamental/event check "for the key moments"
+    # while staying offline-safe and cheap.
     decision_mode: str = field(
-        default_factory=lambda: os.getenv("FXSIM_DECISION_MODE", "rule")
+        default_factory=lambda: os.getenv("FXSIM_DECISION_MODE", "hybrid")
     )
     decision_model: str = field(
         default_factory=lambda: os.getenv("FXSIM_DECISION_MODEL", "claude-opus-4-8")

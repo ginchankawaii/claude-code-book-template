@@ -23,9 +23,12 @@ def build_strategy(cfg: Settings | None = None) -> Strategy:
     """Construct the active strategy.
 
     Selected by ``FXSIM_STRATEGY``:
-      * "trend" — daily long-biased trend-regime filter (the OOS-validated edge;
-        pair with FXSIM_USE_TAKE_PROFIT=0 so winners run).
-      * "ai"    — event-aware AI decision layer (rule / hybrid / anthropic).
+      * "ai"    — DEFAULT. Event-aware decision layer whose technical base is the
+        validated trend filter (FXSIM_AI_BASE=trend), with the hybrid decider so
+        Opus only weighs in at the key moments. Offline/keyless it reduces exactly
+        to the bare trend edge; live it adds the event blackout + Opus veto.
+      * "trend" — the bare long-biased trend-regime filter (pair with
+        FXSIM_USE_TAKE_PROFIT=0 so winners run).
       * "combined" / "off" — plain mechanical technical+fundamental blend.
     """
     cfg = cfg or settings

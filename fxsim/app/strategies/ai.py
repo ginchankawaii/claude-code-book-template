@@ -41,6 +41,7 @@ from ..models import Signal
 from .base import Strategy
 from .fundamental import FundamentalStrategy
 from .technical import TechnicalStrategy
+from .trend import TrendRegimeStrategy
 
 
 @dataclass
@@ -349,9 +350,17 @@ class AIDecisionStrategy(Strategy):
         fundamental_mode: str | None = None,
         calendar: EconomicCalendar | None = None,
         decider: Decider | None = None,
+        technical: Strategy | None = None,
     ) -> None:
         self.cfg = cfg or default_settings
-        self.technical = TechnicalStrategy()
+        # Technical base = the validated trend filter by default (the real edge);
+        # the mechanical ensemble loses OOS and is kept only as a legacy option.
+        if technical is not None:
+            self.technical = technical
+        elif (self.cfg.ai_base or "trend").lower() == "trend":
+            self.technical = TrendRegimeStrategy(sma=self.cfg.trend_sma)
+        else:
+            self.technical = TechnicalStrategy()
         self.fundamental = FundamentalStrategy(fundamental_mode)
         self._calendar_mode = calendar_mode or self.cfg.calendar_mode
         self.calendar = calendar if calendar is not None else get_calendar(self._calendar_mode)
