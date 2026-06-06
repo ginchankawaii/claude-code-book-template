@@ -119,11 +119,13 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
                      {"action": action, "conviction": decision.conviction,
                       "risk_used": risk_used, "brake": round(brake, 3),
                       "target_lots": lots, "position_lots": status.get("position_lots", 0.0),
-                      "factors": decision.factors, "trigger": trigger})
+                      "factors": decision.factors, "plan": decision.plan, "trigger": trigger})
     print(f"[ai] decision: {action} {lots:.2f} lots | conviction {decision.conviction:.2f} "
           f"risk {risk_used:.3f} (brake {brake:.2f}) | {decision.reason}", flush=True)
     for f in decision.factors:
         print(f"      - {f}", flush=True)
+    if decision.plan:
+        print(f"      ↳ 保有方針: {decision.plan}", flush=True)
     if dry:
         print("[ai][DRY] signal NOT written", flush=True)
     else:

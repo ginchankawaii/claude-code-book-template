@@ -241,8 +241,35 @@ def get_live(run_id: int | None = None) -> dict:
         "equity": [{"time": e["time"], "equity": e["equity"]} for e in equity],
         "recent_trades": closed[-10:][::-1],
         "recent_adjustments": adjustments[-12:][::-1],
+        "decisions": _recent_decisions(rid),
         "last_price": equity[-1]["price"] if equity else None,
     }
+
+
+def _recent_decisions(run_id: int, limit: int = 15) -> list[dict]:
+    """AI decision log (reason / factors / hold-plan) for the live view."""
+    out = []
+    for s in db.load_signals(run_id):
+        if s.get("source") != "combined":
+            continue
+        comp = {}
+        if s.get("components"):
+            try:
+                comp = json.loads(s["components"])
+            except (json.JSONDecodeError, TypeError):
+                comp = {}
+        out.append({
+            "time": s["time"],
+            "action": comp.get("action", "FLAT"),
+            "conviction": comp.get("conviction", 0.0),
+            "target_lots": comp.get("target_lots", 0.0),
+            "risk_used": comp.get("risk_used", 0.0),
+            "reason": s.get("reason", ""),
+            "factors": comp.get("factors", []),
+            "plan": comp.get("plan", ""),
+            "trigger": comp.get("trigger", ""),
+        })
+    return out[-limit:][::-1]
 
 
 # static assets (chart.js, css, js)

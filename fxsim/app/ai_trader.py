@@ -27,12 +27,13 @@ class AIDecision:
     conviction: float    # 0..1 (drives leverage within the hard cap)
     reason: str
     factors: list        # short bullet list of what drove it
+    plan: str = ""       # hold/exit plan in plain language (when/why to change)
     raw: str = ""
     ok: bool = True      # False = error/no-key fallback (caller should HOLD, not act)
 
     @classmethod
     def flat(cls, why: str) -> "AIDecision":
-        return cls("flat", 0.0, why, [], "", ok=False)
+        return cls("flat", 0.0, why, [], "", "", ok=False)
 
 
 PROMPT = """\
@@ -49,8 +50,12 @@ Then weigh that macro picture together with the TECHNICAL STATE and the CURRENT
 POSITION, and choose:
   - action: "long", "short", or "flat" (stand aside / close),
   - conviction: 0.0-1.0 (how strongly; this scales position size),
-  - reason: one or two sentences,
-  - factors: 2-5 short bullet strings naming the key drivers.
+  - reason: one or two sentences, IN JAPANESE, citing the concrete data (e.g.
+    "5月の米雇用統計は172k（予想85k）と大幅上振れ。利上げ観測が…"),
+  - factors: 2-5 short JAPANESE bullet strings naming the key drivers (with the
+    actual numbers/events you found),
+  - plan: ONE JAPANESE sentence on how long / under what condition you'd hold or
+    exit this (e.g. "6/16のBOJ会合まで保有、159.0(SMA50)割れで撤退").
 
 Principles:
   - Avoiding bad trades matters more than catching every move. If the macro and
@@ -65,7 +70,8 @@ CONTEXT (JSON):
 {context}
 
 Respond with ONLY a JSON object:
-{{"action": "...", "conviction": 0.0, "reason": "...", "factors": ["...", "..."]}}
+{{"action": "...", "conviction": 0.0, "reason": "...(日本語)", \
+"factors": ["...(日本語)", "..."], "plan": "...(日本語)"}}
 """
 
 
@@ -117,7 +123,8 @@ def _parse(text: str) -> AIDecision:
     factors = obj.get("factors") or []
     if not isinstance(factors, list):
         factors = [str(factors)]
-    return AIDecision(action, conv, str(obj.get("reason", "")), [str(f) for f in factors], text)
+    return AIDecision(action, conv, str(obj.get("reason", "")),
+                      [str(f) for f in factors], str(obj.get("plan", "")), text)
 
 
 UNITS_PER_LOT = 100_000.0
