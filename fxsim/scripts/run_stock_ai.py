@@ -137,14 +137,45 @@ def main() -> None:
     ap.add_argument("--daily-gap-h", type=float, default=20.0)
     ap.add_argument("--live", action="store_true", help="send REAL orders (default dry-run)")
     ap.add_argument("--prod", action="store_true", help="use kabu PROD port 18080 (default: 18081 test)")
+    ap.add_argument("--sim", action="store_true",
+                    help="OFFLINE simulator — no account/kabuステーション needed (synthetic data)")
+    ap.add_argument("--sim-steps", type=int, default=8, help="how many sim cycles to run (--sim)")
     ap.add_argument("--once", action="store_true")
     args = ap.parse_args()
 
     watch = [s.strip() for s in args.watch.split(",") if s.strip()]
     exclude = {s.strip() for s in args.exclude.split(",") if s.strip()}
+    db.init_db()
+
+    if args.sim:
+        from app.brokers.kabu_sim import SimKabuStation
+        from app.ai_stock_trader import RuleStockTrader
+        from app.config import settings
+        kabu = SimKabuStation()
+        # real Opus selection on the sim if a key is set; else the offline rule picker
+        if settings.anthropic_api_key:
+            trader = AIStockTrader(model=args.model, max_positions=args.max_positions)
+            print("[stock][SIM] Opus selection on simulated prices", flush=True)
+        else:
+            trader = RuleStockTrader(max_positions=args.max_positions)
+            print("[stock][SIM] no API key -> rule-based selection (mechanics demo)", flush=True)
+        kabu.connect()
+        if exclude:
+            print(f"[stock] 除外銘柄（売買禁止）: {sorted(exclude)}", flush=True)
+        steps = 1 if args.once else max(1, args.sim_steps)
+        for i in range(steps):
+            kabu.step()
+            cycle(kabu, trader, args.max_risk, args.max_positions, watch,
+                  args.candidates, exclude, f"sim-{i + 1}")
+        eq = kabu.total_assets()
+        print(f"[stock][SIM] done {steps} cycles. equity ¥{eq:,.0f} "
+              f"({(eq/kabu.start_cash - 1) * 100:+.2f}%), positions={[p.symbol for p in kabu.positions()]}",
+              flush=True)
+        print("[stock][SIM] dashboard: py -3.12 -m app.server -> http://localhost:8000/live", flush=True)
+        return
+
     kabu = KabuStation(live=args.prod, dry_run=not args.live)
     trader = AIStockTrader(model=args.model, max_positions=args.max_positions)
-    db.init_db()
     kabu.connect()
     if exclude:
         print(f"[stock] 除外銘柄（売買禁止）: {sorted(exclude)}", flush=True)

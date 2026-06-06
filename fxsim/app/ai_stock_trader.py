@@ -131,6 +131,48 @@ def _parse(text: str) -> StockDecision:
     return StockDecision(calls=calls, note=str(obj.get("note", "")), raw=text)
 
 
+class RuleStockTrader:
+    """Deterministic, offline stand-in for Opus — used by the --sim demo when no
+    ANTHROPIC_API_KEY is set. Buys the top-ranked candidates (momentum proxy) up
+    to max_positions, holds those still on top, closes the rest. Same .decide()
+    interface as AIStockTrader, so cycle() is unchanged.
+    """
+
+    model = "sim-rule"
+
+    def __init__(self, max_positions: int = 3) -> None:
+        self.max_positions = max_positions
+
+    def decide(self, context: dict) -> StockDecision:
+        held = {h["symbol"] for h in context.get("account", {}).get("held", [])}
+        cands = [c["symbol"] for c in context.get("candidates", [])]
+        top = cands[: self.max_positions]
+        calls: list = []
+        convs = [0.7, 0.6, 0.5, 0.4]
+        slots = self.max_positions - len(held)
+        picked = 0
+        for s in cands:
+            if slots <= 0:
+                break
+            if s in held:
+                continue
+            calls.append(StockCall(
+                symbol=s, action="buy", conviction=convs[min(picked, len(convs) - 1)],
+                reason=f"シミュ: モメンタム上位（ランキング{picked + 1}位）",
+                factors=["オフライン・シミュレーション選定（実データ・実決算ではない）"],
+                plan="ランキング圏外に後退したら手仕舞い"))
+            picked += 1
+            slots -= 1
+        for s in held:
+            if s in top:
+                calls.append(StockCall(s, "hold", 0.5, "シミュ: 上位維持→継続保有", [], ""))
+            else:
+                calls.append(StockCall(s, "close", 0.0, "シミュ: ランキング圏外→手仕舞い", [], ""))
+        return StockDecision(calls=calls, note=(
+            "オフライン・シミュレーション（ルールベース選定）。実運用ではOpusが"
+            "各銘柄の決算・ニュース・マクロをweb検索して選定します。"))
+
+
 def size_shares(conviction: float, balance: float, price: float, unit: int,
                 max_risk: float, brake: float = 1.0, stop_pct: float = 0.08,
                 max_name_notional: Optional[float] = None,
