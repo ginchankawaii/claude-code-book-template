@@ -18,7 +18,11 @@
 
 ## 前提
 1. **SteadyBridge EA** をMT5のUSDJPYチャートに付けてアルゴ取引ON。
-   - `mt5_ea/SteadyBridge.mq5` を更新（**H1・2500本配信**）したので **MetaEditorで再コンパイル（F7）**。
+   - `mt5_ea/SteadyBridge.mq5` を更新（**H1・2500本配信**）。`git pull` はリポジトリ内を
+     更新するだけなので、**MT5データフォルダの `MQL5\Experts\` へ上書きコピー**が必要：
+     1. MT5 → **ファイル → データフォルダを開く** → `MQL5\Experts\`
+     2. `...\claude-code-book-template\fxsim\mt5_ea\SteadyBridge.mq5` を**そこへ上書きコピー**
+     3. MetaEditorで開いて **再コンパイル（F7）**、エラー0を確認 → チャートのEAを付け直す
    - EA入力：**`InpTimeframe=PERIOD_H1`**、**`InpBars=2500`**（SMA2400に必要な本数）。
      ※チャートの時間足は不問（EAは入力の足を直接取得）。付けるチャートはUSDJPYならどれでもOK。
    - 端末にH1履歴が2500本必要：一度 **USDJPYのH1チャートを開いてHomeで遡り**履歴を取得しておく
