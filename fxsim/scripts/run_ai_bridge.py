@@ -13,9 +13,9 @@ the 5x leverage cap, scaled down on drawdown.
   python -m scripts.run_ai_bridge --once          # one decision now (writes signal)
   python -m scripts.run_ai_bridge                 # resident: daily + post-event
 
-Default timeframe is daily (what the SteadyBridge EA feeds). For the stronger H1
-recipe (docs/RESEARCH.md) run `--granularity H1 --sma 2400` AND configure the EA
-to publish H1 bars.
+Default timeframe is H1 / SMA2400 (~100-day filter — the best OOS recipe,
+docs/RESEARCH.md). The SteadyBridge EA must publish H1 bars (InpTimeframe=PERIOD_H1,
+InpBars>=2405); see docs/AI_TRADER.md. To fall back to daily: `--granularity D --sma 90`.
 
 Requires: SteadyBridge EA attached in MT5 (writes status/bars, executes signals).
 ANTHROPIC_API_KEY in fxsim/.env enables the Opus veto; without it the trend edge
@@ -166,10 +166,11 @@ def main() -> None:
     ap.add_argument("--instrument", default="USD_JPY")
     ap.add_argument("--max-risk", type=float, default=0.04)
     ap.add_argument("--max-lots", type=float, default=5.0)
-    ap.add_argument("--granularity", default="D", help="bars the EA publishes (D | H1 ...)")
-    ap.add_argument("--sma", type=int, default=90, help="trend-filter SMA (daily 90; H1 2400)")
+    ap.add_argument("--granularity", default="H1", help="bars the EA publishes (H1 = best; D also ok)")
+    ap.add_argument("--sma", type=int, default=2400, help="trend-filter SMA (H1 2400; daily 90)")
     ap.add_argument("--model", default=None, help="default claude-opus-4-8")
-    ap.add_argument("--history", default="data/USD_JPY_D.csv")
+    ap.add_argument("--history", default="data/USD_JPY_H1.csv",
+                    help="warmup/fallback history matching --granularity")
     ap.add_argument("--poll", type=int, default=600, help="resident poll seconds")
     ap.add_argument("--daily-gap-h", type=float, default=20.0, help="hours between daily decisions")
     ap.add_argument("--event-window-min", type=float, default=45.0,

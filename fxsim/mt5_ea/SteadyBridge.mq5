@@ -2,7 +2,7 @@
 //|   SteadyBridge.mq5                                               |
 //|   File-bridge EA for the Python "Steady" system.                |
 //|                                                                  |
-//|   Exports recent daily bars + account status to MT5's shared    |
+//|   Exports recent bars (default H1) + account status to shared   |
 //|   Common\Files folder, and executes the order signal the Python |
 //|   brain writes there. Long-or-flat only. Bypasses the (broken)  |
 //|   MetaTrader5 Python IPC entirely.                              |
@@ -15,9 +15,10 @@
 #property strict
 #include <Trade/Trade.mqh>
 
-input string InpSymbol     = "USDJPY";   // exact Market Watch symbol
-input int    InpBars       = 260;        // daily bars to export
-input long   InpMagic      = 770077;     // our orders' magic number
+input string         InpSymbol    = "USDJPY";     // exact Market Watch symbol
+input ENUM_TIMEFRAMES InpTimeframe = PERIOD_H1;   // bar timeframe to export (H1 = recommended)
+input int            InpBars      = 2500;         // bars to export (>= trend SMA + buffer; H1/SMA2400 needs >=2405)
+input long           InpMagic     = 770077;       // our orders' magic number
 input int    InpTimerSec   = 30;         // export/check interval
 input string InpBarsFile   = "steady_bars.csv";
 input string InpStatusFile = "steady_status.csv";
@@ -68,7 +69,7 @@ void ExportAll()
 {
    MqlRates r[];
    ArraySetAsSeries(r, true);
-   int n = CopyRates(InpSymbol, PERIOD_D1, 0, InpBars, r);
+   int n = CopyRates(InpSymbol, InpTimeframe, 0, InpBars, r);
    if(n > 0)
    {
       int h = FileOpen(InpBarsFile, FILE_WRITE|FILE_CSV|FILE_ANSI|FILE_COMMON, ',');

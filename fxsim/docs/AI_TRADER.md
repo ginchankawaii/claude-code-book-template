@@ -12,13 +12,18 @@
 - 方向：**ロングまたはノーポジのみ**（ショートしない＝USD/JPYの構造的上方バイアスに従う）
 - 頻度：**毎日1回＋高インパクト指標の直後**だけOpusに相談（コスト効率）。トレンドが下の時はOpusを呼ばず待機
 - サイズ：確信度 × **最大リスク4%/取引** × **5倍レバ上限**。ドローダウン時は自動で縮小
-- 足/SMA：既定は**日足・SMA90**（EAが日足を配信）。より強いH1レシピは `--granularity H1 --sma 2400`（EAがH1配信時）
+- 足/SMA：既定は**H1・SMA2400**（≒100日フィルター。OOS検証で最良 CAGR≈12.4%/DD34%）。
+  日足に戻すなら `--granularity D --sma 90`（CAGR≈9.5%/DD38%）
 - 対象：USD/JPY
 
 ## 前提
-1. **SteadyBridge EA**（ショート対応版）をMT5のUSDJPY,D1に付けてアルゴ取引ON。
-   - `mt5_ea/SteadyBridge.mq5` を更新したので **MetaEditorで再コンパイル（F7）** すること。
-2. `fxsim/.env` に **`ANTHROPIC_API_KEY=...`** を記入（このPCで実行＝web検索＆Opus課金）。
+1. **SteadyBridge EA** をMT5のUSDJPYチャートに付けてアルゴ取引ON。
+   - `mt5_ea/SteadyBridge.mq5` を更新（**H1・2500本配信**）したので **MetaEditorで再コンパイル（F7）**。
+   - EA入力：**`InpTimeframe=PERIOD_H1`**、**`InpBars=2500`**（SMA2400に必要な本数）。
+     ※チャートの時間足は不問（EAは入力の足を直接取得）。付けるチャートはUSDJPYならどれでもOK。
+   - 端末にH1履歴が2500本必要：一度 **USDJPYのH1チャートを開いてHomeで遡り**履歴を取得しておく
+     （ツール→オプション→チャート→「ヒストリー内の最大バー数」を無制限に）。
+2. `fxsim/.env` に **`ANTHROPIC_API_KEY=...`**（Opus拒否権を効かせる場合。無くてもトレンドで稼働）。
 3. Python 3.12 環境（既存のまま）。
 
 ## 使い方
