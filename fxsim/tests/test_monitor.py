@@ -38,12 +38,31 @@ def test_drawdown_breach_flags_red():
     assert dd["flag"] == RED and rep["worst"] == RED
 
 
-def test_execution_drift_flags_red():
+def test_execution_drift_flags_red_when_book_disagrees_with_decision():
+    # system last decided LONG but the book is FLAT -> real drift
     rep = monitor.build_report(initial_balance=500000, equity_values=[500000, 510000],
-                               span_days=120, actions=["LONG"],
-                               strategy_signal="LONG", live_position="FLAT")
+                               span_days=120, actions=["FLAT", "LONG"], live_position="FLAT")
     ex = next(c for c in rep["checks"] if c["name"] == "執行一致")
     assert ex["flag"] == RED
+
+
+def test_legit_opus_veto_is_not_drift():
+    # raw trend is LONG, but the system decided FLAT (Opus veto) and the book is
+    # FLAT -> that is CORRECT execution, must NOT flag red.
+    rep = monitor.build_report(initial_balance=500000, equity_values=[500000, 500000],
+                               span_days=120, actions=["LONG", "FLAT"],
+                               live_position="FLAT", trend_basis="LONG")
+    ex = next(c for c in rep["checks"] if c["name"] == "執行一致")
+    assert ex["flag"] == GREEN
+    assert rep["worst"] != RED
+
+
+def test_staleness_flags_yellow():
+    rep = monitor.build_report(initial_balance=500000, equity_values=[500000, 500000],
+                               span_days=120, actions=["LONG"], live_position="LONG",
+                               staleness_days=3.0)
+    st = next(c for c in rep["checks"] if c["name"] == "稼働鮮度")
+    assert st["flag"] == YELLOW
 
 
 def test_overtrading_flags_red():

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timezone
 
 from app import bridge, db, monitor
 from app.config import Settings
@@ -85,18 +86,19 @@ def main() -> None:
 
     eq_vals = [e["equity"] for e in equity]
     span = monitor.span_days_between(equity[0]["time"], equity[-1]["time"])
+    staleness = monitor.span_days_between(equity[-1]["time"], datetime.now(timezone.utc))
     actions = _actions(rid)
 
-    strat_sig = live_pos = None
+    trend_basis = live_pos = None
     if args.kind == "fx":
         cfg = Settings(granularity=args.granularity, trend_sma=args.sma)
-        strat_sig = _current_strategy_signal(cfg, args.instrument, args.history)
+        trend_basis = _current_strategy_signal(cfg, args.instrument, args.history)
         live_pos = _live_position()
 
     rep = monitor.build_report(
         initial_balance=run["initial_balance"], equity_values=eq_vals,
-        span_days=span, actions=actions,
-        strategy_signal=strat_sig, live_position=live_pos)
+        span_days=span, actions=actions, live_position=live_pos,
+        trend_basis=trend_basis, staleness_days=staleness)
 
     bal0 = rep["initial_balance"]; eq = rep["current_equity"]; s = rep["stats"]
     print("=" * 60)

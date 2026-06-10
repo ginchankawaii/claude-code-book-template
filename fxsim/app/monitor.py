@@ -74,8 +74,9 @@ def count_position_changes(actions: list[str]) -> int:
 
 def build_report(*, initial_balance: float, equity_values: list[float],
                  span_days: float, actions: list[str],
-                 strategy_signal: str | None = None,
-                 live_position: str | None = None) -> dict:
+                 live_position: str | None = None,
+                 trend_basis: str | None = None,
+                 staleness_days: float | None = None) -> dict:
     """Assemble the health report + per-check flags + an overall verdict."""
     st = equity_stats(equity_values)
     years = max(span_days, 0.0) / 365.25
@@ -131,14 +132,26 @@ def build_report(*, initial_balance: float, equity_values: list[float],
         checks.append({"name": "リターン", "flag": GREEN,
                        "msg": f"年率換算 {ann:+.1f}%（想定+{EXP_CAGR_PCT:.0f}%圏）"})
 
-    # --- execution drift: does the live book match the strategy's current call? ---
-    if strategy_signal and live_position:
-        if strategy_signal.upper() == live_position.upper():
+    # --- staleness: has the system actually been updating? ---
+    if staleness_days is not None and staleness_days > 1.5:
+        checks.append({"name": "稼働鮮度", "flag": YELLOW,
+                       "msg": f"最終更新が{staleness_days:.1f}日前（週末以外なら run_ai_bridge の稼働を確認）"})
+
+    # --- execution drift: live book vs the system's LAST DECISION (NOT the raw
+    #     trend — the live system has an Opus veto layer, so a legitimate FLAT
+    #     decision must not be mis-flagged as drift). ---
+    last_decision = actions[-1].upper() if actions else None
+    if last_decision in ("LONG", "FLAT") and live_position:
+        note = ""
+        if trend_basis and trend_basis.upper() != last_decision:
+            note = f"（トレンド基調={trend_basis.upper()}→Opus等で{last_decision}判断）"
+        if last_decision == live_position.upper():
             checks.append({"name": "執行一致", "flag": GREEN,
-                           "msg": f"戦略={strategy_signal}・建玉={live_position}（一致）"})
+                           "msg": f"システム判断={last_decision}=建玉（一致）{note}"})
         else:
             checks.append({"name": "執行一致", "flag": RED,
-                           "msg": f"戦略={strategy_signal} だが建玉={live_position}（執行ズレ → EA/ブリッジ確認）"})
+                           "msg": f"システムは{last_decision}を指示も建玉={live_position}"
+                                  f"（執行ズレ→EAのアルゴ取引ON/エラーを確認）"})
 
     order = {GREEN: 0, YELLOW: 1, RED: 2}
     worst = max((c["flag"] for c in checks), key=lambda f: order[f], default=GREEN)
