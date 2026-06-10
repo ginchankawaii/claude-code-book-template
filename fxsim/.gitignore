@@ -10,3 +10,7 @@ data/*.png
 .env
 .pytest_cache/
 *.log
+
+# docker bind-mount placeholder
+.mt5common/*
+!.mt5common/.gitkeep
