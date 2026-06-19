@@ -5,11 +5,14 @@ Run:  python -m app.server      (serves http://localhost:8000)
 from __future__ import annotations
 
 import json
+import os
+import secrets
 import threading
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 
 from . import db
@@ -21,7 +24,27 @@ from .providers import get_provider
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-app = FastAPI(title="FX Paper-Trading Simulator")
+# Optional HTTP Basic auth — set FXSIM_DASH_USER / FXSIM_DASH_PASS to require a
+# login (ESSENTIAL before exposing the dashboard publicly via a tunnel). When
+# FXSIM_DASH_PASS is empty the dashboard is open (local-only use), so no login
+# box pops up for nobody.
+_DASH_USER = os.getenv("FXSIM_DASH_USER", "admin")
+_DASH_PASS = os.getenv("FXSIM_DASH_PASS", "")
+_basic = HTTPBasic(auto_error=False)
+
+
+def _auth(creds: HTTPBasicCredentials | None = Depends(_basic)) -> None:
+    if not _DASH_PASS:
+        return  # no password configured -> open (local use)
+    if creds is None or not (
+        secrets.compare_digest(creds.username, _DASH_USER)
+        and secrets.compare_digest(creds.password, _DASH_PASS)
+    ):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="認証が必要です", headers={"WWW-Authenticate": "Basic"})
+
+
+app = FastAPI(title="FX Paper-Trading Simulator", dependencies=[Depends(_auth)])
 _backtest_lock = threading.Lock()
 
 

@@ -46,6 +46,20 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  # --- optional: expose the dashboard to the internet via Cloudflare Tunnel ---
+  # 外出先からダッシュボードを見るための公開トンネル（ルーターのポート開放不要）。
+  #  1) 先に .env で FXSIM_DASH_PASS を設定（公開前のパスワード保護＝必須）
+  #  2) Cloudflare Zero Trust → Networks → Tunnels → Create でトークン取得
+  #  3) .env に CLOUDFLARE_TUNNEL_TOKEN=... を貼る
+  #  4) トンネルの Public Hostname で Service = http://dashboard:8000 を指定
+  #  5) 起動:  docker compose --profile tunnel up -d tunnel
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on: [dashboard]
+    restart: unless-stopped
+    profiles: ["tunnel"]
+
   # --- generic one-off runner: monitor / stock sim / tests ---
   # `docker compose run --rm app python -m scripts.run_monitor`
   # `docker compose run --rm app python -m scripts.run_stock_ai --sim --sim-steps 8`
