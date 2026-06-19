@@ -39,6 +39,9 @@ services:
         required: false
     environment:
       MT5_COMMON_FILES: /mt5common
+      # Decision model for the Opus veto. Sonnet keeps the AI overlay in the
+      # black even on a small (¥300k-class) account. Override via .env if needed.
+      FXSIM_DECISION_MODEL: ${FXSIM_DECISION_MODEL:-claude-sonnet-4-6}
     volumes:
       - ./:/app
       - ${MT5_COMMON_FILES_HOST:-./.mt5common}:/mt5common
