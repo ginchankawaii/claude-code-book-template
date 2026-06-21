@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "horse-racing-prediction"
+version = "0.1.0"
+description = "馬の属性から着順・勝率を予想する、依存ゼロのツール"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+[project.scripts]
+horse-racing = "horse_racing.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools]
+packages = ["horse_racing"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
