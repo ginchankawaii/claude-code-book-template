@@ -13,6 +13,7 @@ import pandas as pd
 
 from .backtest import WalkForwardConfig, walk_forward
 from .betting import BettingConfig
+from .exotic import ExoticConfig
 from .features import build_features
 from .leakage import assert_no_post_race_features, audit_temporal_invariance
 from .model import ModelConfig
@@ -32,6 +33,7 @@ def run_pipeline(reader: JVLinkReader | None = None,
                  model_config: ModelConfig | None = None,
                  betting_config: BettingConfig | None = None,
                  wf_config: WalkForwardConfig | None = None,
+                 exotic_config: ExoticConfig | None = None,
                  run_leak_audit: bool = True,
                  verbose: bool = False) -> PipelineResult:
     reader = reader or SyntheticBackend(SyntheticConfig())
@@ -41,7 +43,8 @@ def run_pipeline(reader: JVLinkReader | None = None,
     leak = audit_temporal_invariance(runners, n_sample_races=20) if run_leak_audit else {"ok": None}
 
     feat = build_features(runners)
-    bt = walk_forward(feat, model_config, betting_config, wf_config, verbose=verbose)
+    bt = walk_forward(feat, model_config, betting_config, wf_config,
+                      exotic_config=exotic_config, verbose=verbose)
     return PipelineResult(backtest=bt, leak_audit=leak,
                           n_runners=len(runners), n_races=len(races))
 
@@ -72,6 +75,15 @@ def format_report(result: PipelineResult) -> str:
     L.append(f"  EVフィルタ後ベット数: {flat['n_bets']}  的中率: {flat['hit_rate']*100:.1f}%")
     L.append(f"  フラットROI : {flat['roi']*100:.1f}%   (100%が損益分岐)")
     L.append(f"  分数ケリーROI: {kelly['roi']*100:.1f}%  最終資金: {kelly['final_bankroll']:.3f}x  最大DD: {kelly['max_drawdown']*100:.1f}%")
+    exotic = bt.get("exotic") or {}
+    if exotic:
+        L.append("")
+        L.append("--- 連系券種(EVフィルタ; 合成オッズ=単勝市場×Harville×控除率) ---")
+        names = {"umaren": "馬連", "wide": "ワイド", "sanrenpuku": "三連複"}
+        for bt_key in ["umaren", "wide", "sanrenpuku"]:
+            if bt_key in exotic:
+                e = exotic[bt_key]
+                L.append(f"  {names[bt_key]:　<4} 点数={e['n_bets']:>4}  的中率={e['hit_rate']*100:>5.1f}%  ROI={e['roi']*100:>6.1f}%")
     L.append("")
     L.append("--- リスク(モンテカルロ; レース単位ブロック・ブートストラップ) ---")
     L.append(f"  破産確率(≤30%資金): {ruin['ruin_prob']*100:.1f}%  最終資金中央値: {ruin['median_final']:.2f}x  下側5%: {ruin['p05_final']:.2f}x")

@@ -1,0 +1,72 @@
+"""keiba: 連系券種(Harville 展開)のテスト。"""
+
+from itertools import combinations
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from keiba.exotic import (
+    ExoticConfig,
+    sanrenpuku_prob,
+    select_exotic_bets,
+    summarize_exotic,
+    umaren_prob,
+    wide_prob,
+)
+
+
+def test_umaren_pairs_sum_to_one():
+    p = np.array([0.4, 0.3, 0.2, 0.1])
+    s = sum(umaren_prob(p, i, j) for i, j in combinations(range(4), 2))
+    assert abs(s - 1.0) < 1e-9
+
+
+def test_sanrenpuku_triples_sum_to_one():
+    p = np.array([0.35, 0.25, 0.2, 0.12, 0.08])
+    s = sum(sanrenpuku_prob(p, i, j, k) for i, j, k in combinations(range(5), 3))
+    assert abs(s - 1.0) < 1e-9
+
+
+def test_wide_at_least_umaren_and_bounded():
+    p = np.array([0.4, 0.3, 0.2, 0.1])
+    pool = [0, 1, 2, 3]
+    for i, j in combinations(range(4), 2):
+        w = wide_prob(p, i, j, pool)
+        assert umaren_prob(p, i, j) - 1e-12 <= w <= 1.0 + 1e-9
+
+
+def _toy_race():
+    n = 8
+    return pd.DataFrame({
+        "race_id": [1] * n,
+        "race_date": [10] * n,
+        "post_position": list(range(1, n + 1)),
+        "finish_pos": [1, 2, 3, 4, 5, 6, 7, 8],
+    })
+
+
+def test_select_exotic_bets_settles_correctly():
+    race = _toy_race()
+    n = len(race)
+    # モデルが本命に強い確率、市場はフラットに近い → エッジが出る
+    model_p = np.array([0.5, 0.2, 0.12, 0.06, 0.05, 0.03, 0.02, 0.02])
+    market_p = np.full(n, 1.0 / n)
+    bets = select_exotic_bets(race, model_p, market_p, ExoticConfig(ev_threshold=1.0, edge_ratio=1.0))
+    assert len(bets) > 0
+    # is_win は実着順に整合(馬連は1-2着, 三連複は1-3着, ワイドは双方3着内)
+    top2 = {0, 1}
+    top3 = {0, 1, 2}
+    # 1着2着(index0,1)の馬連は当たり
+    um = bets[(bets.bet_type == "umaren")]
+    # combo は post_position("1-2"等)。少なくとも1つは的中があるはず(本命決着)
+    assert um["is_win"].sum() >= 1
+    summ = summarize_exotic(bets)
+    for bt in summ:
+        assert summ[bt]["roi"] >= 0
+
+
+def test_select_exotic_empty_for_small_field():
+    race = _toy_race().head(2)
+    bets = select_exotic_bets(race, np.array([0.6, 0.4]), np.array([0.5, 0.5]))
+    assert len(bets) == 0

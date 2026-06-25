@@ -13,6 +13,7 @@ import argparse
 
 from .backtest import WalkForwardConfig
 from .betting import BettingConfig
+from .exotic import ExoticConfig
 from .model import ModelConfig
 from .pipeline import format_report, run_pipeline
 from .reader import SyntheticBackend
@@ -30,6 +31,7 @@ def main(argv: list[str] | None = None) -> int:
                         "ノイズで少数ベットを出し回収率は払戻率(~80%)±選択分散に収束する")
     p.add_argument("--ev", type=float, default=1.12, help="EV購入閾値")
     p.add_argument("--kelly", type=float, default=0.25, help="分数ケリー係数")
+    p.add_argument("--exotic", action="store_true", help="連系券種(馬連/ワイド/三連複)EVも評価")
     p.add_argument("--no-audit", action="store_true", help="リーク監査をスキップ(高速)")
     p.add_argument("--quiet", action="store_true", help="フォールド毎の進捗を出さない")
     args = p.parse_args(argv)
@@ -41,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
         model_config=ModelConfig(objective=args.objective),
         betting_config=BettingConfig(ev_threshold=args.ev, kelly_fraction=args.kelly),
         wf_config=WalkForwardConfig(),
+        exotic_config=ExoticConfig() if args.exotic else None,
         run_leak_audit=not args.no_audit,
         verbose=not args.quiet,
     )

@@ -23,6 +23,7 @@ from .betting import (
     settle_flat,
     settle_kelly,
 )
+from .exotic import ExoticConfig, select_exotic_bets, summarize_exotic
 from .calibration import (
     Calibrator,
     brier_score,
@@ -48,8 +49,13 @@ class WalkForwardConfig:
 def walk_forward(feat: pd.DataFrame, model_config: ModelConfig | None = None,
                  betting_config: BettingConfig | None = None,
                  wf_config: WalkForwardConfig | None = None,
+                 exotic_config: ExoticConfig | None = None,
                  verbose: bool = False) -> dict:
-    """walk-forward バックテストを実行して結果dictを返す。"""
+    """walk-forward バックテストを実行して結果dictを返す。
+
+    exotic_config を渡すと連系券種(馬連/ワイド/三連複)の EV ベットも評価する
+    (None ならスキップ)。
+    """
 
     wf = wf_config or WalkForwardConfig()
     mcfg = model_config or ModelConfig()
@@ -68,6 +74,7 @@ def walk_forward(feat: pd.DataFrame, model_config: ModelConfig | None = None,
 
     folds = []
     all_bets = []
+    all_exotic = []
     test_pred_frames = []
     t0 = fold_start
     while t0 + wf.test_days <= dmax + 1:
@@ -80,14 +87,16 @@ def walk_forward(feat: pd.DataFrame, model_config: ModelConfig | None = None,
             t0 += step
             continue
 
-        fold_res, bets, test_pred = _run_fold(
-            train, valid, test, mcfg, bcfg, wf
+        fold_res, bets, test_pred, exotic = _run_fold(
+            train, valid, test, mcfg, bcfg, wf, exotic_config
         )
         fold_res["fold"] = len(folds) + 1
         fold_res["test_range"] = (test_lo, test_hi)
         folds.append(fold_res)
         if len(bets):
             all_bets.append(bets)
+        if exotic is not None and len(exotic):
+            all_exotic.append(exotic)
         test_pred_frames.append(test_pred)
         if verbose:
             print(f"fold {fold_res['fold']:>2} [{test_lo}-{test_hi}) "
@@ -97,11 +106,15 @@ def walk_forward(feat: pd.DataFrame, model_config: ModelConfig | None = None,
 
     bets_df = pd.concat(all_bets, ignore_index=True) if all_bets else _empty_bets()
     preds_df = pd.concat(test_pred_frames, ignore_index=True)
+    exotic_df = pd.concat(all_exotic, ignore_index=True) if all_exotic else None
 
-    return _aggregate(folds, bets_df, preds_df, bcfg)
+    result = _aggregate(folds, bets_df, preds_df, bcfg)
+    result["exotic"] = summarize_exotic(exotic_df) if exotic_df is not None else {}
+    result["exotic_bets"] = exotic_df
+    return result
 
 
-def _run_fold(train, valid, test, mcfg, bcfg, wf):
+def _run_fold(train, valid, test, mcfg, bcfg, wf, exotic_config=None):
     # 1) 学習
     model = KeibaModel(mcfg).fit(train, valid)
     # 2) 検証で較正 + ブレンド重み
@@ -142,7 +155,23 @@ def _run_fold(train, valid, test, mcfg, bcfg, wf):
         "p_blend": pt_blend,
         "final_odds": test[wf.settle_odds_col].to_numpy(),
     })
-    return res, bets, test_pred
+
+    # 5) 連系券種(任意): ブレンド確率と市場確率からレース単位で EV ベット
+    exotic = None
+    if exotic_config is not None:
+        tt = test.reset_index(drop=True)
+        pb = pd.Series(pt_blend).reset_index(drop=True)
+        qm = pd.Series(qt).reset_index(drop=True)
+        frames = []
+        for rid, idx in tt.groupby("race_id", sort=False).groups.items():
+            sub = tt.loc[idx]
+            eb = select_exotic_bets(sub, pb.loc[idx].to_numpy(), qm.loc[idx].to_numpy(),
+                                    exotic_config)
+            if len(eb):
+                frames.append(eb)
+        exotic = pd.concat(frames, ignore_index=True) if frames else None
+
+    return res, bets, test_pred, exotic
 
 
 def _aggregate(folds, bets_df, preds_df, bcfg) -> dict:
