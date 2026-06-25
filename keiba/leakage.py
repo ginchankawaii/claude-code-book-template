@@ -53,9 +53,10 @@ def audit_temporal_invariance(
     mismatches = []
     for rid in sample:
         rdate = runners.loc[runners.race_id == rid, "race_date"].iloc[0]
-        # 対象レース日以前のみ(同日は含む。当該レースの行も含むが、特徴量は
-        # それ自身の確定後情報を使わないので問題ない)
-        truncated = runners[runners.race_date <= rdate]
+        # 「厳密に前の日」+「当該レース自身の行」だけを残す。
+        # これにより未来の日 *および同日の兄弟レース* を削除した状態で特徴量を
+        # 再計算するため、同日リーク(同日の他レース依存)も検出できる。
+        truncated = runners[(runners.race_date < rdate) | (runners.race_id == rid)]
         tfeat = build_features(truncated)
 
         a = full[full.race_id == rid].sort_values("post_position")[feat_cols].reset_index(drop=True)

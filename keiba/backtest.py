@@ -56,6 +56,13 @@ def walk_forward(feat: pd.DataFrame, model_config: ModelConfig | None = None,
     bcfg = betting_config or BettingConfig()
     step = wf.step_days or wf.test_days
 
+    if step < wf.test_days:
+        # test 窓が重複するとレース/ベットが pooled 集計に二重計上される。
+        raise ValueError(
+            f"step_days({step}) は test_days({wf.test_days}) 以上にしてください"
+            "(テスト窓の重複=二重計上を防ぐため)"
+        )
+
     dmin, dmax = int(feat.race_date.min()), int(feat.race_date.max())
     fold_start = dmin + wf.train_min_days + wf.valid_days
 
@@ -142,12 +149,6 @@ def _aggregate(folds, bets_df, preds_df, bcfg) -> dict:
     flat = settle_flat(bets_df)
     kelly = settle_kelly(bets_df)
     ruin = monte_carlo_ruin(bets_df)
-
-    def wmean(key):
-        ns = np.array([f["n_bets"] for f in folds])
-        vs = np.array([f[key] for f in folds])
-        denom = ns.sum()
-        return float((ns * vs).sum() / denom) if denom else float("nan")
 
     y = preds_df.is_win.to_numpy()
     quality = {

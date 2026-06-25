@@ -41,8 +41,7 @@ class SyntheticConfig:
     w_jockey: float = 0.45
     w_sire_fit: float = 0.35
     w_form: float = 0.55       # 真の強さに対する調子の寄与
-    pl_temperature: float = 0.80  # Plackett-Luce(Gumbel)温度。大きいほど波乱
-    race_noise: float = 0.80   # = pl_temperature の別名(後方互換)
+    pl_temperature: float = 0.80  # Plackett-Luce(Gumbel)温度。大きいほど波乱(=的中の上限)
 
     # 市場の効率性。
     #  market_form_weight: form への系統的な重み(1.0=不偏)。<1で過小評価。

@@ -25,7 +25,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--seed", type=int, default=7, help="乱数シード")
     p.add_argument("--objective", choices=["binary", "lambdarank"], default="binary")
     p.add_argument("--myopia", type=float, default=0.7,
-                   help="市場の form 読みのノイズ。0=効率的(エッジ無)〜大=非効率(エッジ大)")
+                   help="市場の form 読みのノイズ。0=予測エッジ無(ブレンドは市場のlog-lossを"
+                        "下回らない)〜大=非効率(エッジ大)。myopia=0 でも EVフィルタは較正"
+                        "ノイズで少数ベットを出し回収率は払戻率(~80%)±選択分散に収束する")
     p.add_argument("--ev", type=float, default=1.12, help="EV購入閾値")
     p.add_argument("--kelly", type=float, default=0.25, help="分数ケリー係数")
     p.add_argument("--no-audit", action="store_true", help="リーク監査をスキップ(高速)")

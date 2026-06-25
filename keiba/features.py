@@ -160,15 +160,22 @@ def _pit_max(df: pd.DataFrame, entity: str, value: str) -> np.ndarray:
 
 
 def _pit_recent_mean(df: pd.DataFrame, entity: str, value: str, window: int) -> np.ndarray:
-    """対象レースの直前 window 走(厳密に前)の平均。馬は1日1走前提。"""
-    s = df[[entity, "race_date", value]].copy()
-    s = s.sort_values([entity, "race_date"])
-    # 直前 window 走の平均(当該行を除外するため shift)
-    roll = (
-        s.groupby(entity, sort=False)[value]
-        .apply(lambda x: x.shift().rolling(window, min_periods=1).mean())
+    """対象レースの直前 window 開催日(厳密に前の日)の平均。
+
+    同一馬が同日に複数走するケースでも「同日の他レース」を取り込まないよう、
+    まず (entity, race_date) で日次集計してから日次系列に shift().rolling() を
+    当てて *当日を完全に除外* する(_pit_daily_cumulative と同じ当日除外設計)。
+    通常(1日1走)なら直前 window 走の平均と一致する。
+    """
+    daily = (
+        df.groupby([entity, "race_date"])[value].mean().reset_index()
+        .sort_values([entity, "race_date"])
     )
-    s["recent"] = roll.to_numpy()
-    # 元の並びへ戻す
-    s = s.sort_index()
-    return s["recent"].reindex(df.index).to_numpy()
+    daily["recent"] = (
+        daily.groupby(entity, sort=False)[value]
+        .transform(lambda x: x.shift().rolling(window, min_periods=1).mean())
+    )
+    merged = df[[entity, "race_date"]].merge(
+        daily[[entity, "race_date", "recent"]], on=[entity, "race_date"], how="left"
+    )
+    return merged["recent"].to_numpy()

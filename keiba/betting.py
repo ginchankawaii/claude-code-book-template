@@ -100,31 +100,36 @@ def settle_flat(bets: pd.DataFrame, odds_col: str = "final_odds") -> dict:
 
 def settle_kelly(bets: pd.DataFrame, odds_col: str = "final_odds",
                  bankroll0: float = 1.0, compound: bool = True) -> dict:
-    """分数ケリー(stake_frac=bankroll比)で時系列に決済しバンクロール推移を返す。"""
+    """分数ケリーで時系列に決済しバンクロール推移を返す。
+
+    決済単位は「レース(決定点)」。同一レース内の複数ベットは賭け時点で互いの
+    結果が未知なので、レース開始時のバンクロールから全点を一括サイズし、レース内
+    払戻を合算してからバンクロールを更新する(順序依存・相互排他の不整合を回避)。
+    """
     if len(bets) == 0:
         return {**_empty_result(), "bankroll_curve": np.array([bankroll0]),
                 "final_bankroll": bankroll0, "max_drawdown": 0.0}
-    b = bets.sort_values(["race_date", "race_id"]).reset_index(drop=True)
     bankroll = bankroll0
     curve = [bankroll]
     staked_total = 0.0
     returned_total = 0.0
-    for _, row in b.iterrows():
-        stake = row["stake_frac"] * (bankroll if compound else bankroll0)
-        staked_total += stake
-        if row["is_win"]:
-            payoff = stake * row[odds_col]
-            returned_total += payoff
-            bankroll += payoff - stake
-        else:
-            bankroll -= stake
+    # レース(決定点)単位、時系列順に決済
+    for _, race in bets.sort_values(["race_date", "race_id"]).groupby(
+        ["race_date", "race_id"], sort=False
+    ):
+        base = bankroll if compound else bankroll0
+        stakes = race["stake_frac"].to_numpy() * base
+        payoff = (race["is_win"].to_numpy() * race[odds_col].to_numpy() * stakes).sum()
+        staked_total += stakes.sum()
+        returned_total += payoff
+        bankroll += payoff - stakes.sum()
         curve.append(bankroll)
     curve = np.array(curve)
     peak = np.maximum.accumulate(curve)
-    dd = (peak - curve) / peak
+    dd = (peak - curve) / np.where(peak > 0, peak, 1.0)
     return {
-        "n_bets": int(len(b)),
-        "hit_rate": float(b["is_win"].mean()),
+        "n_bets": int(len(bets)),
+        "hit_rate": float(bets["is_win"].mean()),
         "roi": float(returned_total / staked_total) if staked_total > 0 else 0.0,
         "staked": float(staked_total),
         "returned": float(returned_total),
@@ -137,35 +142,41 @@ def settle_kelly(bets: pd.DataFrame, odds_col: str = "final_odds",
 def monte_carlo_ruin(bets: pd.DataFrame, odds_col: str = "final_odds",
                      bankroll0: float = 1.0, ruin_level: float = 0.3,
                      n_sims: int = 500, seed: int = 0) -> dict:
-    """購入順をブートストラップしてバンクロール推移を多数生成し、
+    """レース(決定点)をブロック・ブートストラップしてバンクロール推移を多数生成し、
     破産確率(bankroll が ruin_level を下回る割合)と最終資金分布・最大DDを推定する。
 
-    各ベットの勝敗は model_prob のベルヌーイで再サンプルする(モデル確率を真と
-    仮定したときのリスク像。較正が効いていれば現実的)。
+    各レースは「実際の決済結果(is_win × オッズ)」をブロックとして扱う。これにより
+    同一レース内の単勝が相互排他(高々1頭的中)であることが自動的に保たれ、独立
+    ベルヌーイ再サンプルが生む非現実的な余剰的中(=破産確率の過小評価)を避ける。
+    レース単位の復元抽出で順序と組成の不確実性を表現する(実現エッジ前提の保守的推定)。
     """
     if len(bets) == 0:
         return {"ruin_prob": 0.0, "median_final": bankroll0, "p05_final": bankroll0,
                 "median_max_dd": 0.0}
     rng = np.random.default_rng(seed)
-    probs = bets["model_prob"].to_numpy()
-    odds = bets[odds_col].to_numpy()
-    fracs = bets["stake_frac"].to_numpy()
-    n = len(bets)
+    # レース単位のブロック (stake_fracs, is_win*odds=純払戻倍率) に集約
+    blocks = [
+        (race["stake_frac"].to_numpy(),
+         race["is_win"].to_numpy() * race[odds_col].to_numpy())
+        for _, race in bets.groupby("race_id", sort=False)
+    ]
+    n_blocks = len(blocks)
     finals = np.empty(n_sims)
     max_dds = np.empty(n_sims)
     ruined = 0
     for s in range(n_sims):
-        order = rng.permutation(n)
+        pick = rng.integers(0, n_blocks, n_blocks)  # レースを復元抽出
         bankroll = bankroll0
         peak = bankroll
         max_dd = 0.0
         hit_ruin = False
-        for idx in order:
-            stake = fracs[idx] * bankroll
-            win = rng.random() < probs[idx]
-            bankroll += stake * (odds[idx] - 1.0) if win else -stake
+        for b in pick:
+            fracs, mult = blocks[b]
+            stakes = fracs * bankroll
+            bankroll += (mult * stakes).sum() - stakes.sum()
             peak = max(peak, bankroll)
-            max_dd = max(max_dd, (peak - bankroll) / peak)
+            if peak > 0:
+                max_dd = max(max_dd, (peak - bankroll) / peak)
             if bankroll <= ruin_level * bankroll0:
                 hit_ruin = True
         finals[s] = bankroll
