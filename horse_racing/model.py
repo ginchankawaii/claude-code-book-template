@@ -32,6 +32,26 @@ class Horse:
     # 馬場適性 (0-100。今回の馬場・距離への適性)
     going_fit: float = 50.0
 
+    # --- 以下は JRA 由来の追加特徴。未指定(0/空/False)なら予想に影響しない ---
+    # タイム指数 / スピード指数 (JRA-VAN 等。50 を平均とする。0=未指定)
+    time_index: float = 0.0
+    # 馬体重 前走比増減 kg (大きな増減はマイナス。0=増減なし/未指定)
+    weight_diff: float = 0.0
+    # 馬番 (1始まり。枠順バイアス用。0=未指定)
+    post_position: int = 0
+    # 出走頭数 (枠順バイアスの正規化に使用。0=未指定)
+    field_size: int = 0
+    # 今回距離 m (距離適性用。0=未指定)
+    distance: int = 0
+    # 得意距離 m (距離適性用。0=未指定)
+    best_distance: int = 0
+    # 前走からの間隔(日)。短すぎ/長すぎはマイナス。0=未指定
+    days_since_last: int = 0
+    # 昇級初戦か (True ならわずかにマイナス)
+    class_up: bool = False
+    # 調教評価 (0-100。50 を平均。0=未指定)
+    training: float = 0.0
+
     def __post_init__(self) -> None:
         if not self.name or not self.name.strip():
             raise ValueError("Horse.name は空にできません")
@@ -81,7 +101,7 @@ def score_horse(horse: Horse) -> float:
     jockey_n = _clamp(horse.jockey / 100.0)
     going_n = _clamp(horse.going_fit / 100.0)
 
-    return (
+    base = (
         WEIGHTS["speed"] * speed_n
         + WEIGHTS["recent_form"] * form_n
         + WEIGHTS["weight"] * weight_n
@@ -89,6 +109,55 @@ def score_horse(horse: Horse) -> float:
         + WEIGHTS["jockey"] * jockey_n
         + WEIGHTS["going_fit"] * going_n
     )
+    return base + jra_bonus(horse)
+
+
+def jra_bonus(horse: Horse) -> float:
+    """JRA 由来の追加特徴によるスコア補正(加算)。
+
+    各項目はデータ未指定時に 0 を返すよう設計しており、その場合は
+    全馬一律 0 となるため softmax の結果（勝率）を変えない。
+    つまり JRA 情報を与えたときだけ予想に効く。
+    """
+
+    bonus = 0.0
+
+    # タイム指数 / スピード指数: 50 平均、±50 を ±1.0 域に。最重要級。
+    if horse.time_index > 0:
+        bonus += 1.0 * _clamp((horse.time_index - 50.0) / 50.0, -1.0, 1.0)
+
+    # 馬体重増減: ±8kg は許容、それを超える増減を線形に減点。
+    over = max(0.0, abs(horse.weight_diff) - 8.0)
+    bonus -= 0.03 * over
+
+    # 枠順バイアス: 多くの JRA コースは内枠やや有利。中央を 0 に。
+    if horse.post_position > 0 and horse.field_size > 1:
+        rel = (horse.post_position - 1) / (horse.field_size - 1)  # 0=最内, 1=大外
+        bonus += 0.3 * (0.5 - rel)
+
+    # 距離適性: 今回距離が得意距離に近いほどプラス。±400m を目安に減衰。
+    if horse.distance > 0 and horse.best_distance > 0:
+        gap = (horse.distance - horse.best_distance) / 400.0
+        closeness = math.exp(-(gap * gap))  # 1.0(一致)〜0
+        bonus += 0.5 * (closeness - 0.5)
+
+    # ローテ(前走間隔): 28〜70日を最適とし、短すぎ/長すぎを減点。
+    d = horse.days_since_last
+    if d > 0:
+        if d < 28:
+            bonus -= 0.01 * (28 - d)
+        elif d > 70:
+            bonus -= 0.004 * (d - 70)
+
+    # 昇級初戦はわずかに割引。
+    if horse.class_up:
+        bonus -= 0.1
+
+    # 調教評価: 50 平均、±50 を ±0.4 域に。
+    if horse.training > 0:
+        bonus += 0.4 * _clamp((horse.training - 50.0) / 50.0, -1.0, 1.0)
+
+    return bonus
 
 
 def predict_race(horses: Iterable[Horse], temperature: float = 0.35) -> list[Prediction]:

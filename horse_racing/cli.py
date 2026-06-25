@@ -12,6 +12,7 @@ import argparse
 import sys
 
 from .data import load_horses_csv, sample_race, write_sample_csv
+from .jra import load_jra_csv
 from .model import Prediction, predict_race
 
 
@@ -40,6 +41,11 @@ def main(argv: list[str] | None = None) -> int:
         help="勝率分布の温度。小さいほど本命寄り (既定 0.35)",
     )
     parser.add_argument(
+        "--jra",
+        action="store_true",
+        help="CSV を JRA 形式(日本語ヘッダ)として読み込む",
+    )
+    parser.add_argument(
         "--write-sample",
         metavar="PATH",
         help="サンプルレースを CSV に書き出して終了する",
@@ -52,7 +58,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        horses = load_horses_csv(args.csv) if args.csv else sample_race()
+        if not args.csv:
+            horses = sample_race()
+        elif args.jra:
+            horses = load_jra_csv(args.csv)
+        else:
+            horses = load_horses_csv(args.csv)
         preds = predict_race(horses, temperature=args.temperature)
     except (ValueError, FileNotFoundError) as exc:
         print(f"エラー: {exc}", file=sys.stderr)
