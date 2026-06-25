@@ -16,6 +16,7 @@ dependencies = [
     "pandas>=1.5",
     "scikit-learn>=1.2",
     "lightgbm>=4.0",
+    "duckdb>=0.9",
 ]
 
 [project.scripts]
@@ -24,6 +25,7 @@ keiba = "keiba.__main__:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+viz = ["matplotlib>=3.6"]
 
 [tool.setuptools]
 packages = ["horse_racing", "keiba"]
