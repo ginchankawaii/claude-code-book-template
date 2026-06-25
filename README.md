@@ -1,5 +1,18 @@
 # 競馬予想 (Horse Racing Prediction)
 
+このリポジトリには2つのパッケージがあります。
+
+| パッケージ | 位置づけ | 依存 |
+|---|---|---|
+| **`horse_racing`** | 馬の属性から着順・勝率を予想する依存ゼロのヒューリスティック版(入門・デモ)。本READMEで解説。 | 標準ライブラリのみ |
+| **`keiba`** | **JRA-VAN実データを見据えた本格ML分析層**。リーク防止・確率較正・市場ブレンド・walk-forward回収率バックテスト・分数ケリー。→ [`keiba/README.md`](keiba/README.md) | numpy/pandas/scikit-learn/lightgbm |
+
+設計の根拠は [`docs/RESEARCH_JRAVAN.md`](docs/RESEARCH_JRAVAN.md)(JV-Link取得・モデリング・リーク防止・回収率戦略・OSSの多角リサーチ統合)を参照。
+
+---
+
+## `horse_racing`（依存ゼロのヒューリスティック版）
+
 馬の各種属性から **レースの着順と勝率** を予想する、外部依存ゼロ（Python 標準ライブラリのみ）のツールです。
 ルールベースのスコアリングと softmax による勝率推定を行うため、**決定論的で結果が再現可能**です。
 

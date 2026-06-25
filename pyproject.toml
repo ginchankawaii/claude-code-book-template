@@ -4,20 +4,29 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "horse-racing-prediction"
-version = "0.1.0"
-description = "馬の属性から着順・勝率を予想する、依存ゼロのツール"
+version = "0.2.0"
+description = "競馬予想: 依存ゼロのヒューリスティック版(horse_racing)と、JRA-VAN実データを見据えたML分析層(keiba)"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 
+# keiba(ML分析層)の依存。horse_racing 単体は標準ライブラリのみで動く。
+dependencies = [
+    "numpy>=1.23",
+    "pandas>=1.5",
+    "scikit-learn>=1.2",
+    "lightgbm>=4.0",
+]
+
 [project.scripts]
 horse-racing = "horse_racing.cli:main"
+keiba = "keiba.__main__:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
 
 [tool.setuptools]
-packages = ["horse_racing"]
+packages = ["horse_racing", "keiba"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

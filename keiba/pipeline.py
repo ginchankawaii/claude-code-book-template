@@ -1,0 +1,82 @@
+"""分析層の一気通貫オーケストレーション(M0→M4)。
+
+合成データ生成 → PiT特徴量 → リーク監査 → walk-forward(学習・較正・市場
+ブレンド・EV/分数ケリー・回収率) を実行し、ダッシュボードを整形して返す。
+実データ到着時は reader を差し替えるだけで本関数はそのまま使える。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import pandas as pd
+
+from .backtest import WalkForwardConfig, walk_forward
+from .betting import BettingConfig
+from .features import build_features
+from .leakage import assert_no_post_race_features, audit_temporal_invariance
+from .model import ModelConfig
+from .reader import JVLinkReader, SyntheticBackend
+from .synth import SyntheticConfig
+
+
+@dataclass
+class PipelineResult:
+    backtest: dict
+    leak_audit: dict
+    n_runners: int
+    n_races: int
+
+
+def run_pipeline(reader: JVLinkReader | None = None,
+                 model_config: ModelConfig | None = None,
+                 betting_config: BettingConfig | None = None,
+                 wf_config: WalkForwardConfig | None = None,
+                 run_leak_audit: bool = True,
+                 verbose: bool = False) -> PipelineResult:
+    reader = reader or SyntheticBackend(SyntheticConfig())
+    runners, races = reader.load()
+
+    assert_no_post_race_features()
+    leak = audit_temporal_invariance(runners, n_sample_races=20) if run_leak_audit else {"ok": None}
+
+    feat = build_features(runners)
+    bt = walk_forward(feat, model_config, betting_config, wf_config, verbose=verbose)
+    return PipelineResult(backtest=bt, leak_audit=leak,
+                          n_runners=len(runners), n_races=len(races))
+
+
+def format_report(result: PipelineResult) -> str:
+    bt = result.backtest
+    q = bt["quality"]
+    flat = bt["flat"]
+    kelly = bt["kelly"]
+    ruin = bt["ruin"]
+    leak = result.leak_audit
+    L = []
+    L.append("=" * 64)
+    L.append(" keiba 分析層パイプライン(合成データ・M0→M4)")
+    L.append("=" * 64)
+    L.append(f"データ: {result.n_races} レース / {result.n_runners} 出走")
+    if leak.get("ok") is not None:
+        status = "OK(リークなし)" if leak["ok"] else f"NG 不一致={leak['mismatches']}"
+        L.append(f"リーク監査(時間不変性): {leak['checked']}レース → {status}")
+    L.append(f"walk-forward フォールド数: {bt['n_folds']}  平均ブレンド重み(市場): {bt['avg_blend_w']:.2f}")
+    L.append("")
+    L.append("--- 確率品質(テスト集計, 小さいほど良い) ---")
+    L.append(f"  Brier   model={q['model_brier']:.4f}  market={q['market_brier']:.4f}  blend={q['blend_brier']:.4f}")
+    L.append(f"  LogLoss model={q['model_logloss']:.4f}  market={q['market_logloss']:.4f}  blend={q['blend_logloss']:.4f}")
+    L.append(f"  ブレンドECE={q['blend_ece']:.4f}")
+    L.append("")
+    L.append("--- 回収率(単勝・確定オッズ決済) ---")
+    L.append(f"  EVフィルタ後ベット数: {flat['n_bets']}  的中率: {flat['hit_rate']*100:.1f}%")
+    L.append(f"  フラットROI : {flat['roi']*100:.1f}%   (100%が損益分岐)")
+    L.append(f"  分数ケリーROI: {kelly['roi']*100:.1f}%  最終資金: {kelly['final_bankroll']:.3f}x  最大DD: {kelly['max_drawdown']*100:.1f}%")
+    L.append("")
+    L.append("--- リスク(モンテカルロ) ---")
+    L.append(f"  破産確率(≤30%資金): {ruin['ruin_prob']*100:.1f}%  最終資金中央値: {ruin['median_final']:.2f}x  下側5%: {ruin['p05_final']:.2f}x")
+    L.append("=" * 64)
+    L.append("注: これは合成データでの配管検証です。実データでの回収率は")
+    L.append("    控除率の壁により大きく下がるのが現実(docs/RESEARCH_JRAVAN.md 参照)。")
+    L.append("=" * 64)
+    return "\n".join(L)
