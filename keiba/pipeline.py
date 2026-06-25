@@ -15,7 +15,11 @@ from .backtest import WalkForwardConfig, walk_forward
 from .betting import BettingConfig
 from .exotic import ExoticConfig
 from .features import build_features
-from .leakage import assert_no_post_race_features, audit_temporal_invariance
+from .leakage import (
+    assert_no_post_race_features,
+    audit_outcome_independence,
+    audit_temporal_invariance,
+)
 from .model import ModelConfig
 from .reader import JVLinkReader, SyntheticBackend
 from .synth import SyntheticConfig
@@ -40,7 +44,17 @@ def run_pipeline(reader: JVLinkReader | None = None,
     runners, races = reader.load()
 
     assert_no_post_race_features()
-    leak = audit_temporal_invariance(runners, n_sample_races=20) if run_leak_audit else {"ok": None}
+    if run_leak_audit:
+        ti = audit_temporal_invariance(runners, n_sample_races=20)
+        oi = audit_outcome_independence(runners, n_sample_races=20)
+        leak = {
+            "ok": ti["ok"] and oi["ok"],
+            "checked": ti["checked"] + oi["checked"],
+            "temporal": ti,
+            "outcome": oi,
+        }
+    else:
+        leak = {"ok": None}
 
     feat = build_features(runners)
     bt = walk_forward(feat, model_config, betting_config, wf_config,
@@ -62,8 +76,8 @@ def format_report(result: PipelineResult) -> str:
     L.append("=" * 64)
     L.append(f"データ: {result.n_races} レース / {result.n_runners} 出走")
     if leak.get("ok") is not None:
-        status = "OK(リークなし)" if leak["ok"] else f"NG 不一致={leak['mismatches']}"
-        L.append(f"リーク監査(時間不変性): {leak['checked']}レース → {status}")
+        status = "OK(リークなし)" if leak["ok"] else "NG リーク検出!"
+        L.append(f"リーク監査(時間不変性+結果独立性): {leak['checked']}レース → {status}")
     L.append(f"walk-forward フォールド数: {bt['n_folds']}  平均ブレンド重み(市場): {bt['avg_blend_w']:.2f}")
     L.append("")
     L.append("--- 確率品質(テスト集計, 小さいほど良い) ---")

@@ -71,6 +71,58 @@ def audit_temporal_invariance(
     }
 
 
+def audit_outcome_independence(
+    runners: pd.DataFrame,
+    n_sample_races: int = 25,
+    seed: int = 0,
+    atol: float = 1e-9,
+) -> dict:
+    """当該レース自身の確定後情報に対する不変性を検証する。
+
+    時間不変性監査(audit_temporal_invariance)は「他レース(未来・同日兄弟)の
+    未来情報」リークは捉えるが、対象レース *自身* の確定後カラム(着順等)を
+    特徴量に使ってしまう種類のリークは捉えられない(対象行は full/truncated の
+    両方に存在し値も同じため)。
+
+    本監査は対象レースの POST_RACE カラムを書き換えてから特徴量を再構築し、
+    そのレース自身の特徴量が変化しないことを確認する。変化したら、その特徴は
+    自レースの結果に依存している = リーク。
+
+    Returns: {"checked": int, "mismatches": [race_id...], "ok": bool}
+    """
+    full = build_features(runners)
+    rng = np.random.default_rng(seed)
+    post_cols = [c for c in schema.POST_RACE_COLUMNS if c in runners.columns]
+
+    races = runners["race_id"].drop_duplicates().to_numpy()
+    sample = rng.choice(races, size=min(n_sample_races, len(races)), replace=False)
+
+    mismatches = []
+    for rid in sample:
+        modified = runners.copy()
+        mask = modified["race_id"] == rid
+        # 当該レースの確定後カラムを攪乱(順位を逆順化し、数値列をゼロ化)
+        if "finish_pos" in modified.columns:
+            n = int(mask.sum())
+            modified.loc[mask, "finish_pos"] = list(range(n, 0, -1))
+        for c in post_cols:
+            if c == "finish_pos":
+                continue
+            modified.loc[mask, c] = 0
+
+        mfeat = build_features(modified)
+        a = full[full.race_id == rid].sort_values("post_position")[FEATURE_COLUMNS].reset_index(drop=True)
+        b = mfeat[mfeat.race_id == rid].sort_values("post_position")[FEATURE_COLUMNS].reset_index(drop=True)
+        if not _frames_close(a, b, atol):
+            mismatches.append(int(rid))
+
+    return {
+        "checked": int(len(sample)),
+        "mismatches": mismatches,
+        "ok": len(mismatches) == 0,
+    }
+
+
 def _frames_close(a: pd.DataFrame, b: pd.DataFrame, atol: float) -> bool:
     if a.shape != b.shape:
         return False

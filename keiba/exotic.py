@@ -116,7 +116,7 @@ def select_exotic_bets(race: pd.DataFrame, model_p: np.ndarray, market_p: np.nda
             return
         rows.append({
             "race_id": rid, "race_date": rdate, "bet_type": bet_type,
-            "combo": "-".join(str(race.iloc[m]["post_position"]) for m in members)
+            "combo": "-".join(str(int(race.iloc[m]["post_position"])) for m in members)
                      if "post_position" in race.columns else str(members),
             "model_prob": model_prob, "market_prob": mkt_prob, "odds": odds,
             "ev": ev, "stake_frac": stake, "is_win": int(hit),

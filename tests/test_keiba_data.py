@@ -5,7 +5,12 @@ import pytest
 
 from keiba import schema
 from keiba.features import FEATURE_COLUMNS, build_features
-from keiba.leakage import assert_no_post_race_features, audit_temporal_invariance
+import keiba.leakage as L
+from keiba.leakage import (
+    assert_no_post_race_features,
+    audit_outcome_independence,
+    audit_temporal_invariance,
+)
 from keiba.synth import SyntheticConfig, generate_dataset
 
 
@@ -53,6 +58,35 @@ def test_temporal_invariance_no_leakage(small_data):
     runners, _ = small_data
     audit = audit_temporal_invariance(runners, n_sample_races=15, seed=0)
     assert audit["ok"], f"PiTリーク検出: {audit['mismatches']}"
+
+
+def test_outcome_independence_no_leakage(small_data):
+    """当該レース自身の確定後情報に特徴量が依存していないこと。"""
+    runners, _ = small_data
+    audit = audit_outcome_independence(runners, n_sample_races=15, seed=0)
+    assert audit["ok"], f"自レース結果リーク検出: {audit['mismatches']}"
+
+
+def test_outcome_independence_catches_injected_own_race_leak(small_data):
+    """自レースの着順を特徴量に混入させたら、結果独立性監査が検出すること
+    (時間不変性監査では捉えられない種類のリークを補完する)。"""
+    runners, _ = small_data
+    orig = L.build_features
+
+    def leaky(r, config=None):
+        df = orig(r, config).copy()
+        base = r.sort_values(["race_date", "race_id"]).reset_index(drop=True)
+        df["h_avg_relfinish"] = (base["field_size"] - base["finish_pos"]).to_numpy()
+        return df
+
+    L.build_features = leaky
+    try:
+        ti = audit_temporal_invariance(runners, n_sample_races=12, seed=1)
+        oi = audit_outcome_independence(runners, n_sample_races=12, seed=1)
+    finally:
+        L.build_features = orig
+    assert ti["ok"]          # 時間不変性は自レースリークを捉えられない(既知の限界)
+    assert not oi["ok"]      # 結果独立性が捉える
 
 
 def test_pit_aggregates_use_only_past(small_data):
