@@ -49,14 +49,21 @@ python -m keiba --objective lambdarank   # Learning-to-Rank で学習
 | `model.py` | LightGBM(binary / lambdarank)+ レース内正規化 | M2 |
 | `calibration.py` | Isotonic/Platt 較正 + Brier/LogLoss/ECE/信頼性曲線 | M2 |
 | `blend.py` | 市場確率ブレンド(Benter)+ Harville 連系展開 | M4 |
-| `betting.py` | EV/エッジフィルタ + 分数ケリー + モンテカルロ破産確率 | M3 |
+| `betting.py` | EV/エッジフィルタ + 分数ケリー + モンテカルロ破産確率(レース単位) | M3 |
 | `backtest.py` | walk-forward 回収率バックテスト | M3 |
+| `exotic.py` | 連系券種(馬連/ワイド/三連複)の Harville 展開 + EV ベット | M4 |
+| `store.py` | DuckDB 境界(取得層↔分析層の疎結合) | M0/M5 |
+| `jvlink.py` | 実 JV-Link 取込アダプタ(COMフロー + SJIS固定長パーサ枠組み) | M5 |
+| `dashboard.py` | 信頼性曲線・バンクロール・回収率分布・特徴量重要度の可視化 | — |
 | `pipeline.py` / `__main__.py` | 一気通貫オーケストレーション + CLI | — |
 
 ## 実データ(JRA-VAN)への接続
 
 取得層(Windows/32bit COM の JV-Link)と分析層(本パッケージ)は **DBファイルを
-境界に疎結合** です。実データ運用時は `reader.RealJVLinkBackend`(M5)を実装して
-`schema` 準拠の `runners`/`races` を供給すれば、**下流(特徴量〜バックテスト)は
-無改修** でそのまま動きます。手順は [`../docs/RESEARCH_JRAVAN.md`](../docs/RESEARCH_JRAVAN.md)
-第2章・第8章(ロードマップ M5〜M8)を参照。
+境界に疎結合** です。実データ運用時は `jvlink.RealJVLinkBackend`(M5)または既存ツール(EveryDB2/
+jrvltsql)で `schema` 準拠の `runners`/`races` を `store` 経由で供給すれば、
+**下流(特徴量〜バックテスト)は無改修** でそのまま動きます。
+
+導入の具体的な手順・判断ポイント・法務確認事項は
+[`../docs/SETUP_JRAVAN.md`](../docs/SETUP_JRAVAN.md)、設計の出典は
+[`../docs/RESEARCH_JRAVAN.md`](../docs/RESEARCH_JRAVAN.md)(第2章・第8章 M5〜M8)を参照。
