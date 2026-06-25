@@ -25,7 +25,7 @@ except Exception as exc:  # pragma: no cover
 from .features import FEATURE_COLUMNS, LABEL_TOP3, LABEL_WIN
 
 # カテゴリとして扱う特徴量
-CATEGORICAL = ["sex", "surface", "class_level"]
+CATEGORICAL = ["sex", "surface", "class_level", "going", "running_style"]
 
 
 @dataclass
@@ -59,16 +59,17 @@ class KeibaModel:
     # ------------------------------------------------------------------
     def fit(self, train: pd.DataFrame, valid: pd.DataFrame | None = None) -> "KeibaModel":
         cfg = self.cfg
+        cats = [c for c in CATEGORICAL if c in self.features]
         Xtr = train[self.features]
         if cfg.objective == "binary":
             ytr = train[cfg.label].to_numpy()
             params = self._binary_params()
-            dtrain = lgb.Dataset(Xtr, label=ytr, categorical_feature=CATEGORICAL,
+            dtrain = lgb.Dataset(Xtr, label=ytr, categorical_feature=cats,
                                  free_raw_data=False)
             valid_sets = [dtrain]
             if valid is not None:
                 dvalid = lgb.Dataset(valid[self.features], label=valid[cfg.label].to_numpy(),
-                                     reference=dtrain, categorical_feature=CATEGORICAL,
+                                     reference=dtrain, categorical_feature=cats,
                                      free_raw_data=False)
                 valid_sets.append(dvalid)
             self.booster = lgb.train(
@@ -81,12 +82,12 @@ class KeibaModel:
             group_tr = _group_sizes(train)
             params = self._rank_params()
             dtrain = lgb.Dataset(Xtr, label=ytr, group=group_tr,
-                                 categorical_feature=CATEGORICAL, free_raw_data=False)
+                                 categorical_feature=cats, free_raw_data=False)
             valid_sets = [dtrain]
             if valid is not None:
                 dvalid = lgb.Dataset(valid[self.features], label=_relevance(valid),
                                      group=_group_sizes(valid), reference=dtrain,
-                                     categorical_feature=CATEGORICAL, free_raw_data=False)
+                                     categorical_feature=cats, free_raw_data=False)
                 valid_sets.append(dvalid)
             self.booster = lgb.train(
                 params, dtrain, num_boost_round=cfg.num_boost_round, valid_sets=valid_sets,

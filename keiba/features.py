@@ -38,6 +38,9 @@ FEATURE_COLUMNS = [
     "class_level",
     "surface",
     "distance",
+    "going",
+    "moisture",
+    "running_style",
     "is_first_start",
     # 馬の過去走集計(PiT)
     "h_starts",
@@ -47,9 +50,11 @@ FEATURE_COLUMNS = [
     "h_best_relfinish",
     "h_avg_last3f",
     "h_form_momentum",   # 直近 - 通算 の差(上昇度)
+    "h_mud_affinity",    # 道悪適性の代理: 過去の(重馬場-良馬場)相対着順差(PiT)
     # 騎手の過去走集計(PiT)
     "j_starts",
     "j_win_rate",
+    "j_surface_win",     # 当該馬場(芝/ダ)での騎手勝率(PiT)
     # 種牡馬の過去走集計(PiT)
     "s_starts",
     "s_win_rate",
@@ -86,9 +91,25 @@ def build_features(runners: pd.DataFrame, config: FeatureConfig | None = None) -
     df["h_recent_relfinish"] = _pit_recent_mean(df, "horse_id", "rel_finish", cfg.recent_window)
     df["h_form_momentum"] = df["h_recent_relfinish"] - df["h_avg_relfinish"]
 
+    # 道悪適性(PiT): 過去の「重馬場(going>=2)平均 - 良馬場平均」相対着順差。
+    df["_is_wet"] = (df["going"] >= 2).astype(float)
+    df["_rf_wet"] = df["rel_finish"] * df["_is_wet"]
+    df["_rf_dry"] = df["rel_finish"] * (1.0 - df["_is_wet"])
+    wet_sum, _ = _pit_daily_cumulative(df, "horse_id", "_rf_wet")
+    wet_cnt, _ = _pit_daily_cumulative(df, "horse_id", "_is_wet")
+    dry_sum, dry_rows = _pit_daily_cumulative(df, "horse_id", "_rf_dry")
+    with np.errstate(invalid="ignore", divide="ignore"):
+        wet_mean = np.where(wet_cnt > 0, wet_sum / wet_cnt, np.nan)
+        dry_cnt = dry_rows - wet_cnt  # 全件数 - 重件数 = 良件数
+        dry_mean = np.where(dry_cnt > 0, dry_sum / dry_cnt, np.nan)
+    df["h_mud_affinity"] = wet_mean - dry_mean  # 不明(どちらか未経験)は NaN
+
     # --- 騎手の PiT 集計 ---
     df["j_starts"] = _pit_count(df, "jockey_id")
     df["j_win_rate"] = _pit_mean(df, "jockey_id", "is_win")
+    # 当該馬場での騎手勝率(PiT): (jockey, surface) 複合キーで集計
+    df["_jsurf"] = df["jockey_id"].astype(np.int64) * 2 + df["surface"].astype(np.int64)
+    df["j_surface_win"] = _pit_mean(df, "_jsurf", "is_win")
 
     # --- 種牡馬の PiT 集計 ---
     df["s_starts"] = _pit_count(df, "sire_id")

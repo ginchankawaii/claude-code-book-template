@@ -41,6 +41,7 @@ class SyntheticConfig:
     w_jockey: float = 0.45
     w_sire_fit: float = 0.35
     w_form: float = 0.55       # 真の強さに対する調子の寄与
+    w_mud: float = 0.5         # 馬場(含水)× 馬の道悪適性の寄与
     pl_temperature: float = 0.80  # Plackett-Luce(Gumbel)温度。大きいほど波乱(=的中の上限)
 
     # 市場の効率性。
@@ -80,6 +81,8 @@ def generate_dataset(config: SyntheticConfig | None = None):
 
     horse_sire = rng.integers(0, cfg.n_sires, cfg.n_horses)
     horse_sex = rng.integers(0, 3, cfg.n_horses)
+    horse_mud = rng.normal(0.0, 1.0, cfg.n_horses)     # 道悪適性(latent)
+    horse_style = rng.integers(0, 4, cfg.n_horses)     # 脚質 0=逃げ,1=先行,2=差し,3=追込(持続的)
     # 馬ごとの状態(時間発展)
     horse_age_days = rng.integers(2 * 365, 5 * 365, cfg.n_horses).astype(float)
     horse_form = rng.normal(0.0, 1.0, cfg.n_horses)         # AR(1) 調子
@@ -99,6 +102,10 @@ def generate_dataset(config: SyntheticConfig | None = None):
             distance = int(rng.choice([1200, 1400, 1600, 1800, 2000, 2400]))
             class_level = int(rng.integers(1, 6))
             field_size = int(rng.integers(cfg.min_field, cfg.max_field + 1))
+            # 馬場状態 0=良,1=稍重,2=重,3=不良。含水率は状態に連動。
+            going = int(rng.choice([0, 1, 2, 3], p=[0.62, 0.20, 0.12, 0.06]))
+            moisture = float(np.clip(8.0 + going * 4.0 + rng.normal(0, 1.5), 1.0, 30.0))
+            wetness = going / 3.0  # 0(良)〜1(不良)
 
             # 出走馬を抽選(置換なし)。出走確率はクラス近接で軽く重み付け。
             entrants = rng.choice(cfg.n_horses, size=field_size, replace=False)
@@ -134,13 +141,16 @@ def generate_dataset(config: SyntheticConfig | None = None):
             weight_effect = -0.04 * (carried_weight - 55.0)
 
             form_state = horse_form[entrants]
+            mud_aff = horse_mud[entrants]               # 道悪適性
+            style = horse_style[entrants]
 
-            # 真の強さ
+            # 真の強さ(馬場×道悪適性の交互作用を含む)
             true_strength = (
                 cfg.w_ability * ability
                 + cfg.w_jockey * jk
                 + cfg.w_sire_fit * sire_fit
                 + cfg.w_form * form_state
+                + cfg.w_mud * mud_aff * wetness
                 + draw_bias
                 + weight_effect
             )
@@ -161,11 +171,15 @@ def generate_dataset(config: SyntheticConfig | None = None):
             # 近視眼的(ノイズ込み)にしか読めない。過去走を集計するモデルは
             # この form 読みを上回りうる → 市場が取りこぼす残差(Benterの構図)。
             market_form_read = form_state + rng.normal(0.0, cfg.market_myopia, field_size)
+            # 市場は道悪適性も近視眼的にしか読めない(過去の道悪実績から
+            # モデルが復元できれば、ここにも残差エッジが生まれる)。
+            market_mud_read = mud_aff + rng.normal(0.0, cfg.market_myopia, field_size)
             market_strength = (
                 cfg.w_ability * ability
                 + cfg.w_jockey * jk
                 + cfg.w_sire_fit * sire_fit
                 + cfg.market_form_weight * cfg.w_form * market_form_read
+                + cfg.market_form_weight * cfg.w_mud * market_mud_read * wetness
                 + draw_bias
                 + weight_effect
                 + rng.normal(0.0, cfg.market_noise, field_size)
@@ -218,6 +232,9 @@ def generate_dataset(config: SyntheticConfig | None = None):
                         "class_level": class_level,
                         "surface": surface,
                         "distance": distance,
+                        "going": going,
+                        "moisture": moisture,
+                        "running_style": int(style[k]),
                         "is_first_start": int(is_first[k]),
                         # 発走前の市場情報
                         "morning_odds": float(morning_odds[k]),
@@ -249,6 +266,8 @@ def generate_dataset(config: SyntheticConfig | None = None):
                     "race_date": day,
                     "surface": surface,
                     "distance": distance,
+                    "going": going,
+                    "moisture": moisture,
                     "class_level": class_level,
                     "field_size": field_size,
                 }

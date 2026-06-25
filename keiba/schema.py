@@ -34,6 +34,9 @@ PRE_RACE_COLUMNS = [
     "class_level",     # クラス(数値が大きいほど上級)
     "surface",         # 0=芝,1=ダート
     "distance",        # m
+    "going",           # 馬場状態 0=良,1=稍重,2=重,3=不良(当日発走前に確定)
+    "moisture",        # 含水率%(当日発走前に確定)
+    "running_style",   # 脚質 0=逃げ,1=先行,2=差し,3=追込(持続的な馬の特性)
     "is_first_start",  # 初出走フラグ
 ]
 
