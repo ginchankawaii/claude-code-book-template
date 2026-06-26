@@ -142,15 +142,21 @@ def predict_upcoming(predictor: Predictor, feat_all: pd.DataFrame) -> pd.DataFra
 
 
 def predict_day(predictor: Predictor, feat_all: pd.DataFrame, day=None) -> pd.DataFrame:
-    """当日(既定=最新日)の *全レース* を予測し、確定済みなら実結果を添える。
-
-    出馬表(発走前)も確定済みも両方含むので「予想 vs 結果」の比較に使える。
-    返り値の列に finish_pos(実着順)・is_win(実1着)・race_finished を含む。
-    """
-    cfg = predictor.cfg
+    """当日(既定=最新日)の *全レース* を予測し、確定済みなら実結果を添える。"""
     if day is None:
         day = feat_all["race_date"].max()
-    sub = feat_all[feat_all["race_date"] == day].copy()
+    return _predict_subset(predictor, feat_all[feat_all["race_date"] == day].copy())
+
+
+def predict_range(predictor: Predictor, feat_all: pd.DataFrame, lo, hi) -> pd.DataFrame:
+    """[lo, hi) の期間の全レースを予測し実結果を添える(バックテスト集計/閲覧用)。"""
+    sub = feat_all[(feat_all["race_date"] >= lo) & (feat_all["race_date"] < hi)].copy()
+    return _predict_subset(predictor, sub)
+
+
+def _predict_subset(predictor: Predictor, sub: pd.DataFrame) -> pd.DataFrame:
+    """指定レース集合(sub)を採点し、予想順位・EV・実結果を付けて返す。"""
+    cfg = predictor.cfg
     if sub.empty:
         return _empty_day()
 
@@ -170,6 +176,7 @@ def predict_day(predictor: Predictor, feat_all: pd.DataFrame, day=None) -> pd.Da
 
     out = pd.DataFrame({
         "race_id": sub["race_id"].to_numpy(),
+        "race_date": sub["race_date"].to_numpy(),
         "post_position": sub.get("post_position", pd.Series(np.nan, index=sub.index)).to_numpy(),
         "win_prob": p_blend, "market_prob": q, "odds": odds, "ev": ev, "edge": edge,
         "finish_pos": sub["finish_pos"].to_numpy(),
@@ -189,9 +196,9 @@ def predict_day(predictor: Predictor, feat_all: pd.DataFrame, day=None) -> pd.Da
 
 
 def _empty_day() -> pd.DataFrame:
-    return pd.DataFrame(columns=["race_id", "post_position", "win_prob", "market_prob",
-                                 "odds", "ev", "edge", "finish_pos", "is_win", "bet",
-                                 "rank", "race_finished"])
+    return pd.DataFrame(columns=["race_id", "race_date", "post_position", "win_prob",
+                                 "market_prob", "odds", "ev", "edge", "finish_pos",
+                                 "is_win", "bet", "rank", "race_finished"])
 
 
 def format_predictions(pred: pd.DataFrame, top_n: int = 5) -> str:
