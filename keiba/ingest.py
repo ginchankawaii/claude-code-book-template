@@ -47,7 +47,7 @@ O1_FIELDS = {  # 単勝オッズ(馬番別)
     "tan_odds": "TanOdds", "tan_ninki": "TanNinki",
 }
 TABLE_MAP = {"se": "NL_SE", "ra": "NL_RA", "o1": "NL_O1", "hr": "NL_HR",
-             "rt_se": "RT_SE", "rt_ra": "RT_RA"}
+             "rt_se": "RT_SE", "rt_ra": "RT_RA", "rt_odds": "TS_SOKUHO_O1"}
 
 
 @dataclass
@@ -188,6 +188,7 @@ def validate_runners(df: pd.DataFrame) -> list[str]:
 
 def _ingest_tables(reader, table_map: dict | None, config: IngestConfig | None,
                    include_realtime: bool = False):
+    cfg = config or IngestConfig()
     tm = {**TABLE_MAP, **(table_map or {})}
     se = reader(tm["se"]); ra = reader(tm["ra"])
     o1 = reader(tm.get("o1", "")); hr = reader(tm.get("hr", ""))
@@ -202,7 +203,18 @@ def _ingest_tables(reader, table_map: dict | None, config: IngestConfig | None,
             se = pd.concat([se, rt_se], ignore_index=True)
         if rt_ra is not None and len(rt_ra):
             ra = pd.concat([ra, rt_ra], ignore_index=True)
-    return normalize(se, ra, o1, hr, config)
+        # 当日の速報オッズ(TS_SOKUHO_O1)の最新スナップショットを O1 に足す。
+        rt_odds = reader(tm.get("rt_odds", "TS_SOKUHO_O1"))
+        if rt_odds is not None and len(rt_odds):
+            of = cfg.o1_fields
+            key_cols = [of[k] for k in ("year", "monthday", "jyo", "kaiji", "nichiji",
+                                        "racenum", "umaban") if of.get(k) in rt_odds.columns]
+            if "CollectedAt" in rt_odds.columns:
+                rt_odds = rt_odds.sort_values("CollectedAt")
+            if key_cols:
+                rt_odds = rt_odds.drop_duplicates(subset=key_cols, keep="last")
+            o1 = pd.concat([o1, rt_odds], ignore_index=True) if (o1 is not None and len(o1)) else rt_odds
+    return normalize(se, ra, o1, hr, cfg)
 
 
 def from_sqlite(path: str | Path, table_map: dict | None = None,
