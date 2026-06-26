@@ -17,3 +17,14 @@ services:
       - ./plots:/app/plots    # ダッシュボード PNG の出力先
     # 既定コマンド(引数を付けなければ合成デモ)
     command: ["--days", "360", "--quiet"]
+
+  # 当日予想の Web ビューア:  docker compose up web  → http://localhost:8000
+  web:
+    build: .
+    image: keiba-analysis
+    entrypoint: ["python", "-m", "keiba.web"]
+    command: ["--db", "/data/keiba.db", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
