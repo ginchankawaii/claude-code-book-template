@@ -95,6 +95,30 @@ def test_validate_catches_odds_scale():
     assert any("odds_scale" in s for s in issues)
 
 
+def test_from_sqlite_roundtrip(tmp_path):
+    import sqlite3
+    from keiba.ingest import from_sqlite
+    se, ra, o1 = _jv_frames()
+    p = tmp_path / "keiba.db"
+    con = sqlite3.connect(str(p))
+    se.to_sql("NL_SE", con, index=False)
+    ra.to_sql("NL_RA", con, index=False)
+    o1.to_sql("NL_O1", con, index=False)
+    con.close()
+    runners, races = from_sqlite(p)
+    assert len(runners) == 6
+    assert validate_runners(runners) == []
+
+
+def test_validate_flags_column_name_mismatch():
+    se, ra, o1 = _jv_frames()
+    se2 = se.rename(columns={"KettoNum": "Ketto_Num", "Umaban": "Uma_Ban"})
+    runners, _ = normalize(se2, ra, o1)
+    issues = validate_runners(runners)
+    assert any("horse_id が全て NaN" in s for s in issues)
+    assert any("post_position が全て NaN" in s for s in issues)
+
+
 def test_features_run_on_normalized_with_missing_optional_cols():
     se, ra, o1 = _jv_frames()
     runners, _ = normalize(se, ra, o1)

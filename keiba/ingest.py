@@ -168,8 +168,12 @@ def validate_runners(df: pd.DataFrame) -> list[str]:
     for c in required:
         if c not in df.columns:
             issues.append(f"必須列が無い: {c}")
+    # 全行 NaN のキー列 = 元の JV-Data 列名が既定と違う可能性(マッピング要修正)
+    for c in ["horse_id", "post_position", "jockey_id", "final_odds"]:
+        if c in df.columns and df[c].isna().all():
+            issues.append(f"{c} が全て NaN(元の列名が *_FIELDS の既定と異なる可能性)")
     if "race_date" in df and df["race_date"].le(0).any():
-        issues.append("race_date に不正値(<=0)がある(日付パース失敗の可能性)")
+        issues.append("race_date に不正値(<=0)がある(日付パース失敗 or Year/MonthDay 列名違い)")
     if "finish_pos" in df and df["finish_pos"].notna().any():
         per_race_winner = df[df.finish_pos == 1].groupby("race_id").size()
         if (per_race_winner > 1).any():
@@ -180,22 +184,46 @@ def validate_runners(df: pd.DataFrame) -> list[str]:
     return issues
 
 
+def _ingest_tables(reader, table_map: dict | None, config: IngestConfig | None):
+    tm = {**TABLE_MAP, **(table_map or {})}
+    se = reader(tm["se"]); ra = reader(tm["ra"])
+    o1 = reader(tm.get("o1", "")); hr = reader(tm.get("hr", ""))
+    if se is None or ra is None:
+        raise ValueError(f"必須テーブル {tm['se']}/{tm['ra']} が見つかりません")
+    return normalize(se, ra, o1, hr, config)
+
+
+def from_sqlite(path: str | Path, table_map: dict | None = None,
+                config: IngestConfig | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """SQLite ファイル(jrvltsql の data/keiba.db 等)から読み、正規化して返す。"""
+    import sqlite3
+    con = sqlite3.connect(str(path))
+    try:
+        def reader(name):
+            if not name:
+                return None
+            try:
+                return pd.read_sql_query(f'SELECT * FROM "{name}"', con)
+            except Exception:
+                return None
+        return _ingest_tables(reader, table_map, config)
+    finally:
+        con.close()
+
+
 def from_duckdb(path: str | Path, table_map: dict | None = None,
                 config: IngestConfig | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """DuckDB/SQLite ファイルから JV-Data テーブルを読み、正規化して返す。"""
+    """DuckDB ファイルから JV-Data テーブルを読み、正規化して返す。"""
     import duckdb
-    tm = {**TABLE_MAP, **(table_map or {})}
     con = duckdb.connect(str(path), read_only=True)
     try:
-        def tbl(name):
+        def reader(name):
+            if not name:
+                return None
             try:
                 return con.execute(f'SELECT * FROM "{name}"').fetchdf()
             except Exception:
                 return None
-        se = tbl(tm["se"]); ra = tbl(tm["ra"])
-        o1 = tbl(tm.get("o1", "")); hr = tbl(tm.get("hr", ""))
+        return _ingest_tables(reader, table_map, config)
     finally:
         con.close()
-    if se is None or ra is None:
-        raise ValueError(f"必須テーブル {tm['se']}/{tm['ra']} が見つかりません")
-    return normalize(se, ra, o1, hr, config)
