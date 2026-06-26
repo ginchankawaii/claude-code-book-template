@@ -231,13 +231,20 @@ def _ingest_tables(reader, table_map: dict | None, config: IngestConfig | None,
 
 def from_sqlite(path: str | Path, table_map: dict | None = None,
                 config: IngestConfig | None = None,
-                include_realtime: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+                include_realtime: bool = False,
+                immutable: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
     """SQLite ファイル(jrvltsql の data/keiba.db 等)から読み、正規化して返す。
 
     include_realtime=True で当日の出馬表(RT_SE/RT_RA)も結合する。
+    immutable=True は別プロセス(realtime 取り込み)が DB を排他ロック中でも
+    読めるよう immutable オープンする(僅かに古いスナップショットを読む可能性あり)。
     """
     import sqlite3
-    con = sqlite3.connect(str(path))
+    if immutable:
+        uri = "file:" + str(path).replace("\\", "/") + "?immutable=1"
+        con = sqlite3.connect(uri, uri=True)
+    else:
+        con = sqlite3.connect(str(path))
     try:
         def reader(name):
             if not name:
@@ -275,14 +282,17 @@ class IngestBackend(JVLinkReader):
     分析層バックエンド。run_pipeline にそのまま渡せる。"""
 
     def __init__(self, path, kind: str = "sqlite", table_map: dict | None = None,
-                 config: IngestConfig | None = None, include_realtime: bool = False):
+                 config: IngestConfig | None = None, include_realtime: bool = False,
+                 immutable: bool = False):
         self.path = path
         self.kind = kind
         self.table_map = table_map
         self.config = config
         self.include_realtime = include_realtime
+        self.immutable = immutable
 
     def load(self):
         if self.kind == "duckdb":
             return from_duckdb(self.path, self.table_map, self.config, self.include_realtime)
-        return from_sqlite(self.path, self.table_map, self.config, self.include_realtime)
+        return from_sqlite(self.path, self.table_map, self.config, self.include_realtime,
+                           self.immutable)

@@ -26,6 +26,7 @@ import pandas as pd
 from flask import Flask, redirect, render_template_string, url_for
 
 from .betadvice import advise_race
+from .exotic_odds import load_exotic_odds_for_day
 from .features import build_features
 from .ingest import IngestBackend, validate_runners
 from .model import ModelConfig
@@ -40,7 +41,7 @@ WD = "月火水木金土日"
 STATE = {"db": None, "kind": "sqlite", "predictor": None, "pred": None,
          "updated": None, "issues": [], "building": False, "error": None,
          "objective": "binary", "ev": 1.15, "refresh_sec": 90, "cutoff": None,
-         "today": None}
+         "today": None, "immutable": False, "odds_cache": {}}
 _LOCK = threading.Lock()
 
 
@@ -70,7 +71,8 @@ def rebuild(retrain: bool = False) -> None:
         STATE["building"] = True
     try:
         runners, _ = IngestBackend(STATE["db"], kind=STATE["kind"],
-                                   include_realtime=True).load()
+                                   include_realtime=True,
+                                   immutable=STATE.get("immutable", False)).load()
         issues = validate_runners(runners)
         feat = build_features(runners)
         # 評価年(最新年)の元旦を学習カットオフに(アウトオブタイム)
@@ -87,6 +89,7 @@ def rebuild(retrain: bool = False) -> None:
             STATE["issues"] = issues
             STATE["cutoff"] = cutoff
             STATE["today"] = max_ord
+            STATE["odds_cache"] = {}   # 当日ライブオッズが変わるのでクリア
             STATE["updated"] = _dt.datetime.now().strftime("%H:%M:%S")
             STATE["error"] = None
     except Exception as exc:  # pragma: no cover
@@ -125,8 +128,36 @@ def _row_view(h) -> dict:
     }
 
 
+def _rid_int(rid):
+    try:
+        return int(rid)
+    except (ValueError, TypeError):
+        return None
+
+
+def _day_odds(day_ord: int) -> dict:
+    """表示中の日の連系オッズ(O2〜O6)を読み込み、race_id→券種→組番→倍率で返す。
+
+    日付単位で遅延ロードしキャッシュ(2026全件を一度に読むと巨大になるため)。"""
+    cache = STATE.setdefault("odds_cache", {})
+    if day_ord in cache:
+        return cache[day_ord]
+    odds = {}
+    if STATE.get("db"):
+        try:
+            d = _dt.date.fromordinal(int(day_ord))
+            odds = load_exotic_odds_for_day(
+                STATE["db"], d.year, d.month * 100 + d.day,
+                kind=STATE["kind"], immutable=STATE.get("immutable", False))
+        except Exception:
+            odds = {}
+    cache[day_ord] = odds
+    return odds
+
+
 def _day_view(pred: pd.DataFrame, day_ord: int) -> dict:
     sub = pred[pred["race_date"] == day_ord]
+    day_odds = _day_odds(day_ord)
     venues = {}
     for rid, g in sub.groupby("race_id", sort=False):
         g = g.sort_values("rank")
@@ -137,7 +168,7 @@ def _day_view(pred: pd.DataFrame, day_ord: int) -> dict:
             fp = pick["finish_pos"]
             pf = None if fp != fp else int(fp)
             status = "的中" if pf == 1 else ("複勝圏" if (pf is not None and pf <= 3) else "外")
-        adv = advise_race(g)
+        adv = advise_race(g, day_odds.get(_rid_int(rid)))
         race = {"race_id": rid, "num": _racenum(rid), "label": f"{_venue(rid)} {_racenum(rid)}R",
                 "finished": finished, "status": status,
                 "rows": [_row_view(h) for _, h in g.head(8).iterrows()],
@@ -245,8 +276,9 @@ LAYOUT = """
   {% if issues %}<div class="warn">注意: {{issues|join(' / ')}}</div>{% endif %}
   {{ body|safe }}
   <div class="foot">⚠ 検証前モデルの紙上テスト。回収率が控除率を超える保証は無い。お金を賭ける根拠にはしないこと。<br>
-    連系(馬連〜三連単)は的中確率と「妙味目安(◯倍以上で買い)」を表示。実オッズ(O2〜O6)接続後に実EVへ差し替え予定。<br>
-    着順を出すには取得層で結果速報も回す: <code>jltsql realtime start --specs 0B12,0B15,0B30</code></div>
+    連系(馬連〜三連単)は的中確率を表示。実オッズ(O2〜O6/速報)がある券種は実EV(=的中率×払戻)を計算し、EV1.0以上を ◎ で妙味表示。無い券種はフェア倍率(◯倍以上で買い)。<br>
+    取得層(別プロセス)で結果速報も回す: <code>jltsql realtime start --specs 0B12,0B15,0B30</code>(0B30で連系オッズも取得)。<br>
+    realtime と同時に閲覧する場合は <code>--immutable</code> 付きで起動するか、DBを一度 WAL 化する。</div>
 </div></body></html>
 """
 
@@ -267,7 +299,8 @@ DAY_BODY = """
     </table>
     <div class="adv"><span class="ty">{{r.advice.type}}</span> {{r.advice.comment}}
       <div class="ex" style="margin-top:4px">
-        {% for e in r.advice.exotic %}<b>{{e.kind}}</b> {{e.sel}} 的中{{'%.1f'|format(e.prob*100)}}% <span style="color:#7fb0ff">妙味{{'%.0f'|format(e.fair)}}倍↑</span>　{% endfor %}
+        {% for e in r.advice.exotic %}<b>{{e.kind}}</b> {{e.sel}} 的中{{'%.1f'|format(e.prob*100)}}%
+          {% if e.odds %}<span class="{{'ev-hi' if e.buy else 'ev-lo'}}">{{'%.1f'|format(e.odds)}}倍 EV{{'%.2f'|format(e.ev)}}{% if e.buy %} ◎{% endif %}</span>{% else %}<span style="color:#7fb0ff">妙味{{'%.0f'|format(e.fair)}}倍↑</span>{% endif %}　{% endfor %}
       </div>
     </div>
   </div>
@@ -363,9 +396,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--refresh", type=int, default=90)
     p.add_argument("--reingest", type=int, default=240)
+    p.add_argument("--immutable", action="store_true",
+                   help="realtime 取り込みが DB をロック中でも読めるよう immutable オープンする")
     args = p.parse_args(argv)
     STATE.update(db=args.db, kind=args.db_kind, objective=args.objective,
-                 ev=args.ev, refresh_sec=args.refresh)
+                 ev=args.ev, refresh_sec=args.refresh, immutable=args.immutable)
     print("初回の学習中…(2026を除外して学習・数分)", flush=True)
     rebuild(retrain=True)
     print(f"準備完了。ブラウザで http://localhost:{args.port} を開いてください。", flush=True)

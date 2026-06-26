@@ -51,3 +51,29 @@ def test_tan_value_bet_in_comment():
     adv = advise_race(df)
     assert any(b["post"] == 1 for b in adv["tan_bets"])
     assert "妙味" in adv["comment"]
+
+
+def test_real_odds_ev_computed():
+    # 上位2頭(post1,post2)の馬連に極端な高オッズを置く → 実EVが計算され妙味◎
+    df = _race([0.4, 0.25, 0.15, 0.1, 0.06, 0.04])
+    odds_map = {"馬連": {(1, 2): 100.0}}     # 的中率~30%なのに100倍=妙味
+    adv = advise_race(df, odds_map)
+    um = next(e for e in adv["exotic"] if e["kind"] == "馬連")
+    assert um["sel"] == "1-2"
+    assert um["odds"] == 100.0
+    assert um["ev"] == um["prob"] * 100.0
+    assert um["buy"] is True
+    assert "実オッズ妙味" in adv["comment"]
+    # オッズ未提供の券種はフェア倍率のまま(odds/ev は None)
+    san = next(e for e in adv["exotic"] if e["kind"] == "三連単")
+    assert san["odds"] is None and san["fair"] > 1.0
+
+
+def test_real_odds_picks_max_ev_combo():
+    # 本線でない組(1-3)に妙味オッズ → EV最大の組として選ばれる
+    df = _race([0.4, 0.25, 0.15, 0.1, 0.06, 0.04])
+    odds_map = {"馬連": {(1, 2): 2.0, (1, 3): 500.0}}
+    adv = advise_race(df, odds_map)
+    um = next(e for e in adv["exotic"] if e["kind"] == "馬連")
+    assert um["sel"] == "1-3"
+    assert um["odds"] == 500.0
