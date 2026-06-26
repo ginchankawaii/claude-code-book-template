@@ -72,11 +72,25 @@ def fit_predictor(feat: pd.DataFrame, model_config: ModelConfig | None = None,
     return Predictor(model, cal, blend_w, cfg)
 
 
+def upcoming_rows(feat_all: pd.DataFrame) -> pd.DataFrame:
+    """これから走るレース(出馬表)の行だけを抽出する。
+
+    着順 NaN は「出走取消・中止(過去)」も含むため、それらを除くために
+    『確定済みレースの最終日より後』の未確定行のみを当日カードとみなす。
+    """
+    confirmed = feat_all.loc[feat_all["finish_pos"].notna(), "race_date"]
+    if confirmed.empty:
+        return feat_all[feat_all["finish_pos"].isna()].copy()
+    last_confirmed = confirmed.max()
+    mask = feat_all["finish_pos"].isna() & (feat_all["race_date"] > last_confirmed)
+    return feat_all[mask].copy()
+
+
 def predict_upcoming(predictor: Predictor, feat_all: pd.DataFrame) -> pd.DataFrame:
-    """feat_all(履歴+出馬表を結合して build_features 済み)から、未確定レースの
+    """feat_all(履歴+出馬表を結合して build_features 済み)から、当日カードの
     各馬の勝率・EV・買い目判定を返す。"""
     cfg = predictor.cfg
-    upcoming = feat_all[feat_all["finish_pos"].isna()].copy()
+    upcoming = upcoming_rows(feat_all)
     if upcoming.empty:
         return _empty_pred()
 
@@ -155,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from .features import build_features
     from .ingest import IngestBackend, validate_runners
+    # upcoming_rows はモジュール関数(下で使用)
 
     p = argparse.ArgumentParser(prog="keiba.predict",
                                 description="出馬表(未確定レース)を予測して買い目を出す(当日運用)")
@@ -167,17 +182,19 @@ def main(argv: list[str] | None = None) -> int:
 
     # 当日の出馬表(RT_SE/RT_RA)も結合して取り込む
     runners, _ = IngestBackend(args.db, kind=args.db_kind, include_realtime=True).load()
-    n_up = int(runners["finish_pos"].isna().sum()) if "finish_pos" in runners else 0
-    print(f"取り込み: {len(runners)} 出走 / {runners['race_id'].nunique()} レース"
-          f"(うち未確定={n_up} 出走)")
     issues = validate_runners(runners)
     if issues:
         print("⚠ バリデーション警告:", *issues, sep="\n  - ")
-    if n_up == 0:
-        print("未確定レース(出馬表)がDBにありません。今週の出馬表を取得してから再実行してください。")
-        return 1
 
     feat = build_features(runners)
+    card = upcoming_rows(feat)
+    print(f"取り込み: {len(runners)} 出走 / {runners['race_id'].nunique()} レース "
+          f"→ 当日カード(これから走るレース): {card['race_id'].nunique()} レース / {len(card)} 出走")
+    if card.empty:
+        print("当日カード(これから走るレース)がDBにありません。"
+              "出馬表(jltsql realtime start --specs 0B15,0B30)を取得してから再実行してください。")
+        return 1
+
     predictor = fit_predictor(feat, ModelConfig(objective=args.objective),
                               PredictConfig(ev_threshold=args.ev))
     pred = predict_upcoming(predictor, feat)
