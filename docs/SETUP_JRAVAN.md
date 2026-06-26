@@ -87,6 +87,38 @@
 
 ---
 
+## 4.5 具体的ランブック(DBが出来たら)
+
+取得層(EveryDB2/jrvltsql)で SQLite/DuckDB を作ったら、分析層につなぐのは数行です。
+JV-Data の列名は `keiba.ingest` の `*_FIELDS` / `TABLE_MAP` で**設定駆動**にしてあるので、
+あなたのDBの実列名に合わせて上書きするだけです。
+
+```python
+from keiba.ingest import from_duckdb, validate_runners
+from keiba.features import build_features
+from keiba.backtest import walk_forward
+
+# 1) JV-Data DB を正規化スキーマへ(テーブル名が違えば table_map で上書き)
+runners, races = from_duckdb("your_jravan.duckdb",
+                             table_map={"se": "NL_SE", "ra": "NL_RA", "o1": "NL_O1"})
+
+# 2) まず健全性チェック(列・着順・オッズスケールの不整合を列挙)
+issues = validate_runners(runners)
+print(issues or "クリーン")            # ← 問題が出たら、その内容を私に送ってください
+
+# 3) そのまま分析層へ(特徴量→walk-forward回収率)。分析層は無改修。
+bt = walk_forward(build_features(runners))
+print(bt["flat"]["roi"], bt["quality"]["blend_logloss"])
+```
+
+**あなたから私に欲しいもの**: 上記 `validate_runners` の出力、または DBの
+**テーブル名一覧＋ SE/RA/O1 の列名**(できれば各先頭数行)。これで `*_FIELDS` を
+あなたのDBに合わせて確定し、`odds_scale`/`futan_scale` 等も詰めます。
+
+> 注: 実 JV-Data には脚質・含水率・血統(種牡馬)・時系列オッズなど、合成データに
+> あった一部の特徴が直接は無い/別テーブルです。これらは当面 NaN のまま動きます
+> (GBDT が吸収)。精度を詰める段で UM/血統・TS_O1(時系列オッズ)の取り込みを足します。
+
 ## 5. 私が次にできること(言ってくれれば)
 
 - `RealJVLinkBackend` の **JV-Data 固定長スペックを実レコードに合わせて精緻化**(仕様の該当

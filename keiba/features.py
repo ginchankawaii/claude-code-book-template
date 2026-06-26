@@ -78,6 +78,12 @@ def build_features(runners: pd.DataFrame, config: FeatureConfig | None = None) -
     cfg = config or FeatureConfig()
     df = runners.sort_values(["race_date", "race_id"]).reset_index(drop=True).copy()
 
+    # 実データは synth より列が少ないことがある(脚質・含水率・血統など未取得)。
+    # 欠けている schema 列は NaN で補い、下流(GBDT のネイティブ NaN 処理)に委ねる。
+    for col in schema.all_columns():
+        if col not in df.columns:
+            df[col] = np.nan
+
     # 過去走の相対着順強度(1=勝ち, 0=最下位)。これが各種履歴集計の素。
     df["rel_finish"] = (df["field_size"] - df["finish_pos"]) / np.maximum(df["field_size"] - 1, 1)
     df["rel_post"] = (df["post_position"] - 1) / np.maximum(df["field_size"] - 1, 1)
