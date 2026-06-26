@@ -126,3 +126,17 @@ def test_features_run_on_normalized_with_missing_optional_cols():
     feat = build_features(runners)
     assert len(feat) == len(runners)
     assert "running_style" in feat.columns  # NaN 補完される
+
+
+def test_ingest_backend_load(tmp_path):
+    import sqlite3
+    from keiba.ingest import IngestBackend
+    se, ra, o1 = _jv_frames()
+    p = tmp_path / "keiba.db"
+    con = sqlite3.connect(str(p))
+    se.to_sql("NL_SE", con, index=False)
+    ra.to_sql("NL_RA", con, index=False)
+    o1.to_sql("NL_O1", con, index=False)
+    con.close()
+    runners, races = IngestBackend(str(p), kind="sqlite").load()
+    assert len(runners) == 6 and validate_runners(runners) == []

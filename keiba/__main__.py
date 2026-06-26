@@ -32,12 +32,30 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--ev", type=float, default=1.12, help="EV購入閾値")
     p.add_argument("--kelly", type=float, default=0.25, help="分数ケリー係数")
     p.add_argument("--exotic", action="store_true", help="連系券種(馬連/ワイド/三連複)EVも評価")
+    p.add_argument("--db", metavar="PATH",
+                   help="実データの JV-Data DB(jrvltsql の keiba.db 等)。指定時は合成でなく実データを使う")
+    p.add_argument("--db-kind", choices=["sqlite", "duckdb"], default="sqlite",
+                   help="--db のファイル種別(既定 sqlite)")
     p.add_argument("--no-audit", action="store_true", help="リーク監査をスキップ(高速)")
     p.add_argument("--quiet", action="store_true", help="フォールド毎の進捗を出さない")
     args = p.parse_args(argv)
 
-    reader = SyntheticBackend(SyntheticConfig(n_days=args.days, seed=args.seed,
-                                              market_myopia=args.myopia))
+    if args.db:
+        from .ingest import IngestBackend, validate_runners
+        reader = IngestBackend(args.db, kind=args.db_kind)
+        runners, _ = reader.load()
+        issues = validate_runners(runners)
+        print(f"取り込み: {len(runners)} 出走 / {runners['race_id'].nunique()} レース")
+        if issues:
+            print("⚠ バリデーション警告:")
+            for s in issues:
+                print(f"  - {s}")
+            print("  → 列名違いの可能性。keiba.ingest の *_FIELDS を DB に合わせて調整してください。")
+        else:
+            print("バリデーション: クリーン")
+    else:
+        reader = SyntheticBackend(SyntheticConfig(n_days=args.days, seed=args.seed,
+                                                  market_myopia=args.myopia))
     result = run_pipeline(
         reader=reader,
         model_config=ModelConfig(objective=args.objective),

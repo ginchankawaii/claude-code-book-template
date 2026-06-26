@@ -72,7 +72,7 @@ def format_report(result: PipelineResult) -> str:
     leak = result.leak_audit
     L = []
     L.append("=" * 64)
-    L.append(" keiba 分析層パイプライン(合成データ・M0→M4)")
+    L.append(" keiba 分析層パイプライン(M0→M4)")
     L.append("=" * 64)
     L.append(f"データ: {result.n_races} レース / {result.n_runners} 出走")
     if leak.get("ok") is not None:

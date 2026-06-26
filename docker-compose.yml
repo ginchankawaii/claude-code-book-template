@@ -1,0 +1,19 @@
+# keiba 分析層を Docker で動かす。取得(JV-Link)は Windows 側で別途。
+#
+# 使い方:
+#   1) 取得層(jrvltsql 等)が作った keiba.db を ./data/ に置く
+#   2) 合成デモ:        docker compose run --rm keiba --days 360
+#   3) 実データで解析:   docker compose run --rm keiba --db /data/keiba.db --exotic
+#   4) 可視化:          docker compose run --rm --entrypoint python keiba \
+#                          -m keiba.dashboard --out /app/plots
+#   5) テスト:          docker compose run --rm --entrypoint python keiba -m pytest -q
+
+services:
+  keiba:
+    build: .
+    image: keiba-analysis
+    volumes:
+      - ./data:/data          # ここに keiba.db を置く(読み取り)
+      - ./plots:/app/plots    # ダッシュボード PNG の出力先
+    # 既定コマンド(引数を付けなければ合成デモ)
+    command: ["--days", "360", "--quiet"]

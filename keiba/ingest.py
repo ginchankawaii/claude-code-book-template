@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 
 from . import schema
+from .reader import JVLinkReader
 
 # --- JV-Data フィールド名(★利用者の DB に合わせて上書き可) ---
 RA_FIELDS = {
@@ -227,3 +228,20 @@ def from_duckdb(path: str | Path, table_map: dict | None = None,
         return _ingest_tables(reader, table_map, config)
     finally:
         con.close()
+
+
+class IngestBackend(JVLinkReader):
+    """JV-Data DB(SQLite/DuckDB)を読み、正規化済み (runners, races) を供給する
+    分析層バックエンド。run_pipeline にそのまま渡せる。"""
+
+    def __init__(self, path, kind: str = "sqlite", table_map: dict | None = None,
+                 config: IngestConfig | None = None):
+        self.path = path
+        self.kind = kind
+        self.table_map = table_map
+        self.config = config
+
+    def load(self):
+        if self.kind == "duckdb":
+            return from_duckdb(self.path, self.table_map, self.config)
+        return from_sqlite(self.path, self.table_map, self.config)
