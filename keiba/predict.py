@@ -82,13 +82,22 @@ def predict_upcoming(predictor: Predictor, feat_all: pd.DataFrame) -> pd.DataFra
 
     p = predictor.model.predict_proba(upcoming)
     p_cal = race_normalize(upcoming, predictor.cal.transform(p))
-    q = market_implied_prob(upcoming, cfg.odds_col)
-    p_blend = benter_blend(upcoming, p_cal, q, predictor.blend_w)
 
+    # 当日オッズが取れているか(取れていなければモデル単体のランキングを出す)
     odds = upcoming[cfg.odds_col].to_numpy(dtype=float)
-    ev = p_blend * odds
-    with np.errstate(invalid="ignore", divide="ignore"):
-        edge = p_blend / np.clip(q, 1e-9, None)
+    has_odds = np.isfinite(odds).any() and np.nansum(odds) > 0
+    if has_odds:
+        q = market_implied_prob(upcoming, cfg.odds_col)
+        p_blend = benter_blend(upcoming, p_cal, q, predictor.blend_w)
+        ev = p_blend * odds
+        with np.errstate(invalid="ignore", divide="ignore"):
+            edge = p_blend / np.clip(q, 1e-9, None)
+    else:
+        # オッズ未取得: 市場ブレンド不可 → 較正済みモデル確率をそのまま使う
+        q = np.full(len(upcoming), np.nan)
+        p_blend = p_cal
+        ev = np.full(len(upcoming), np.nan)
+        edge = np.full(len(upcoming), np.nan)
 
     out = pd.DataFrame({
         "race_id": upcoming["race_id"].to_numpy(),
@@ -123,8 +132,9 @@ def format_predictions(pred: pd.DataFrame, top_n: int = 5) -> str:
             mark = "◎買" if r["bet"] else ""
             post = "-" if pd.isna(r["post_position"]) else f"{int(r['post_position'])}"
             odds = "-" if pd.isna(r["odds"]) else f"{r['odds']:.1f}"
+            ev = "-" if pd.isna(r["ev"]) else f"{r['ev']:.2f}"
             lines.append(f"{int(r['rank']):>2} {post:>3} {r['win_prob']*100:>5.1f}% {odds:>7} "
-                         f"{r['ev']:>5.2f}  {mark}")
+                         f"{ev:>5}  {mark}")
     bets = pred[pred["bet"]]
     lines.append(f"\n=== 買い目(単勝・EV閾値超え): {len(bets)} 点 ===")
     for _, r in bets.iterrows():
@@ -155,7 +165,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--top", type=int, default=5, help="各レースの表示頭数")
     args = p.parse_args(argv)
 
-    runners, _ = IngestBackend(args.db, kind=args.db_kind).load()
+    # 当日の出馬表(RT_SE/RT_RA)も結合して取り込む
+    runners, _ = IngestBackend(args.db, kind=args.db_kind, include_realtime=True).load()
     n_up = int(runners["finish_pos"].isna().sum()) if "finish_pos" in runners else 0
     print(f"取り込み: {len(runners)} 出走 / {runners['race_id'].nunique()} レース"
           f"(うち未確定={n_up} 出走)")

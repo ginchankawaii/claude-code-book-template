@@ -46,7 +46,8 @@ O1_FIELDS = {  # 単勝オッズ(馬番別)
     "nichiji": "Nichiji", "racenum": "RaceNum", "umaban": "Umaban",
     "tan_odds": "TanOdds", "tan_ninki": "TanNinki",
 }
-TABLE_MAP = {"se": "NL_SE", "ra": "NL_RA", "o1": "NL_O1", "hr": "NL_HR"}
+TABLE_MAP = {"se": "NL_SE", "ra": "NL_RA", "o1": "NL_O1", "hr": "NL_HR",
+             "rt_se": "RT_SE", "rt_ra": "RT_RA"}
 
 
 @dataclass
@@ -185,18 +186,32 @@ def validate_runners(df: pd.DataFrame) -> list[str]:
     return issues
 
 
-def _ingest_tables(reader, table_map: dict | None, config: IngestConfig | None):
+def _ingest_tables(reader, table_map: dict | None, config: IngestConfig | None,
+                   include_realtime: bool = False):
     tm = {**TABLE_MAP, **(table_map or {})}
     se = reader(tm["se"]); ra = reader(tm["ra"])
     o1 = reader(tm.get("o1", "")); hr = reader(tm.get("hr", ""))
     if se is None or ra is None:
         raise ValueError(f"必須テーブル {tm['se']}/{tm['ra']} が見つかりません")
+    if include_realtime:
+        # 当日の出馬表(まだ着順が出ていないレース)は速報系 RT_ テーブルにある。
+        # 履歴(NL_)に結合すると、出馬各馬の PiT 特徴量が過去走から計算される。
+        rt_se = reader(tm.get("rt_se", "RT_SE"))
+        rt_ra = reader(tm.get("rt_ra", "RT_RA"))
+        if rt_se is not None and len(rt_se):
+            se = pd.concat([se, rt_se], ignore_index=True)
+        if rt_ra is not None and len(rt_ra):
+            ra = pd.concat([ra, rt_ra], ignore_index=True)
     return normalize(se, ra, o1, hr, config)
 
 
 def from_sqlite(path: str | Path, table_map: dict | None = None,
-                config: IngestConfig | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """SQLite ファイル(jrvltsql の data/keiba.db 等)から読み、正規化して返す。"""
+                config: IngestConfig | None = None,
+                include_realtime: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """SQLite ファイル(jrvltsql の data/keiba.db 等)から読み、正規化して返す。
+
+    include_realtime=True で当日の出馬表(RT_SE/RT_RA)も結合する。
+    """
     import sqlite3
     con = sqlite3.connect(str(path))
     try:
@@ -207,13 +222,14 @@ def from_sqlite(path: str | Path, table_map: dict | None = None,
                 return pd.read_sql_query(f'SELECT * FROM "{name}"', con)
             except Exception:
                 return None
-        return _ingest_tables(reader, table_map, config)
+        return _ingest_tables(reader, table_map, config, include_realtime)
     finally:
         con.close()
 
 
 def from_duckdb(path: str | Path, table_map: dict | None = None,
-                config: IngestConfig | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+                config: IngestConfig | None = None,
+                include_realtime: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
     """DuckDB ファイルから JV-Data テーブルを読み、正規化して返す。"""
     import duckdb
     con = duckdb.connect(str(path), read_only=True)
@@ -225,7 +241,7 @@ def from_duckdb(path: str | Path, table_map: dict | None = None,
                 return con.execute(f'SELECT * FROM "{name}"').fetchdf()
             except Exception:
                 return None
-        return _ingest_tables(reader, table_map, config)
+        return _ingest_tables(reader, table_map, config, include_realtime)
     finally:
         con.close()
 
@@ -235,13 +251,14 @@ class IngestBackend(JVLinkReader):
     分析層バックエンド。run_pipeline にそのまま渡せる。"""
 
     def __init__(self, path, kind: str = "sqlite", table_map: dict | None = None,
-                 config: IngestConfig | None = None):
+                 config: IngestConfig | None = None, include_realtime: bool = False):
         self.path = path
         self.kind = kind
         self.table_map = table_map
         self.config = config
+        self.include_realtime = include_realtime
 
     def load(self):
         if self.kind == "duckdb":
-            return from_duckdb(self.path, self.table_map, self.config)
-        return from_sqlite(self.path, self.table_map, self.config)
+            return from_duckdb(self.path, self.table_map, self.config, self.include_realtime)
+        return from_sqlite(self.path, self.table_map, self.config, self.include_realtime)
