@@ -18,13 +18,14 @@ services:
     # 既定コマンド(引数を付けなければ合成デモ)
     command: ["--days", "360", "--quiet"]
 
-  # 当日予想の Web ビューア:  docker compose up web  → http://localhost:8000
+  # 当日予想の Web ビューア:  docker compose up web  → http://localhost:8087
+  # ポートを変えたい時: PowerShell で  $env:KEIBA_PORT=9123 ; docker compose up web
   web:
     build: .
     image: keiba-analysis
     entrypoint: ["python", "-m", "keiba.web"]
     command: ["--db", "/data/keiba.db", "--port", "8000"]
     ports:
-      - "8000:8000"
+      - "${KEIBA_PORT:-8087}:8000"
     volumes:
       - ./data:/data
