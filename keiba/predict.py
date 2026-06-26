@@ -43,10 +43,17 @@ class Predictor:
 
 
 def fit_predictor(feat: pd.DataFrame, model_config: ModelConfig | None = None,
-                  config: PredictConfig | None = None) -> Predictor:
-    """確定済みレース(finish_pos あり)で学習し、直近で較正・ブレンド重みを決める。"""
+                  config: PredictConfig | None = None,
+                  eval_date=None) -> Predictor:
+    """確定済みレースで学習し、直近で較正・ブレンド重みを決める。
+
+    eval_date(既定=最新日=当日)以降は学習から除外する。これにより当日の
+    確定済みレースで学習してしまう(=答えを見て予想する)リークを防ぐ。
+    """
     cfg = config or PredictConfig()
-    labeled = feat[feat["finish_pos"].notna()].copy()
+    if eval_date is None:
+        eval_date = feat["race_date"].max()
+    labeled = feat[feat["finish_pos"].notna() & (feat["race_date"] < eval_date)].copy()
     if labeled.empty:
         raise ValueError("確定済みレースが無く学習できません")
 
@@ -132,6 +139,59 @@ def predict_upcoming(predictor: Predictor, feat_all: pd.DataFrame) -> pd.DataFra
     out = out.sort_values(["race_id", "win_prob"], ascending=[True, False]).reset_index(drop=True)
     out["rank"] = out.groupby("race_id").cumcount() + 1
     return out
+
+
+def predict_day(predictor: Predictor, feat_all: pd.DataFrame, day=None) -> pd.DataFrame:
+    """当日(既定=最新日)の *全レース* を予測し、確定済みなら実結果を添える。
+
+    出馬表(発走前)も確定済みも両方含むので「予想 vs 結果」の比較に使える。
+    返り値の列に finish_pos(実着順)・is_win(実1着)・race_finished を含む。
+    """
+    cfg = predictor.cfg
+    if day is None:
+        day = feat_all["race_date"].max()
+    sub = feat_all[feat_all["race_date"] == day].copy()
+    if sub.empty:
+        return _empty_day()
+
+    p = predictor.model.predict_proba(sub)
+    p_cal = race_normalize(sub, predictor.cal.transform(p))
+    odds = sub[cfg.odds_col].to_numpy(dtype=float)
+    has_odds = np.isfinite(odds).any() and np.nansum(odds) > 0
+    if has_odds:
+        q = market_implied_prob(sub, cfg.odds_col)
+        p_blend = benter_blend(sub, p_cal, q, predictor.blend_w)
+        ev = p_blend * odds
+        with np.errstate(invalid="ignore", divide="ignore"):
+            edge = p_blend / np.clip(q, 1e-9, None)
+    else:
+        q = np.full(len(sub), np.nan); p_blend = p_cal
+        ev = np.full(len(sub), np.nan); edge = np.full(len(sub), np.nan)
+
+    out = pd.DataFrame({
+        "race_id": sub["race_id"].to_numpy(),
+        "post_position": sub.get("post_position", pd.Series(np.nan, index=sub.index)).to_numpy(),
+        "win_prob": p_blend, "market_prob": q, "odds": odds, "ev": ev, "edge": edge,
+        "finish_pos": sub["finish_pos"].to_numpy(),
+        "is_win": sub["is_win"].to_numpy(),
+    })
+    out["bet"] = (
+        (out["ev"] > cfg.ev_threshold) & (out["edge"] >= cfg.edge_ratio)
+        & (out["odds"] <= cfg.max_odds) & (out["win_prob"] >= cfg.min_model_prob)
+    )
+    out = out.sort_values(["race_id", "win_prob"], ascending=[True, False]).reset_index(drop=True)
+    out["rank"] = out.groupby("race_id").cumcount() + 1
+    # レース確定 = そのレースに1着が存在する
+    finished = out.groupby("race_id")["finish_pos"].transform(
+        lambda s: (s == 1).any())
+    out["race_finished"] = finished.fillna(False).astype(bool)
+    return out
+
+
+def _empty_day() -> pd.DataFrame:
+    return pd.DataFrame(columns=["race_id", "post_position", "win_prob", "market_prob",
+                                 "odds", "ev", "edge", "finish_pos", "is_win", "bet",
+                                 "rank", "race_finished"])
 
 
 def format_predictions(pred: pd.DataFrame, top_n: int = 5) -> str:
