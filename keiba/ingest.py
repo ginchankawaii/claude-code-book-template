@@ -55,8 +55,10 @@ class IngestConfig:
     se_fields: dict = field(default_factory=lambda: dict(SE_FIELDS))
     ra_fields: dict = field(default_factory=lambda: dict(RA_FIELDS))
     o1_fields: dict = field(default_factory=lambda: dict(O1_FIELDS))
-    odds_scale: float = 10.0      # JV-Data の単勝オッズは整数×0.1(35→3.5)
-    futan_scale: float = 10.0     # 斤量も 0.1kg 単位(550→55.0)のことがある
+    # jrvltsql は TanOdds/Futan を「実数(小数)」で格納する(例 1.5倍, 55.0kg)。
+    # 生の JV-Data 整数(×0.1)を読む実装に差し替える場合は 10.0 にする。
+    odds_scale: float = 1.0
+    futan_scale: float = 1.0
 
 
 def _col(df: pd.DataFrame, name: str):
