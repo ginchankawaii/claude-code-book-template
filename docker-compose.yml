@@ -25,6 +25,8 @@ services:
     image: keiba-analysis
     entrypoint: ["python", "-m", "keiba.web"]
     command: ["--db", "/data/keiba.db", "--port", "8000"]
+    environment:
+      - PYTHONUNBUFFERED=1     # 学習中の進捗ログを即表示
     ports:
       - "${KEIBA_PORT:-8087}:8000"
     volumes:
