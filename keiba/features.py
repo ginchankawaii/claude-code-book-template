@@ -113,8 +113,11 @@ def build_features(runners: pd.DataFrame, config: FeatureConfig | None = None) -
     # --- 騎手の PiT 集計 ---
     df["j_starts"] = _pit_count(df, "jockey_id")
     df["j_win_rate"] = _pit_mean(df, "jockey_id", "is_win")
-    # 当該馬場での騎手勝率(PiT): (jockey, surface) 複合キーで集計
-    df["_jsurf"] = df["jockey_id"].astype(np.int64) * 2 + df["surface"].astype(np.int64)
+    # 当該馬場での騎手勝率(PiT): (jockey, surface) 複合キーで集計。
+    # 欠損(騎手未定・馬場不明)は -1 にフォールバックして整数化(NaN cast 回避)。
+    _js = df["jockey_id"].fillna(-1).astype(np.int64)
+    _sf = df["surface"].fillna(-1).astype(np.int64)
+    df["_jsurf"] = _js * 4 + (_sf + 1)
     df["j_surface_win"] = _pit_mean(df, "_jsurf", "is_win")
 
     # --- 種牡馬の PiT 集計 ---

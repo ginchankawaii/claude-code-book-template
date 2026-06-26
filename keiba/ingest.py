@@ -143,6 +143,16 @@ def normalize(se: pd.DataFrame, ra: pd.DataFrame, o1: pd.DataFrame | None = None
     out["is_top3"] = ((finish >= 1) & (finish <= 3)).astype(float)
     out["final_popularity"] = pd.to_numeric(_col(se, sf["ninki"]), errors="coerce")
 
+    # JV-Data は同一(レース,馬)に複数レコード(出馬表/速報/確定など DataKubun 違い)を
+    # 持つため、確定(着順あり)を優先して 1 件に重複排除する。
+    out["_has_finish"] = out["finish_pos"].notna().astype(int)
+    out = (
+        out.sort_values(["race_id", "horse_id", "_has_finish"])
+        .drop_duplicates(["race_id", "horse_id"], keep="last")
+        .drop(columns="_has_finish")
+        .reset_index(drop=True)
+    )
+
     out = out.merge(ra_attr, on="race_id", how="left")
 
     # 単勝オッズ(O1)を (race_id, umaban) で join
