@@ -101,28 +101,72 @@ def _accumulate(out: dict, df: pd.DataFrame, name: str, nh: int,
         out.setdefault(int(rid[i]), {}).setdefault(name, {})[combo] = float(o)
 
 
+# 既定で評価する券種。馬単(O4)・三連単(O6)は評価器(select_exotic_bets)が
+# 参照しないため読み込まない=巨大な O6(数千万行)を完全に回避できる。
+_DEFAULT_KINDS = ("馬連", "ワイド", "三連複")
+
+
 def load_exotic_odds_for_days(path: str | Path, ordinals, kind: str = "sqlite",
-                              immutable: bool = False) -> dict:
+                              immutable: bool = False,
+                              kinds=_DEFAULT_KINDS,
+                              max_combos_per_race: int = 200) -> dict:
     """複数日(序数の集合)の連系オッズをまとめて {race_id: {券種: {組: 倍率}}} で返す。
 
     バックテスト(C3)で test 期間の race を実オッズ決済するために使う。
-    日付ごとに load_exotic_odds_for_day を呼んで結合する。
+    **年単位の一括クエリ**(WHERE Year=?)で読むので、日ごとに全表スキャンする旧実装
+    より桁違いに速い。kinds で読む券種を絞れる(既定=馬連/ワイド/三連複のみ)。
+    max_combos_per_race で各 race×券種の保持組数を人気上位に制限しメモリを抑える。
     """
     import datetime as _dt
-    out: dict = {}
-    seen = set()
+    want: dict = {}
     for o in ordinals:
         d = _dt.date.fromordinal(int(o))
-        key = (d.year, d.month * 100 + d.day)
-        if key in seen:
-            continue
-        seen.add(key)
-        try:
-            day = load_exotic_odds_for_day(path, key[0], key[1], kind, immutable)
-        except Exception:
-            continue
-        out.update(day)   # race_id はユニークなので単純結合で良い
+        want.setdefault(d.year, set()).add(d.month * 100 + d.day)
+    specs = [s for s in _SPECS if s[0] in set(kinds)]
+
+    con, k = _open(path, kind, immutable)
+    out: dict = {}
+    try:
+        for year, mds in sorted(want.items()):
+            year_out: dict = {}
+            for name, tables, nh, ordered, okind in specs:
+                frames = []
+                for tbl in tables:
+                    try:
+                        df = _read(con, k, f'SELECT * FROM "{tbl}" WHERE Year=?',
+                                   [int(year)])
+                    except Exception:
+                        continue
+                    if df is None or not len(df):
+                        continue
+                    md = pd.to_numeric(df.get("MonthDay"), errors="coerce")
+                    df = df[md.isin(mds)]
+                    if len(df):
+                        frames.append(df)
+                if frames:
+                    _accumulate(year_out, pd.concat(frames, ignore_index=True),
+                                name, nh, ordered, okind)
+            _prune_combos(year_out, max_combos_per_race)
+            out.update(year_out)   # race_id は年内ユニークなので単純結合で良い
+    finally:
+        con.close()
     return out
+
+
+def _prune_combos(out: dict, max_combos: int) -> None:
+    """各 race×券種で、最も人気(低オッズ)の max_combos 組だけ残す。
+
+    評価器はモデル確率上位の少数組しか買わないため、全 816 組(三連複)を保持する
+    のは無駄。低オッズ=人気上位はモデルの買い目とほぼ重なるので、これでメモリを
+    数分の一にしても実オッズのカバレッジはほぼ落ちない。
+    """
+    if not max_combos:
+        return
+    for kinds in out.values():
+        for name, table in list(kinds.items()):
+            if len(table) > max_combos:
+                keep = sorted(table.items(), key=lambda kv: kv[1])[:max_combos]
+                kinds[name] = dict(keep)
 
 
 def load_exotic_odds_for_day(path: str | Path, year: int, monthday: int,

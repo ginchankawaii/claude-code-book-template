@@ -90,3 +90,8 @@ def test_real_odds_override_synthetic():
     # 実オッズ割合が summarize に出る
     summ = summarize_exotic(bets)
     assert summ["umaren"]["real_frac"] > 0
+    # C3: 実オッズのみの別建て集計(合成の希釈を除いた本物の指標)
+    assert summ["umaren"]["real_n"] >= 1
+    assert summ["umaren"]["real_n"] <= summ["umaren"]["n_bets"]
+    # 1-2が的中(本命決着)かつ 50倍なので、実オッズのみ ROI は正
+    assert summ["umaren"]["real_roi"] > 0

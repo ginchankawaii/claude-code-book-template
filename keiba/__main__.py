@@ -46,7 +46,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--validate-oos", action="store_true",
                    help="C6: C1候補を前半で発見→後半で残るか out-of-sample 検証")
     p.add_argument("--real-exotic", action="store_true",
-                   help="C3: 連系を合成オッズでなく実オッズ(O2-O6)で判定・決済する(--db必須)")
+                   help="C3: 連系を合成オッズでなく実オッズ(O2/O3/O5)で判定・決済する(--db必須)")
+    p.add_argument("--real-exotic-years", type=int, default=2,
+                   help="C3: 実オッズで評価する直近年数(既定2。多いほどサンプル増だがメモリ増。"
+                        "OOM/遅い時は1に下げる)")
     p.add_argument("--quiet", action="store_true", help="フォールド毎の進捗を出さない")
     args = p.parse_args(argv)
 
@@ -66,19 +69,23 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print("バリデーション: クリーン")
         if args.real_exotic and args.exotic:
-            # C3: 評価年(最新年)の連系オッズを読み、実オッズで連系を決済する
+            # C3: 直近N年の連系オッズ(馬連O2/ワイドO3/三連複O5のみ)を読み、実オッズで決済する
             from .exotic_odds import load_exotic_odds_for_days
             import datetime as _dt
             max_ord = int(runners["race_date"].max())
-            cutoff = _dt.date(_dt.date.fromordinal(max_ord).year, 1, 1).toordinal()
+            maxyear = _dt.date.fromordinal(max_ord).year
+            ny = max(1, args.real_exotic_years)
+            cutoff = _dt.date(maxyear - ny + 1, 1, 1).toordinal()
             evdays = [o for o in runners["race_date"].unique() if o >= cutoff]
-            print(f"実連系オッズ読込中… 評価期間 {len(evdays)}日分")
+            print(f"実連系オッズ読込中… 直近{ny}年(>= {maxyear - ny + 1}年) {len(evdays)}日分 "
+                  f"/ 馬連・ワイド・三連複のみ(年単位一括クエリ)")
             exotic_odds = load_exotic_odds_for_days(args.db, evdays, args.db_kind,
                                                     args.immutable)
-            print(f"  → 実オッズのある race: {len(exotic_odds)}")
+            nrace = len(exotic_odds)
+            ncombo = sum(len(t) for r in exotic_odds.values() for t in r.values())
+            print(f"  → 実オッズのある race: {nrace}  保持組数: {ncombo:,}")
             if not exotic_odds:
-                print("  ⚠ 実連系オッズ(NL_O2〜O6 / TS_SOKUHO_O2〜O6)が見つかりません。"
-                      "RACE系(O2-O6)を取り込むと実測できます。合成オッズで継続します。")
+                print("  ⚠ 実連系オッズ(NL_O2/O3/O5)が見つかりません。合成オッズで継続します。")
     else:
         reader = SyntheticBackend(SyntheticConfig(n_days=args.days, seed=args.seed,
                                                   market_myopia=args.myopia))

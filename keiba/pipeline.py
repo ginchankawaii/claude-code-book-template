@@ -94,8 +94,8 @@ def format_report(result: PipelineResult) -> str:
     exotic = bt.get("exotic") or {}
     if exotic:
         L.append("")
-        real_any = any(e.get("real_frac", 0) > 0 for e in exotic.values())
-        src = "実オッズ(O2-O6)" if real_any else "合成オッズ=単勝市場×Harville×控除率"
+        real_any = any(e.get("real_n", 0) > 0 for e in exotic.values())
+        src = "実オッズ(O2/O3/O5)+合成フォールバック" if real_any else "合成オッズ=単勝市場×Harville×控除率"
         L.append(f"--- 連系券種(EVフィルタ; {src}) ---")
         names = {"umaren": "馬連", "wide": "ワイド", "sanrenpuku": "三連複"}
         for bt_key in ["umaren", "wide", "sanrenpuku"]:
@@ -103,7 +103,13 @@ def format_report(result: PipelineResult) -> str:
                 e = exotic[bt_key]
                 rf = e.get("real_frac", 0.0)
                 tag = f"  実オッズ{rf*100:.0f}%" if rf > 0 else "  (合成)"
-                L.append(f"  {names[bt_key]:　<4} 点数={e['n_bets']:>4}  的中率={e['hit_rate']*100:>5.1f}%  ROI={e['roi']*100:>6.1f}%{tag}")
+                L.append(f"  {names[bt_key]:　<4} 全体 : 点数={e['n_bets']:>4}  的中率={e['hit_rate']*100:>5.1f}%  ROI={e['roi']*100:>6.1f}%{tag}")
+                rn = e.get("real_n", 0)
+                if rn:
+                    L.append(f"  {'　'*4} └ 実オッズのみ: n={rn:>4}  的中率={e['real_hit_rate']*100:>5.1f}%"
+                             f"  ROI={e['real_roi']*100:>6.1f}%  ← 信用できる本物の指標")
+        if real_any:
+            L.append("  ※「実オッズのみ」が本物の連系エッジ。全体ROIは合成分で希釈/上振れする参考値。")
     L.append("")
     L.append("--- リスク(モンテカルロ; レース単位ブロック・ブートストラップ) ---")
     L.append(f"  破産確率(≤30%資金): {ruin['ruin_prob']*100:.1f}%  最終資金中央値: {ruin['median_final']:.2f}x  下側5%: {ruin['p05_final']:.2f}x")

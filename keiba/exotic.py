@@ -179,13 +179,20 @@ def summarize_exotic(bets: pd.DataFrame) -> dict:
         return out
     for bt, g in bets.groupby("bet_type"):
         ret = (g["is_win"].to_numpy() * g["final_odds"].to_numpy()).sum()
-        real_frac = (float((g["odds_source"] == "real").mean())
-                     if "odds_source" in g.columns else 0.0)
+        has_src = "odds_source" in g.columns
+        real_frac = float((g["odds_source"] == "real").mean()) if has_src else 0.0
+        real = g[g["odds_source"] == "real"] if has_src else g.iloc[0:0]
         out[bt] = {
             "n_bets": int(len(g)),
             "hit_rate": float(g["is_win"].mean()),
             "roi": float(ret / len(g)),
             "real_frac": real_frac,   # C3: 実オッズで決済した割合(1.0=全部実オッズ)
+            # 実オッズで決済した分だけの集計(=合成の希釈を除いた本物の指標)
+            "real_n": int(len(real)),
+            "real_hit_rate": float(real["is_win"].mean()) if len(real) else float("nan"),
+            "real_roi": (float((real["is_win"].to_numpy()
+                                * real["final_odds"].to_numpy()).sum() / len(real))
+                         if len(real) else float("nan")),
         }
     return out
 
