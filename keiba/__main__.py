@@ -40,6 +40,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="取得層(realtime)が DB に書き込み中でも読めるよう immutable で開く")
     p.add_argument("--no-enrich", action="store_true",
                    help="血統/データマイニング/オッズ時系列の強化を無効化(効果のA/B比較用)")
+    p.add_argument("--since", metavar="YYYYMMDD",
+                   help="この日付以降のレースだけ解析する(高速化。例 20240101)。"
+                        "学習履歴も同期間に絞られる点に注意")
     p.add_argument("--no-audit", action="store_true", help="リーク監査をスキップ(高速)")
     p.add_argument("--segments", action="store_true",
                    help="C1エッジ探索: 条件別(人気帯/頭数/オッズの動き)の回収率を輪切り表示")
@@ -56,8 +59,17 @@ def main(argv: list[str] | None = None) -> int:
     exotic_odds = None
     if args.db:
         from .ingest import IngestBackend, IngestConfig, validate_runners
+        import datetime as _dt
+        since_year = since_ord = 0
+        if args.since:
+            s = "".join(ch for ch in str(args.since) if ch.isdigit())
+            since_year = int(s[:4])
+            since_ord = _dt.date(int(s[:4]), int(s[4:6]), int(s[6:8])).toordinal()
+            print(f"解析期間: {s[:4]}/{s[4:6]}/{s[6:8]} 以降に限定(高速化)")
         reader = IngestBackend(args.db, kind=args.db_kind, immutable=args.immutable,
-                               config=IngestConfig(enrich=not args.no_enrich))
+                               config=IngestConfig(enrich=not args.no_enrich,
+                                                   since_year=since_year,
+                                                   since_ordinal=since_ord))
         runners, _ = reader.load()
         issues = validate_runners(runners)
         print(f"取り込み: {len(runners)} 出走 / {runners['race_id'].nunique()} レース")

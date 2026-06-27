@@ -72,6 +72,11 @@ class IngestConfig:
     um_fields: dict | None = None  # None で enrich.UM_FIELDS 既定を使う
     dm_fields: dict | None = None
     tm_fields: dict | None = None
+    # 解析期間の下限。指定日以降のレースだけ読む(高速化)。0 で全期間。
+    # since_year は SQL の WHERE Year>= に使い I/O を削る(年単位の粗い絞り)、
+    # since_ordinal は正規化後に厳密な日付で絞る(日単位)。__main__ が --since から両方を設定。
+    since_year: int = 0
+    since_ordinal: int = 0
 
 
 def _col(df: pd.DataFrame, name: str):
@@ -244,8 +249,9 @@ def _ingest_tables(reader, table_map: dict | None, config: IngestConfig | None,
                    include_realtime: bool = False):
     cfg = config or IngestConfig()
     tm = {**TABLE_MAP, **(table_map or {})}
-    se = reader(tm["se"]); ra = reader(tm["ra"])
-    o1 = reader(tm.get("o1", "")); hr = reader(tm.get("hr", ""))
+    sy = cfg.since_year or None  # レース系のみ WHERE Year>= で粗く絞る
+    se = reader(tm["se"], sy); ra = reader(tm["ra"], sy)
+    o1 = reader(tm.get("o1", ""), sy); hr = reader(tm.get("hr", ""), sy)
     if se is None or ra is None:
         raise ValueError(f"必須テーブル {tm['se']}/{tm['ra']} が見つかりません")
     if include_realtime:
@@ -269,6 +275,11 @@ def _ingest_tables(reader, table_map: dict | None, config: IngestConfig | None,
                 rt_odds = rt_odds.drop_duplicates(subset=key_cols, keep="last")
             o1 = pd.concat([o1, rt_odds], ignore_index=True) if (o1 is not None and len(o1)) else rt_odds
     runners, races = normalize(se, ra, o1, hr, cfg)
+    if cfg.since_ordinal:
+        # 日単位で厳密に絞る(SQL の年絞りでは年初〜指定日が残るため)。
+        runners = runners[runners["race_date"] >= cfg.since_ordinal]
+        if races is not None and len(races):
+            races = races[races["race_id"].isin(set(runners["race_id"]))]
     if cfg.enrich:
         from . import enrich as _enrich
         try:
@@ -296,9 +307,16 @@ def from_sqlite(path: str | Path, table_map: dict | None = None,
     else:
         con = sqlite3.connect(str(path))
     try:
-        def reader(name):
+        def reader(name, since_year=None):
             if not name:
                 return None
+            if since_year:
+                try:  # レース系は WHERE Year>= で I/O を削る(Year列が無い表は全件へ)
+                    return pd.read_sql_query(
+                        f'SELECT * FROM "{name}" WHERE CAST(Year AS INTEGER) >= ?',
+                        con, params=[int(since_year)])
+                except Exception:
+                    pass
             try:
                 return pd.read_sql_query(f'SELECT * FROM "{name}"', con)
             except Exception:
@@ -315,9 +333,16 @@ def from_duckdb(path: str | Path, table_map: dict | None = None,
     import duckdb
     con = duckdb.connect(str(path), read_only=True)
     try:
-        def reader(name):
+        def reader(name, since_year=None):
             if not name:
                 return None
+            if since_year:
+                try:
+                    return con.execute(
+                        f'SELECT * FROM "{name}" WHERE CAST(Year AS INTEGER) >= ?',
+                        [int(since_year)]).fetchdf()
+                except Exception:
+                    pass
             try:
                 return con.execute(f'SELECT * FROM "{name}"').fetchdf()
             except Exception:
