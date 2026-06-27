@@ -42,7 +42,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="血統/データマイニング/オッズ時系列の強化を無効化(効果のA/B比較用)")
     p.add_argument("--no-audit", action="store_true", help="リーク監査をスキップ(高速)")
     p.add_argument("--segments", action="store_true",
-                   help="C1エッジ探索: 条件別(人気帯/頭数)の回収率を輪切り表示")
+                   help="C1エッジ探索: 条件別(人気帯/頭数/オッズの動き)の回収率を輪切り表示")
+    p.add_argument("--validate-oos", action="store_true",
+                   help="C6: C1候補を前半で発見→後半で残るか out-of-sample 検証")
     p.add_argument("--quiet", action="store_true", help="フォールド毎の進捗を出さない")
     args = p.parse_args(argv)
 
@@ -76,6 +78,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.segments:
         from .segments import segment_report
         print(segment_report(result.backtest.get("preds"), ev_threshold=args.ev))
+    if args.validate_oos:
+        from .segments import validate_oos
+        print(validate_oos(result.backtest.get("preds"), ev_threshold=args.ev))
     return 0
 
 

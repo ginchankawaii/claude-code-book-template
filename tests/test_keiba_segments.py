@@ -4,9 +4,11 @@ import numpy as np
 import pandas as pd
 
 from keiba.segments import (
+    drift_segments,
     favorite_longshot,
     overlay_by_band,
     segment_report,
+    validate_oos,
 )
 
 
@@ -57,3 +59,25 @@ def test_segment_report_renders():
 
 def test_segment_report_empty():
     assert "空" in segment_report(pd.DataFrame())
+
+
+def test_drift_segments_none_without_data():
+    p = _preds()                       # odds_drift 列なし
+    assert drift_segments(p) is None
+
+
+def test_drift_segments_buckets():
+    p = _preds()
+    p["odds_drift"] = np.where(p["final_odds"] < 10, 0.5, -0.5)   # 人気化/不人気化
+    rows = drift_segments(p)
+    assert rows is not None
+    labels = {r["seg"] for r in rows}
+    assert any("人気化" in s for s in labels)
+    assert sum(r["n"] for r in rows) <= len(p)
+
+
+def test_validate_oos_renders_and_splits():
+    p = _preds(n_races=400)
+    rep = validate_oos(p, ev_threshold=1.0, min_n=20)
+    assert "Out-of-Sample" in rep and "発見ROI" in rep
+    assert "発見期" in rep and "検証期" in rep

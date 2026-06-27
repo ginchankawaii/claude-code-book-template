@@ -77,6 +77,61 @@ def overlay_by_fieldsize(preds: pd.DataFrame, ev_threshold: float = 1.0) -> list
     return rows
 
 
+def drift_segments(preds: pd.DataFrame) -> list[dict] | None:
+    """C2: オッズの動き(odds_drift=寄りつき→直近)別の的中率/回収率。
+
+    drift>0 = 人気化(賢い金が入った)・drift<0 = 不人気化。蓄積した速報時系列が
+    あるレースのみ非NaN。データが無ければ None(=まだ貯まっていない)。
+    """
+    if "odds_drift" not in preds.columns:
+        return None
+    d = pd.to_numeric(preds["odds_drift"], errors="coerce")
+    if d.notna().sum() == 0:
+        return None
+    rows = []
+    for label, mask in [("人気化(drift>0.1)", d > 0.1),
+                        ("中立(|drift|≤0.1)", d.abs() <= 0.1),
+                        ("不人気化(drift<-0.1)", d < -0.1)]:
+        rows.append({"seg": label, **_roi(preds[mask & d.notna()])})
+    return rows
+
+
+def validate_oos(preds: pd.DataFrame, ev_threshold: float = 1.0,
+                 min_n: int = 100) -> str:
+    """C6: 前半(発見期)で回収率>100%だったセグメントが後半(検証期)でも残るか。
+
+    輪切りで出た“候補”の大半はノイズで out-of-sample で消える。前半で見つけ、
+    後半で残るかを照合して『本物候補』だけを残す自動チェック。
+    """
+    if preds is None or len(preds) == 0 or "race_date" not in preds.columns:
+        return "OOS検証: データ不足"
+    cut = preds["race_date"].median()
+    a = preds[preds["race_date"] < cut]    # 発見期(前半)
+    b = preds[preds["race_date"] >= cut]   # 検証期(後半)
+    L = ["=" * 64, " C6 Out-of-Sample 検証(前半で発見 → 後半で残るか)", "=" * 64,
+         f"  発見期 {len(a)}件 / 検証期 {len(b)}件 (race_date 中央値で分割)", ""]
+    for title, fn in [("人気帯(全買い=市場の偏り)", favorite_longshot),
+                      (f"モデル妙味×人気帯(EV≥{ev_threshold})",
+                       lambda d: overlay_by_band(d, ev_threshold))]:
+        ra = {r["seg"]: r for r in fn(a)}
+        rb = {r["seg"]: r for r in fn(b)}
+        L.append(f"--- {title} ---")
+        L.append("  区分        発見ROI(n)      検証ROI(n)     判定")
+        for seg, x in ra.items():
+            y = rb.get(seg, {"n": 0, "roi": float("nan")})
+            disc = x["n"] >= min_n and x["roi"] == x["roi"] and x["roi"] > 1.0
+            val = y["n"] >= min_n and y["roi"] == y["roi"] and y["roi"] > 1.0
+            verdict = "✅残った" if (disc and val) else ("⚠消えた" if disc else "—")
+            xr = "  - " if x["roi"] != x["roi"] else f"{x['roi']*100:4.0f}%"
+            yr = "  - " if y["roi"] != y["roi"] else f"{y['roi']*100:4.0f}%"
+            L.append(f"  {seg:<10} {xr}({x['n']:>5})   {yr}({y['n']:>5})   {verdict}")
+        L.append("")
+    L += ["【読み方】✅残った = 発見期も検証期も回収率>100%(n十分)。**これだけが本物候補**。",
+          " ⚠消えた = 発見期だけ良かった = ノイズ。 — = 発見期に候補ですらない。",
+          "=" * 64]
+    return "\n".join(L)
+
+
 def _table(title: str, rows: list[dict], min_n: int) -> list[str]:
     L = [f"--- {title} ---", "  区分        点数    的中率   回収率"]
     for r in rows:
@@ -102,6 +157,10 @@ def segment_report(preds: pd.DataFrame, ev_threshold: float = 1.0,
     L += _table(f"モデル妙味馬×人気帯(EV≥{ev_threshold})", overlay_by_band(preds, ev_threshold), min_n)
     L.append("")
     L += _table(f"モデル妙味馬×頭数(EV≥{ev_threshold})", overlay_by_fieldsize(preds, ev_threshold), min_n)
+    drift = drift_segments(preds)
+    if drift is not None:
+        L.append("")
+        L += _table("オッズの動き別(C2: 賢い金)", drift, min_n)
     L += [
         "=" * 64,
         f"【読み方】◎候補 = 件数十分(n≥{min_n}) かつ 回収率>100%。",

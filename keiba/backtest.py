@@ -154,6 +154,9 @@ def _run_fold(train, valid, test, mcfg, bcfg, wf, exotic_config=None):
         "p_market": qt,
         "p_blend": pt_blend,
         "final_odds": test[wf.settle_odds_col].to_numpy(),
+        # C2: 寄りつき→直近のオッズの動き(賢い金)。蓄積時系列があるレースのみ非NaN。
+        "odds_drift": (test["odds_drift"].to_numpy() if "odds_drift" in test.columns
+                       else np.nan),
     })
 
     # 5) 連系券種(任意): ブレンド確率と市場確率からレース単位で EV ベット
