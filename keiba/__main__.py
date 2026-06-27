@@ -36,13 +36,15 @@ def main(argv: list[str] | None = None) -> int:
                    help="実データの JV-Data DB(jrvltsql の keiba.db 等)。指定時は合成でなく実データを使う")
     p.add_argument("--db-kind", choices=["sqlite", "duckdb"], default="sqlite",
                    help="--db のファイル種別(既定 sqlite)")
+    p.add_argument("--immutable", action="store_true",
+                   help="取得層(realtime)が DB に書き込み中でも読めるよう immutable で開く")
     p.add_argument("--no-audit", action="store_true", help="リーク監査をスキップ(高速)")
     p.add_argument("--quiet", action="store_true", help="フォールド毎の進捗を出さない")
     args = p.parse_args(argv)
 
     if args.db:
         from .ingest import IngestBackend, validate_runners
-        reader = IngestBackend(args.db, kind=args.db_kind)
+        reader = IngestBackend(args.db, kind=args.db_kind, immutable=args.immutable)
         runners, _ = reader.load()
         issues = validate_runners(runners)
         print(f"取り込み: {len(runners)} 出走 / {runners['race_id'].nunique()} レース")

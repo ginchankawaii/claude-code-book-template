@@ -20,7 +20,9 @@ services:
     build: .
     image: keiba-analysis
     volumes:
-      - ./data:/data          # ここに keiba.db を置く(読み取り)
+      # web と同じく取得層の本物 DB を読み取り専用で読む(KEIBA_DB_DIR で上書き可)。
+      # 実データ分析:  docker compose run --rm keiba --db /data/keiba.db --exotic --immutable
+      - ${KEIBA_DB_DIR:-../jrvltsql/data}:/data:ro
       - ./plots:/app/plots    # ダッシュボード PNG の出力先
     # 既定コマンド(引数を付けなければ合成デモ)
     command: ["--days", "360", "--quiet"]
