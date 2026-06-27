@@ -177,6 +177,14 @@ def normalize(se: pd.DataFrame, ra: pd.DataFrame, o1: pd.DataFrame | None = None
         o1["race_id"] = _race_key(o1, of)
         o1["post_position"] = pd.to_numeric(_col(o1, of["umaban"]), errors="coerce")
         o1["final_odds"] = pd.to_numeric(_col(o1, of["tan_odds"]), errors="coerce") / cfg.odds_scale
+        # NL_O1 は同一(レース,馬番)に複数スナップショット(中間/確定の DataKubun 違い)を
+        # 持つ。1件に集約せず結合すると runners が増殖し、着順表が重複して見える(誤検知)
+        # うえ学習データに同一馬が二重計上される。確定=最新の1件に絞ってから結合する。
+        _sort = [c for c in ("MakeDate", "MakeHM", "HappyoTime") if c in o1.columns]
+        if _sort:
+            o1 = o1.sort_values(_sort)
+        o1 = o1.dropna(subset=["post_position"]).drop_duplicates(
+            ["race_id", "post_position"], keep="last")
         out = out.merge(o1[["race_id", "post_position", "final_odds"]],
                         on=["race_id", "post_position"], how="left")
         # 賭け判定用の発走前オッズ。時系列オッズ未取得なら確定で代用(要・後段拡充)。

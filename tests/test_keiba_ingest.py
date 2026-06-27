@@ -102,6 +102,21 @@ def test_validate_allows_dead_heat():
     assert not any("1着が複数" in s for s in issues)
 
 
+def test_o1_multiple_snapshots_no_fanout():
+    # NL_O1 が同一(レース,馬番)に複数スナップショットを持っても runners は増殖しない
+    se, ra, o1 = _jv_frames()
+    o1_mid = o1.copy()
+    o1_mid["TanOdds"] = o1_mid["TanOdds"] * 1.5      # 中間オッズ(別スナップショット)
+    o1_dup = pd.concat([o1_mid, o1], ignore_index=True)  # 中間+確定の2スナップショット
+    runners, _ = normalize(se, ra, o1_dup)
+    assert len(runners) == 6                          # 増殖していない(各馬1行)
+    # 着順表の重複(誤検知)も起きない
+    assert not any("1着が複数" in s for s in validate_runners(runners))
+    # final_odds は確定(最後)の値が採用される
+    r = runners.sort_values(["race_id", "post_position"]).reset_index(drop=True)
+    assert abs(r.loc[0, "final_odds"] - 2.1) < 1e-9
+
+
 def test_validate_catches_odds_scale():
     se, ra, o1 = _jv_frames()
     runners, _ = normalize(se, ra, o1)
