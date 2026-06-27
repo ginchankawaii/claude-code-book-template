@@ -38,13 +38,16 @@ def main(argv: list[str] | None = None) -> int:
                    help="--db のファイル種別(既定 sqlite)")
     p.add_argument("--immutable", action="store_true",
                    help="取得層(realtime)が DB に書き込み中でも読めるよう immutable で開く")
+    p.add_argument("--no-enrich", action="store_true",
+                   help="血統/データマイニング/オッズ時系列の強化を無効化(効果のA/B比較用)")
     p.add_argument("--no-audit", action="store_true", help="リーク監査をスキップ(高速)")
     p.add_argument("--quiet", action="store_true", help="フォールド毎の進捗を出さない")
     args = p.parse_args(argv)
 
     if args.db:
-        from .ingest import IngestBackend, validate_runners
-        reader = IngestBackend(args.db, kind=args.db_kind, immutable=args.immutable)
+        from .ingest import IngestBackend, IngestConfig, validate_runners
+        reader = IngestBackend(args.db, kind=args.db_kind, immutable=args.immutable,
+                               config=IngestConfig(enrich=not args.no_enrich))
         runners, _ = reader.load()
         issues = validate_runners(runners)
         print(f"取り込み: {len(runners)} 出走 / {runners['race_id'].nunique()} レース")
