@@ -182,6 +182,11 @@ def summarize_exotic(bets: pd.DataFrame) -> dict:
         has_src = "odds_source" in g.columns
         real_frac = float((g["odds_source"] == "real").mean()) if has_src else 0.0
         real = g[g["odds_source"] == "real"] if has_src else g.iloc[0:0]
+        lo, hi, wins = float("nan"), float("nan"), 0
+        if len(real):
+            rret = (real["is_win"].to_numpy() * real["final_odds"].to_numpy())
+            wins = int(real["is_win"].sum())
+            lo, hi = _roi_bootstrap_ci(rret)
         out[bt] = {
             "n_bets": int(len(g)),
             "hit_rate": float(g["is_win"].mean()),
@@ -189,12 +194,34 @@ def summarize_exotic(bets: pd.DataFrame) -> dict:
             "real_frac": real_frac,   # C3: 実オッズで決済した割合(1.0=全部実オッズ)
             # 実オッズで決済した分だけの集計(=合成の希釈を除いた本物の指標)
             "real_n": int(len(real)),
+            "real_wins": wins,        # 的中本数(ROIはこの少数の高配当に強く依存する)
             "real_hit_rate": float(real["is_win"].mean()) if len(real) else float("nan"),
-            "real_roi": (float((real["is_win"].to_numpy()
-                                * real["final_odds"].to_numpy()).sum() / len(real))
-                         if len(real) else float("nan")),
+            "real_roi": (float(rret.mean()) if len(real) else float("nan")),
+            # ブートストラップ 95%CI。lo>1.0(=100%)なら控除後でも有意に黒、
+            # lo<1.0 なら「黒に見えても偶然と区別できない」=判定不能。
+            "real_roi_lo": lo,
+            "real_roi_hi": hi,
         }
     return out
+
+
+def _roi_bootstrap_ci(returns: np.ndarray, n_boot: int = 4000,
+                      seed: int = 0) -> tuple[float, float]:
+    """ベット単位の払戻(is_win×odds)を resample して ROI の 95%CI を返す。
+
+    的中が数本しかない連系では ROI が少数の高配当に支配され誤差が巨大になる。
+    点推定(170%等)でなく区間で見るべきで、下限が100%を超えて初めて
+    「控除率を越える本物のエッジ」と言える。
+    """
+    returns = np.asarray(returns, float)
+    n = len(returns)
+    if n == 0:
+        return float("nan"), float("nan")
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, n, size=(n_boot, n))
+    boot = returns[idx].mean(axis=1)
+    lo, hi = np.percentile(boot, [2.5, 97.5])
+    return float(lo), float(hi)
 
 
 def _empty_exotic() -> pd.DataFrame:

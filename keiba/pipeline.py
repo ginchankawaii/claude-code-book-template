@@ -106,10 +106,16 @@ def format_report(result: PipelineResult) -> str:
                 L.append(f"  {names[bt_key]:　<4} 全体 : 点数={e['n_bets']:>4}  的中率={e['hit_rate']*100:>5.1f}%  ROI={e['roi']*100:>6.1f}%{tag}")
                 rn = e.get("real_n", 0)
                 if rn:
-                    L.append(f"  {'　'*4} └ 実オッズのみ: n={rn:>4}  的中率={e['real_hit_rate']*100:>5.1f}%"
-                             f"  ROI={e['real_roi']*100:>6.1f}%  ← 信用できる本物の指標")
+                    lo = e.get("real_roi_lo", float("nan")) * 100
+                    hi = e.get("real_roi_hi", float("nan")) * 100
+                    wins = e.get("real_wins", 0)
+                    verdict = ("有意に黒(下限>100%)" if lo > 100 else
+                               "判定不能(95%下限が100%割れ=偶然と区別不可)")
+                    L.append(f"  {'　'*4} └ 実オッズのみ: n={rn:>4}  的中{wins:>3}本"
+                             f"  ROI={e['real_roi']*100:>6.1f}%"
+                             f"  95%CI[{lo:>5.0f}–{hi:<5.0f}]% → {verdict}")
         if real_any:
-            L.append("  ※「実オッズのみ」が本物の連系エッジ。全体ROIは合成分で希釈/上振れする参考値。")
+            L.append("  ※ 判定は点推定でなく95%CIで。的中数本のROIは高配当のまぐれで簡単に100%超になる。")
     L.append("")
     L.append("--- リスク(モンテカルロ; レース単位ブロック・ブートストラップ) ---")
     L.append(f"  破産確率(≤30%資金): {ruin['ruin_prob']*100:.1f}%  最終資金中央値: {ruin['median_final']:.2f}x  下側5%: {ruin['p05_final']:.2f}x")

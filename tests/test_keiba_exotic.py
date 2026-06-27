@@ -95,3 +95,7 @@ def test_real_odds_override_synthetic():
     assert summ["umaren"]["real_n"] <= summ["umaren"]["n_bets"]
     # 1-2が的中(本命決着)かつ 50倍なので、実オッズのみ ROI は正
     assert summ["umaren"]["real_roi"] > 0
+    # ブートストラップCIと的中本数も付く
+    assert summ["umaren"]["real_wins"] >= 1
+    assert "real_roi_lo" in summ["umaren"] and "real_roi_hi" in summ["umaren"]
+    assert summ["umaren"]["real_roi_lo"] <= summ["umaren"]["real_roi_hi"]
