@@ -220,7 +220,10 @@ def validate_runners(df: pd.DataFrame) -> list[str]:
                 .value_counts().drop(index=1, errors="ignore") > 1).any()
         ]
         if structural:
-            issues.append("1着が複数あるレースがある(race_id 構成 or 着順の不整合)")
+            n_races = int(fin["race_id"].nunique())
+            issues.append(
+                f"1着が複数あるレースがある({len(structural)}/{n_races}レース: "
+                "race_id 構成 or 着順の不整合)")
     if "final_odds" in df and df["final_odds"].notna().any():
         if (df["final_odds"] < 1.0).mean() > 0.5:
             issues.append("final_odds の多くが 1.0 未満(odds_scale の見直しが必要かも)")
