@@ -226,11 +226,21 @@ BASE_CSS = """
  a{color:#7fb0ff;text-decoration:none} a:hover{text-decoration:underline}
  header{position:sticky;top:0;background:#141821;padding:10px 16px;border-bottom:1px solid var(--line);z-index:9}
  h1{font-size:16px;margin:0} .sub{font-size:12px;color:var(--mut)}
- .wrap{max-width:1120px;margin:0 auto;padding:12px 16px 56px}
- .nav{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
- .nav a{background:#222733;padding:5px 10px;border-radius:999px;font-size:12px;color:#cdd6e3}
- .nav a.on{background:var(--accent);color:#fff}
- .nav a .v{color:var(--mut);font-size:11px}
+ .layout{display:flex;align-items:flex-start}
+ .side{flex:0 0 190px;width:190px;position:sticky;top:53px;height:calc(100vh - 53px);
+       overflow-y:auto;background:#12151c;border-right:1px solid var(--line);padding:8px 8px 40px}
+ .side a{display:block;padding:6px 9px;border-radius:8px;font-size:12px;color:#cdd6e3;margin-bottom:2px;line-height:1.25}
+ .side a:hover{background:#1b2029;text-decoration:none}
+ .side a.on{background:var(--accent);color:#fff}
+ .side a .v{display:block;color:var(--mut);font-size:10px;margin-top:1px}
+ .side a.on .v{color:#dbe6ff}
+ .main{flex:1;min-width:0;max-width:1180px;padding:12px 18px 56px}
+ @media(max-width:760px){
+   .layout{flex-direction:column}
+   .side{position:static;width:auto;flex:none;height:auto;display:flex;gap:6px;
+         overflow-x:auto;border-right:none;border-bottom:1px solid var(--line)}
+   .side a{flex:0 0 auto;white-space:nowrap} .side a .v{display:none}
+ }
  .warn{background:#3a2a12;color:#ffce8a;padding:8px 12px;border-radius:8px;font-size:12px;margin:8px 0}
  .vsec{margin-top:14px} .vsec h2{font-size:15px;margin:0 0 6px;color:#cdd6e3;border-left:3px solid var(--accent);padding-left:8px}
  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
@@ -267,11 +277,12 @@ LAYOUT = """
         ・<a href="{{url_for('summary')}}">2026通算成績</a></div></div>
     <a class="btn" href="{{url_for('refresh')}}">今すぐ更新</a>
   </div>
-  <div class="nav">
-    {% for d in days %}<a class="{{'on' if d.ord==cur_ord else ''}}" href="{{url_for('day', ordinal=d.ord)}}">{{d.label}} <span class="v">{{d.venues|join('・')}}</span></a>{% endfor %}
-  </div>
 </header>
-<div class="wrap">
+<div class="layout">
+  <nav class="side">
+    {% for d in days %}<a class="{{'on' if d.ord==cur_ord else ''}}" href="{{url_for('day', ordinal=d.ord)}}">{{d.label}}<span class="v">{{d.venues|join('・')}}</span></a>{% endfor %}
+  </nav>
+  <main class="main">
   {% if error %}<div class="warn">エラー: {{error}}</div>{% endif %}
   {% if issues %}<div class="warn">注意: {{issues|join(' / ')}}</div>{% endif %}
   {{ body|safe }}
@@ -279,6 +290,7 @@ LAYOUT = """
     連系(馬連〜三連単)は的中確率を表示。実オッズ(O2〜O6/速報)がある券種は実EV(=的中率×払戻)を計算し、EV1.0以上を ◎ で妙味表示。無い券種はフェア倍率(◯倍以上で買い)。<br>
     取得層(別プロセス)で結果速報も回す: <code>jltsql realtime start --specs 0B12,0B15,0B30</code>(0B30で連系オッズも取得)。<br>
     realtime と同時に閲覧する場合は <code>--immutable</code> 付きで起動するか、DBを一度 WAL 化する。</div>
+  </main>
 </div></body></html>
 """
 
