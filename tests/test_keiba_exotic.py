@@ -70,3 +70,23 @@ def test_select_exotic_empty_for_small_field():
     race = _toy_race().head(2)
     bets = select_exotic_bets(race, np.array([0.6, 0.4]), np.array([0.5, 0.5]))
     assert len(bets) == 0
+
+
+def test_real_odds_override_synthetic():
+    # C3: 実オッズを与えると、その組は合成でなく実オッズで決済(odds_source=real)
+    race = _toy_race()
+    n = len(race)
+    model_p = np.array([0.5, 0.2, 0.12, 0.06, 0.05, 0.03, 0.02, 0.02])
+    market_p = np.full(n, 1.0 / n)
+    # 1-2番の馬連に高い実オッズ(50倍)を与える
+    real = {"馬連": {(1, 2): 50.0}}
+    bets = select_exotic_bets(race, model_p, market_p,
+                              ExoticConfig(ev_threshold=1.0, edge_ratio=1.0, max_odds=999),
+                              real_odds=real)
+    um12 = bets[(bets.bet_type == "umaren") & (bets.combo == "1-2")]
+    assert len(um12) == 1
+    assert um12.iloc[0]["odds_source"] == "real"
+    assert abs(um12.iloc[0]["final_odds"] - 50.0) < 1e-9   # 実オッズで決済
+    # 実オッズ割合が summarize に出る
+    summ = summarize_exotic(bets)
+    assert summ["umaren"]["real_frac"] > 0

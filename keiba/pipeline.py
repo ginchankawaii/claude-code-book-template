@@ -39,7 +39,8 @@ def run_pipeline(reader: JVLinkReader | None = None,
                  wf_config: WalkForwardConfig | None = None,
                  exotic_config: ExoticConfig | None = None,
                  run_leak_audit: bool = True,
-                 verbose: bool = False) -> PipelineResult:
+                 verbose: bool = False,
+                 exotic_odds: dict | None = None) -> PipelineResult:
     reader = reader or SyntheticBackend(SyntheticConfig())
     runners, races = reader.load()
 
@@ -58,7 +59,8 @@ def run_pipeline(reader: JVLinkReader | None = None,
 
     feat = build_features(runners)
     bt = walk_forward(feat, model_config, betting_config, wf_config,
-                      exotic_config=exotic_config, verbose=verbose)
+                      exotic_config=exotic_config, verbose=verbose,
+                      exotic_odds=exotic_odds)
     return PipelineResult(backtest=bt, leak_audit=leak,
                           n_runners=len(runners), n_races=len(races))
 
@@ -92,12 +94,16 @@ def format_report(result: PipelineResult) -> str:
     exotic = bt.get("exotic") or {}
     if exotic:
         L.append("")
-        L.append("--- 連系券種(EVフィルタ; 合成オッズ=単勝市場×Harville×控除率) ---")
+        real_any = any(e.get("real_frac", 0) > 0 for e in exotic.values())
+        src = "実オッズ(O2-O6)" if real_any else "合成オッズ=単勝市場×Harville×控除率"
+        L.append(f"--- 連系券種(EVフィルタ; {src}) ---")
         names = {"umaren": "馬連", "wide": "ワイド", "sanrenpuku": "三連複"}
         for bt_key in ["umaren", "wide", "sanrenpuku"]:
             if bt_key in exotic:
                 e = exotic[bt_key]
-                L.append(f"  {names[bt_key]:　<4} 点数={e['n_bets']:>4}  的中率={e['hit_rate']*100:>5.1f}%  ROI={e['roi']*100:>6.1f}%")
+                rf = e.get("real_frac", 0.0)
+                tag = f"  実オッズ{rf*100:.0f}%" if rf > 0 else "  (合成)"
+                L.append(f"  {names[bt_key]:　<4} 点数={e['n_bets']:>4}  的中率={e['hit_rate']*100:>5.1f}%  ROI={e['roi']*100:>6.1f}%{tag}")
     L.append("")
     L.append("--- リスク(モンテカルロ; レース単位ブロック・ブートストラップ) ---")
     L.append(f"  破産確率(≤30%資金): {ruin['ruin_prob']*100:.1f}%  最終資金中央値: {ruin['median_final']:.2f}x  下側5%: {ruin['p05_final']:.2f}x")

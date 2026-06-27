@@ -50,11 +50,12 @@ def walk_forward(feat: pd.DataFrame, model_config: ModelConfig | None = None,
                  betting_config: BettingConfig | None = None,
                  wf_config: WalkForwardConfig | None = None,
                  exotic_config: ExoticConfig | None = None,
-                 verbose: bool = False) -> dict:
+                 verbose: bool = False, exotic_odds: dict | None = None) -> dict:
     """walk-forward バックテストを実行して結果dictを返す。
 
     exotic_config を渡すと連系券種(馬連/ワイド/三連複)の EV ベットも評価する
-    (None ならスキップ)。
+    (None ならスキップ)。exotic_odds(C3)= {race_id: {券種: {(馬番): 倍率}}} を
+    渡すと、合成オッズでなく**実オッズ**で連系を判定・決済する。
     """
 
     wf = wf_config or WalkForwardConfig()
@@ -88,7 +89,7 @@ def walk_forward(feat: pd.DataFrame, model_config: ModelConfig | None = None,
             continue
 
         fold_res, bets, test_pred, exotic = _run_fold(
-            train, valid, test, mcfg, bcfg, wf, exotic_config
+            train, valid, test, mcfg, bcfg, wf, exotic_config, exotic_odds
         )
         fold_res["fold"] = len(folds) + 1
         fold_res["test_range"] = (test_lo, test_hi)
@@ -114,7 +115,7 @@ def walk_forward(feat: pd.DataFrame, model_config: ModelConfig | None = None,
     return result
 
 
-def _run_fold(train, valid, test, mcfg, bcfg, wf, exotic_config=None):
+def _run_fold(train, valid, test, mcfg, bcfg, wf, exotic_config=None, exotic_odds=None):
     # 1) 学習
     model = KeibaModel(mcfg).fit(train, valid)
     # 2) 検証で較正 + ブレンド重み
@@ -168,8 +169,9 @@ def _run_fold(train, valid, test, mcfg, bcfg, wf, exotic_config=None):
         frames = []
         for rid, idx in tt.groupby("race_id", sort=False).groups.items():
             sub = tt.loc[idx]
+            ro = exotic_odds.get(int(rid)) if exotic_odds else None
             eb = select_exotic_bets(sub, pb.loc[idx].to_numpy(), qm.loc[idx].to_numpy(),
-                                    exotic_config)
+                                    exotic_config, real_odds=ro)
             if len(eb):
                 frames.append(eb)
         exotic = pd.concat(frames, ignore_index=True) if frames else None

@@ -22,6 +22,8 @@ import numpy as np
 import pandas as pd
 
 TAKEOUT = {"umaren": 0.225, "wide": 0.225, "sanrenpuku": 0.25}
+# C3: 実連系オッズ(exotic_odds の券種名)へのマッピング
+_JP_KIND = {"umaren": "馬連", "wide": "ワイド", "sanrenpuku": "三連複"}
 
 
 @dataclass
@@ -74,11 +76,15 @@ def wide_prob(p: np.ndarray, i: int, j: int, third_pool) -> float:
 
 
 def select_exotic_bets(race: pd.DataFrame, model_p: np.ndarray, market_p: np.ndarray,
-                       config: ExoticConfig | None = None) -> pd.DataFrame:
+                       config: ExoticConfig | None = None,
+                       real_odds: dict | None = None) -> pd.DataFrame:
     """1レース分の連系 EV ベットを選定し、確定着順で決済情報を付けて返す。
 
     race は1レース(同一 race_id)の行集合。finish_pos を含むこと。
     model_p / market_p は race の行順に整列した単勝確率(合計1)。
+    real_odds(C3): {券種名: {(馬番タプル): 倍率}} の実オッズ。与えられた組は
+      合成オッズでなく**実オッズ**で EV 判定・決済する(本物のエッジ測定)。
+      実オッズが無い組は従来通り合成オッズにフォールバック(odds_source で区別)。
     """
     cfg = config or ExoticConfig()
     n = len(race)
@@ -91,6 +97,7 @@ def select_exotic_bets(race: pd.DataFrame, model_p: np.ndarray, market_p: np.nda
     rdate = int(race["race_date"].iloc[0])
     top2 = set(np.where(finish <= 2)[0])
     top3 = set(np.where(finish <= 3)[0])
+    has_post = "post_position" in race.columns
 
     order = np.argsort(-mp)
     short = list(order[: cfg.shortlist_k])
@@ -98,12 +105,26 @@ def select_exotic_bets(race: pd.DataFrame, model_p: np.ndarray, market_p: np.nda
 
     rows = []
 
+    def _real_odds_for(bet_type, members):
+        if not real_odds or not has_post:
+            return None
+        kind = _JP_KIND.get(bet_type)
+        table = real_odds.get(kind) if kind else None
+        if not table:
+            return None
+        key = tuple(sorted(int(race.iloc[m]["post_position"]) for m in members))
+        return table.get(key)
+
     def consider(bet_type, members, model_prob, hit):
         t = TAKEOUT[bet_type]
         mkt_prob = _market_prob_for(bet_type, qp, members, third_pool)
         if mkt_prob <= 0:
             return
-        odds = (1.0 - t) / mkt_prob
+        real = _real_odds_for(bet_type, members)
+        if real is not None and real > 1.0:
+            odds, source = float(real), "real"   # C3: 実オッズで判定・決済
+        else:
+            odds, source = (1.0 - t) / mkt_prob, "synth"
         if odds > cfg.max_odds:
             return
         ev = model_prob * odds
@@ -117,10 +138,10 @@ def select_exotic_bets(race: pd.DataFrame, model_p: np.ndarray, market_p: np.nda
         rows.append({
             "race_id": rid, "race_date": rdate, "bet_type": bet_type,
             "combo": "-".join(str(int(race.iloc[m]["post_position"])) for m in members)
-                     if "post_position" in race.columns else str(members),
+                     if has_post else str(members),
             "model_prob": model_prob, "market_prob": mkt_prob, "odds": odds,
             "ev": ev, "stake_frac": stake, "is_win": int(hit),
-            "final_odds": odds,
+            "final_odds": odds, "odds_source": source,
         })
 
     if "umaren" in cfg.types:
@@ -158,10 +179,13 @@ def summarize_exotic(bets: pd.DataFrame) -> dict:
         return out
     for bt, g in bets.groupby("bet_type"):
         ret = (g["is_win"].to_numpy() * g["final_odds"].to_numpy()).sum()
+        real_frac = (float((g["odds_source"] == "real").mean())
+                     if "odds_source" in g.columns else 0.0)
         out[bt] = {
             "n_bets": int(len(g)),
             "hit_rate": float(g["is_win"].mean()),
             "roi": float(ret / len(g)),
+            "real_frac": real_frac,   # C3: 実オッズで決済した割合(1.0=全部実オッズ)
         }
     return out
 
@@ -169,4 +193,4 @@ def summarize_exotic(bets: pd.DataFrame) -> dict:
 def _empty_exotic() -> pd.DataFrame:
     return pd.DataFrame(columns=["race_id", "race_date", "bet_type", "combo",
                                  "model_prob", "market_prob", "odds", "ev",
-                                 "stake_frac", "is_win", "final_odds"])
+                                 "stake_frac", "is_win", "final_odds", "odds_source"])

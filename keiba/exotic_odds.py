@@ -101,6 +101,30 @@ def _accumulate(out: dict, df: pd.DataFrame, name: str, nh: int,
         out.setdefault(int(rid[i]), {}).setdefault(name, {})[combo] = float(o)
 
 
+def load_exotic_odds_for_days(path: str | Path, ordinals, kind: str = "sqlite",
+                              immutable: bool = False) -> dict:
+    """複数日(序数の集合)の連系オッズをまとめて {race_id: {券種: {組: 倍率}}} で返す。
+
+    バックテスト(C3)で test 期間の race を実オッズ決済するために使う。
+    日付ごとに load_exotic_odds_for_day を呼んで結合する。
+    """
+    import datetime as _dt
+    out: dict = {}
+    seen = set()
+    for o in ordinals:
+        d = _dt.date.fromordinal(int(o))
+        key = (d.year, d.month * 100 + d.day)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            day = load_exotic_odds_for_day(path, key[0], key[1], kind, immutable)
+        except Exception:
+            continue
+        out.update(day)   # race_id はユニークなので単純結合で良い
+    return out
+
+
 def load_exotic_odds_for_day(path: str | Path, year: int, monthday: int,
                              kind: str = "sqlite", immutable: bool = False) -> dict:
     """指定日(year, monthday=月*100+日)の連系オッズを読み、

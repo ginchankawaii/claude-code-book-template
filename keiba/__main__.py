@@ -45,9 +45,12 @@ def main(argv: list[str] | None = None) -> int:
                    help="C1エッジ探索: 条件別(人気帯/頭数/オッズの動き)の回収率を輪切り表示")
     p.add_argument("--validate-oos", action="store_true",
                    help="C6: C1候補を前半で発見→後半で残るか out-of-sample 検証")
+    p.add_argument("--real-exotic", action="store_true",
+                   help="C3: 連系を合成オッズでなく実オッズ(O2-O6)で判定・決済する(--db必須)")
     p.add_argument("--quiet", action="store_true", help="フォールド毎の進捗を出さない")
     args = p.parse_args(argv)
 
+    exotic_odds = None
     if args.db:
         from .ingest import IngestBackend, IngestConfig, validate_runners
         reader = IngestBackend(args.db, kind=args.db_kind, immutable=args.immutable,
@@ -62,6 +65,20 @@ def main(argv: list[str] | None = None) -> int:
             print("  → 列名違いの可能性。keiba.ingest の *_FIELDS を DB に合わせて調整してください。")
         else:
             print("バリデーション: クリーン")
+        if args.real_exotic and args.exotic:
+            # C3: 評価年(最新年)の連系オッズを読み、実オッズで連系を決済する
+            from .exotic_odds import load_exotic_odds_for_days
+            import datetime as _dt
+            max_ord = int(runners["race_date"].max())
+            cutoff = _dt.date(_dt.date.fromordinal(max_ord).year, 1, 1).toordinal()
+            evdays = [o for o in runners["race_date"].unique() if o >= cutoff]
+            print(f"実連系オッズ読込中… 評価期間 {len(evdays)}日分")
+            exotic_odds = load_exotic_odds_for_days(args.db, evdays, args.db_kind,
+                                                    args.immutable)
+            print(f"  → 実オッズのある race: {len(exotic_odds)}")
+            if not exotic_odds:
+                print("  ⚠ 実連系オッズ(NL_O2〜O6 / TS_SOKUHO_O2〜O6)が見つかりません。"
+                      "RACE系(O2-O6)を取り込むと実測できます。合成オッズで継続します。")
     else:
         reader = SyntheticBackend(SyntheticConfig(n_days=args.days, seed=args.seed,
                                                   market_myopia=args.myopia))
@@ -73,6 +90,7 @@ def main(argv: list[str] | None = None) -> int:
         exotic_config=ExoticConfig() if args.exotic else None,
         run_leak_audit=not args.no_audit,
         verbose=not args.quiet,
+        exotic_odds=exotic_odds,
     )
     print(format_report(result))
     if args.segments:
