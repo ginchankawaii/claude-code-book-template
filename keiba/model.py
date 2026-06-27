@@ -28,6 +28,23 @@ from .features import FEATURE_COLUMNS, LABEL_TOP3, LABEL_WIN
 CATEGORICAL = ["sex", "surface", "class_level", "going", "running_style"]
 
 
+def _coerce_categoricals(X: pd.DataFrame, cats: list[str]) -> pd.DataFrame:
+    """カテゴリ列の負値を NaN(=欠損)に統一する。
+
+    LightGBM のカテゴリ特徴は非負整数のみ。負値(例: 馬場コード0由来の going=-1)が
+    あると警告を出して NaN 化されるので、ここで明示的に NaN にして警告を消し、
+    扱いを揃える。
+    """
+    if not cats:
+        return X
+    X = X.copy()
+    for c in cats:
+        if c in X.columns:
+            col = pd.to_numeric(X[c], errors="coerce")
+            X[c] = col.where(col >= 0)   # 負値 → NaN
+    return X
+
+
 @dataclass
 class ModelConfig:
     objective: str = "binary"          # "binary" | "lambdarank"
@@ -54,13 +71,14 @@ class KeibaModel:
             raise ImportError(f"lightgbm が利用できません: {_LGB_ERR}")
         self.cfg = config or ModelConfig()
         self.features = list(features)
+        self.cats = [c for c in CATEGORICAL if c in self.features]
         self.booster: "lgb.Booster | None" = None
 
     # ------------------------------------------------------------------
     def fit(self, train: pd.DataFrame, valid: pd.DataFrame | None = None) -> "KeibaModel":
         cfg = self.cfg
-        cats = [c for c in CATEGORICAL if c in self.features]
-        Xtr = train[self.features]
+        cats = self.cats
+        Xtr = _coerce_categoricals(train[self.features], cats)
         if cfg.objective == "binary":
             ytr = train[cfg.label].to_numpy()
             params = self._binary_params()
@@ -68,7 +86,8 @@ class KeibaModel:
                                  free_raw_data=False)
             valid_sets = [dtrain]
             if valid is not None:
-                dvalid = lgb.Dataset(valid[self.features], label=valid[cfg.label].to_numpy(),
+                dvalid = lgb.Dataset(_coerce_categoricals(valid[self.features], cats),
+                                     label=valid[cfg.label].to_numpy(),
                                      reference=dtrain, categorical_feature=cats,
                                      free_raw_data=False)
                 valid_sets.append(dvalid)
@@ -85,7 +104,8 @@ class KeibaModel:
                                  categorical_feature=cats, free_raw_data=False)
             valid_sets = [dtrain]
             if valid is not None:
-                dvalid = lgb.Dataset(valid[self.features], label=_relevance(valid),
+                dvalid = lgb.Dataset(_coerce_categoricals(valid[self.features], cats),
+                                     label=_relevance(valid),
                                      group=_group_sizes(valid), reference=dtrain,
                                      categorical_feature=cats, free_raw_data=False)
                 valid_sets.append(dvalid)
@@ -101,7 +121,7 @@ class KeibaModel:
     def raw_score(self, df: pd.DataFrame) -> np.ndarray:
         if self.booster is None:
             raise RuntimeError("fit されていません")
-        return self.booster.predict(df[self.features])
+        return self.booster.predict(_coerce_categoricals(df[self.features], self.cats))
 
     def predict_proba(self, df: pd.DataFrame) -> np.ndarray:
         """レース内で正規化した勝率(合計1)を返す。"""

@@ -117,6 +117,17 @@ def test_o1_multiple_snapshots_no_fanout():
     assert abs(r.loc[0, "final_odds"] - 2.1) < 1e-9
 
 
+def test_going_unknown_code_is_nan_not_negative():
+    # 馬場コード0(不明)は going=-1 でなく NaN になる(負のカテゴリ値を作らない)
+    se, ra, o1 = _jv_frames()
+    ra = ra.copy()
+    ra.loc[0, "SibaBabaCD"] = 0          # race1(芝)の馬場を不明に
+    runners, _ = normalize(se, ra, o1)
+    g = runners.groupby("race_id")["going"].first()
+    assert (runners["going"].dropna() >= 0).all()   # 負値が無い
+    assert g.isna().any()                            # 不明は NaN
+
+
 def test_validate_catches_odds_scale():
     se, ra, o1 = _jv_frames()
     runners, _ = normalize(se, ra, o1)

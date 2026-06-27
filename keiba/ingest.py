@@ -129,9 +129,11 @@ def normalize(se: pd.DataFrame, ra: pd.DataFrame, o1: pd.DataFrame | None = None
     ra_attr["surface"] = _col(ra, rf["trackcd"]).map(_surface_from_track)
     ra_attr["class_level"] = pd.to_numeric(_col(ra, rf["grade"]), errors="coerce")
     # 馬場状態: 芝/ダで参照列が違う。surface に応じて選ぶ。
-    siba = pd.to_numeric(_col(ra, rf["siba_baba"]), errors="coerce")
-    dirt = pd.to_numeric(_col(ra, rf["dirt_baba"]), errors="coerce")
-    ra_attr["going"] = np.where(ra_attr["surface"] == 1, dirt, siba) - 1  # 1良→0
+    # コード 0=不明/未設定 は欠損(NaN)扱い。0 のまま -1 すると負のカテゴリ値になり
+    # LightGBM が警告を出して NaN 化する(=情報を捨てる)ので、最初から NaN にする。
+    siba = pd.to_numeric(_col(ra, rf["siba_baba"]), errors="coerce").replace(0, np.nan)
+    dirt = pd.to_numeric(_col(ra, rf["dirt_baba"]), errors="coerce").replace(0, np.nan)
+    ra_attr["going"] = np.where(ra_attr["surface"] == 1, dirt, siba) - 1  # 1良→0, 0不明→NaN
     ra_attr = ra_attr.drop_duplicates("race_id")
 
     out = pd.DataFrame()
