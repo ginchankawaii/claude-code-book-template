@@ -47,7 +47,9 @@ O1_FIELDS = {  # 単勝オッズ(馬番別)
     "tan_odds": "TanOdds", "tan_ninki": "TanNinki",
 }
 TABLE_MAP = {"se": "NL_SE", "ra": "NL_RA", "o1": "NL_O1", "hr": "NL_HR",
-             "rt_se": "RT_SE", "rt_ra": "RT_RA", "rt_odds": "TS_SOKUHO_O1"}
+             "rt_se": "RT_SE", "rt_ra": "RT_RA", "rt_odds": "TS_SOKUHO_O1",
+             # 特徴量強化(enrich)で使う追加レコード(無ければ自動スキップ)
+             "um": "NL_UM", "dm": "NL_DM", "tm": "NL_TM"}
 
 # 中央競馬(JRA)の競馬場コード。これ以外(30番台〜=地方NAR, 50番台〜=海外)は除外する。
 CENTRAL_JYO = {f"{i:02d}" for i in range(1, 11)}  # 01..10 札幌〜小倉
@@ -64,6 +66,12 @@ class IngestConfig:
     futan_scale: float = 1.0
     # 中央競馬(JRA)のみに絞る。地方競馬(NAR)・海外を学習/予測から除外する。
     central_only: bool = True
+    # 特徴量強化(血統 UM / データマイニング DM・TM / オッズ時系列)を結合する。
+    # 該当テーブルが無ければ自動でスキップ(列は NaN のまま)。
+    enrich: bool = True
+    um_fields: dict | None = None  # None で enrich.UM_FIELDS 既定を使う
+    dm_fields: dict | None = None
+    tm_fields: dict | None = None
 
 
 def _col(df: pd.DataFrame, name: str):
@@ -247,7 +255,15 @@ def _ingest_tables(reader, table_map: dict | None, config: IngestConfig | None,
             if key_cols:
                 rt_odds = rt_odds.drop_duplicates(subset=key_cols, keep="last")
             o1 = pd.concat([o1, rt_odds], ignore_index=True) if (o1 is not None and len(o1)) else rt_odds
-    return normalize(se, ra, o1, hr, cfg)
+    runners, races = normalize(se, ra, o1, hr, cfg)
+    if cfg.enrich:
+        from . import enrich as _enrich
+        try:
+            runners = _enrich.enrich_runners(runners, reader, tm, cfg)
+        except Exception:
+            # 強化は best-effort。失敗しても素の runners で先へ進む。
+            pass
+    return runners, races
 
 
 def from_sqlite(path: str | Path, table_map: dict | None = None,

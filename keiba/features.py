@@ -55,16 +55,28 @@ FEATURE_COLUMNS = [
     "j_starts",
     "j_win_rate",
     "j_surface_win",     # 当該馬場(芝/ダ)での騎手勝率(PiT)
+    # 調教師の過去走集計(PiT)
+    "t_starts",
+    "t_win_rate",
+    "t_surface_win",     # 当該馬場での調教師勝率(PiT)
     # 種牡馬の過去走集計(PiT)
     "s_starts",
     "s_win_rate",
     "s_avg_relfinish",
+    # 母父(母系)の過去走集計(PiT)。母系の距離/馬場適性の代理。
+    "bms_win_rate",
+    "bms_avg_relfinish",
+    # JRA-VAN データマイニング(発走前予想)。市場と独立した第三者予想 = 強い独自情報。
+    "dm_score",          # タイム型: 予想走破タイム(小さいほど速い)
+    "dm_rank",           # レース内での dm_score 順位(頭数非依存)
+    "tm_score",          # 対戦型: 予想スコア
 ]
 
 LABEL_WIN = "is_win"
 LABEL_TOP3 = "is_top3"
 KEYS = ["race_id", "race_date"]
-SETTLE_COLS = ["final_odds", "morning_odds", "intermediate_odds", "final_popularity"]
+SETTLE_COLS = ["final_odds", "morning_odds", "intermediate_odds", "final_popularity",
+               "odds_drift"]
 
 
 @dataclass
@@ -120,10 +132,28 @@ def build_features(runners: pd.DataFrame, config: FeatureConfig | None = None) -
     df["_jsurf"] = _js * 4 + (_sf + 1)
     df["j_surface_win"] = _pit_mean(df, "_jsurf", "is_win")
 
+    # --- 調教師の PiT 集計 ---
+    df["t_starts"] = _pit_count(df, "trainer_id")
+    df["t_win_rate"] = _pit_mean(df, "trainer_id", "is_win")
+    _ts = df["trainer_id"].fillna(-1).astype(np.int64)
+    df["_tsurf"] = _ts * 4 + (_sf + 1)
+    df["t_surface_win"] = _pit_mean(df, "_tsurf", "is_win")
+
     # --- 種牡馬の PiT 集計 ---
     df["s_starts"] = _pit_count(df, "sire_id")
     df["s_win_rate"] = _pit_mean(df, "sire_id", "is_win")
     df["s_avg_relfinish"] = _pit_mean(df, "sire_id", "rel_finish")
+
+    # --- 母父(母系)の PiT 集計 ---
+    df["bms_win_rate"] = _pit_mean(df, "bms_id", "is_win")
+    df["bms_avg_relfinish"] = _pit_mean(df, "bms_id", "rel_finish")
+
+    # --- データマイニング(発走前予想): dm_score=予想タイム(小さいほど速い)。
+    # レース内順位に正規化して頭数非依存にする(予想値そのものは絶対値依存のため)。
+    if df["dm_score"].notna().any():
+        df["dm_rank"] = df.groupby("race_id")["dm_score"].rank(method="min", ascending=True)
+    else:
+        df["dm_rank"] = np.nan
 
     # finish_pos は lambdarank の relevance ラベルとして保持(特徴量ではない)
     keep = KEYS + FEATURE_COLUMNS + [LABEL_WIN, LABEL_TOP3, "finish_pos"] + SETTLE_COLS
@@ -131,7 +161,7 @@ def build_features(runners: pd.DataFrame, config: FeatureConfig | None = None) -
 
     # 欠損(初出走など)は GBDT のネイティブ NaN 処理に任せるため数値NaNのまま残す。
     # ただし件数系は 0 が自然なので 0 埋め。
-    for col in ["h_starts", "j_starts", "s_starts"]:
+    for col in ["h_starts", "j_starts", "t_starts", "s_starts"]:
         out[col] = out[col].fillna(0)
     return out
 

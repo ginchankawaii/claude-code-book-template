@@ -38,6 +38,9 @@ PRE_RACE_COLUMNS = [
     "moisture",        # 含水率%(当日発走前に確定)
     "running_style",   # 脚質 0=逃げ,1=先行,2=差し,3=追込(持続的な馬の特性)
     "is_first_start",  # 初出走フラグ
+    "bms_id",          # 母父(母の父)の繁殖登録番号。母系の適性代理(血統 UM 由来)
+    "dm_score",        # タイム型データマイニング予想タイム(JRA-VANが発走前に算出)
+    "tm_score",        # 対戦型データマイニング予想スコア(同上)
 ]
 
 # --- レース確定後にしか存在しない(=当該レースの特徴量に入れたら即リーク) ---
@@ -53,7 +56,8 @@ POST_RACE_COLUMNS = [
 
 # --- 市場(オッズ)関連。締切前後で可用性が異なるので別管理 ---
 # morning_odds/intermediate_odds は発走前に取得可。final_odds は確定後。
-MARKET_PRE_RACE = ["morning_odds", "intermediate_odds"]
+# odds_drift は速報オッズ時系列(寄りつき→直近)の動きで、発走前情報のみで算出。
+MARKET_PRE_RACE = ["morning_odds", "intermediate_odds", "odds_drift"]
 MARKET_POST_RACE = ["final_odds", "final_popularity", "payout_win"]
 
 # 集計・JOIN の各段に必ず適用すべき時間フィルタのキー
