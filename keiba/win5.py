@@ -17,10 +17,54 @@
 from __future__ import annotations
 
 import math
+import sqlite3
 
 import numpy as np
 
 WIN5_TAKEOUT = 0.30
+
+
+def load_designated(path, year: int, monthday: int, kind: str = "sqlite",
+                    immutable: bool = False) -> dict | None:
+    """NL_WF(重勝式レコード)から指定日のWIN5対象5レースを取得する。
+
+    RaceInfo1〜5 は各8桁 = JyoCD+Kaiji+Nichiji+RaceNum。
+    race_id = f"{Year}{RaceInfo}" でシステムの race_id に一致する。
+    返り値: {"races": [race_id×5(int)], "carryover": 繰越の有無(bool)} / 無ければ None。
+    """
+    if kind == "duckdb":
+        import duckdb
+        con = duckdb.connect(str(path), read_only=True)
+        fetch = lambda sql, p: con.execute(sql, p).fetchall()
+    else:
+        uri = (f"file:{str(path).replace(chr(92), '/')}?immutable=1" if immutable
+               else f"file:{str(path).replace(chr(92), '/')}?mode=ro")
+        con = sqlite3.connect(uri, uri=True)
+        fetch = lambda sql, p: con.execute(sql, p).fetchall()
+    try:
+        rows = fetch(
+            "SELECT RaceInfo1,RaceInfo2,RaceInfo3,RaceInfo4,RaceInfo5,CarryOverStart "
+            "FROM NL_WF WHERE Year=? AND CAST(MonthDay AS INTEGER)=? "
+            "ORDER BY MakeDate DESC LIMIT 1", [int(year), int(monthday)])
+    except Exception:
+        return None
+    finally:
+        con.close()
+    if not rows:
+        return None
+    r = rows[0]
+    races = []
+    for ri in r[:5]:
+        s = "".join(ch for ch in str(ri) if ch.isdigit()).zfill(8)
+        if len(s) == 8 and s != "00000000":
+            races.append(int(f"{int(year)}{s}"))
+    if len(races) != 5:
+        return None
+    try:
+        carry = int(str(r[5])) > 0
+    except (ValueError, TypeError):
+        carry = False
+    return {"races": races, "carryover": carry}
 
 
 def _norm(p) -> np.ndarray:

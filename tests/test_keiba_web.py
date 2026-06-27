@@ -71,3 +71,44 @@ def test_summary_route(state):
 def test_index_redirects_to_today(state):
     r = web.app.test_client().get("/")
     assert r.status_code in (301, 302)
+
+
+def _win5_pred_frame():
+    """WIN5対象5レース(全確定)。1着の馬番が分かる形で並べる。"""
+    base = dt.date(2026, 6, 21).toordinal()
+    rids = [202609010610 + i for i in range(5)]
+    rows = []
+    for rid in rids:
+        horses = [(1, 0.50, 1), (2, 0.25, 2), (3, 0.15, 3), (4, 0.10, 4)]
+        for rank, (post, p, fin) in enumerate(horses, 1):
+            rows.append(dict(race_id=rid, race_date=base, post_position=post, win_prob=p,
+                             market_prob=p, odds=2.0, ev=p * 2, edge=1.3, finish_pos=fin,
+                             is_win=(1.0 if fin == 1 else 0.0), bet=False, rank=rank,
+                             race_finished=True))
+    return pd.DataFrame(rows), rids
+
+
+def test_win5_route_renders():
+    pred, rids = _win5_pred_frame()
+    od = int(pred["race_date"].max())
+    web.STATE.update(pred=pred, today=od, cutoff=dt.date(2026, 1, 1).toordinal(),
+                     updated="10:00", building=False, error=None, issues=[],
+                     refresh_sec=90, win5_cache={od: {"races": rids, "carryover": True}})
+    html = web.app.test_client().get(f"/win5/{od}").get_data(as_text=True)
+    assert "WIN5" in html
+    assert "キャリーオーバー" in html
+    assert "的中率" in html
+    # 全レース1番人気が1着 → 推奨(本命固定)は的中
+    assert "的中" in html
+    web.STATE["win5_cache"] = {}
+
+
+def test_win5_route_no_data():
+    pred, _ = _win5_pred_frame()
+    od = int(pred["race_date"].max())
+    web.STATE.update(pred=pred, today=od, cutoff=dt.date(2026, 1, 1).toordinal(),
+                     updated="10:00", building=False, error=None, issues=[],
+                     refresh_sec=90, win5_cache={od: None}, db=None)
+    html = web.app.test_client().get(f"/win5/{od}").get_data(as_text=True)
+    assert "NL_WF" in html
+    web.STATE["win5_cache"] = {}

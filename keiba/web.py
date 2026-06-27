@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 from flask import Flask, redirect, render_template_string, url_for
 
+from . import win5
 from .betadvice import advise_race
 from .exotic_odds import load_exotic_odds_for_day
 from .features import build_features
@@ -41,7 +42,7 @@ WD = "月火水木金土日"
 STATE = {"db": None, "kind": "sqlite", "predictor": None, "pred": None,
          "updated": None, "issues": [], "building": False, "error": None,
          "objective": "binary", "ev": 1.15, "refresh_sec": 90, "cutoff": None,
-         "today": None, "immutable": False, "odds_cache": {}}
+         "today": None, "immutable": False, "odds_cache": {}, "win5_cache": {}}
 _LOCK = threading.Lock()
 
 
@@ -90,6 +91,7 @@ def rebuild(retrain: bool = False) -> None:
             STATE["cutoff"] = cutoff
             STATE["today"] = max_ord
             STATE["odds_cache"] = {}   # 当日ライブオッズが変わるのでクリア
+            STATE["win5_cache"] = {}
             STATE["updated"] = _dt.datetime.now().strftime("%H:%M:%S")
             STATE["error"] = None
     except Exception as exc:  # pragma: no cover
@@ -155,6 +157,75 @@ def _day_odds(day_ord: int) -> dict:
     return odds
 
 
+def _intp(x):
+    try:
+        return None if x != x else int(x)
+    except (ValueError, TypeError):
+        return None
+
+
+def _win5_designated(day_ord: int):
+    """指定日のWIN5対象5レース(NL_WF)をキャッシュ付きで取得。無ければ None。"""
+    cache = STATE.setdefault("win5_cache", {})
+    if day_ord in cache:
+        return cache[day_ord]
+    info = None
+    if STATE.get("db"):
+        try:
+            d = _dt.date.fromordinal(int(day_ord))
+            info = win5.load_designated(STATE["db"], d.year, d.month * 100 + d.day,
+                                        kind=STATE["kind"],
+                                        immutable=STATE.get("immutable", False))
+        except Exception:
+            info = None
+    cache[day_ord] = info
+    return info
+
+
+def _win5_view(pred: pd.DataFrame, day_ord: int) -> dict | None:
+    info = _win5_designated(day_ord)
+    if not info:
+        return None
+    legs_prob, legs = [], []
+    for rid in info["races"]:
+        g = pred[pred["race_id"].astype(str) == str(rid)].sort_values("rank")
+        if g.empty:
+            return {"day_label": _date_label(day_ord), "available": False,
+                    "carryover": info["carryover"], "day_ord": day_ord}
+        legs_prob.append(g["win_prob"].to_numpy(dtype=float))
+        posts_full = [_intp(p) for p in g["post_position"].tolist()]
+        finished = bool(g["race_finished"].iloc[0])
+        win_post = None
+        if finished:
+            w = g[g["finish_pos"] == 1]
+            win_post = _intp(w.iloc[0]["post_position"]) if len(w) else None
+        legs.append({
+            "label": f"{_venue(rid)} {_racenum(rid)}R", "finished": finished,
+            "win_post": win_post, "posts_full": posts_full,
+            "rows": [{"post": _intp(r.post_position), "win": float(r.win_prob),
+                      "fin": _intp(r.finish_pos)} for r in g.head(8).itertuples()],
+        })
+    rec = win5.optimize(legs_prob, max_points=100)   # 推奨=¥10,000(100点)
+    for i, sel in enumerate(rec["selections"]):
+        s = set(sel)
+        legs[i]["sel_posts"] = {legs[i]["posts_full"][j] for j in sel
+                                if j < len(legs[i]["posts_full"])}
+        for j, row in enumerate(legs[i]["rows"]):
+            row["sel"] = j in s
+    tiers = []
+    for b in (1, 18, 48, 100, 200, 500):
+        p = win5.optimize(legs_prob, max_points=b)
+        tiers.append({"points": p["points"], "yen": p["cost_yen"], "hit": p["hit_prob"],
+                      "fair": p["fair_odds"], "counts": p["counts"], "is_rec": b == 100})
+    all_fin = all(l["finished"] for l in legs)
+    won = None
+    if all_fin:
+        won = all(l["win_post"] is not None and l["win_post"] in l["sel_posts"] for l in legs)
+    return {"day_label": _date_label(day_ord), "available": True, "day_ord": day_ord,
+            "carryover": info["carryover"], "legs": legs, "rec": rec, "tiers": tiers,
+            "all_finished": all_fin, "won": won}
+
+
 def _day_view(pred: pd.DataFrame, day_ord: int) -> dict:
     sub = pred[pred["race_date"] == day_ord]
     day_odds = _day_odds(day_ord)
@@ -178,7 +249,8 @@ def _day_view(pred: pd.DataFrame, day_ord: int) -> dict:
         venues[v].sort(key=lambda r: r["num"])
     ordered = [{"venue": v, "races": venues[v]} for v in sorted(venues)]
     return {"day_ord": day_ord, "day_label": _date_label(day_ord), "venues": ordered,
-            "is_today": day_ord == STATE["today"]}
+            "is_today": day_ord == STATE["today"],
+            "win5": _win5_designated(day_ord) is not None}
 
 
 def _summary_view(pred: pd.DataFrame) -> dict:
@@ -317,7 +389,8 @@ DAY_BODY = """
     </div>
   </div>
 {% endmacro %}
-<h2 style="margin:6px 0">{{view.day_label}} {% if view.is_today %}<span class="sub">(本日・自動更新)</span>{% endif %}</h2>
+<h2 style="margin:6px 0">{{view.day_label}} {% if view.is_today %}<span class="sub">(本日・自動更新)</span>{% endif %}
+  {% if view.win5 %}<a class="btn" style="font-size:12px;padding:4px 10px;margin-left:8px;background:#7a3df4" href="{{url_for('win5_page', ordinal=view.day_ord)}}">🎯 WIN5予想</a>{% endif %}</h2>
 {% for v in view.venues %}
   <div class="vsec"><h2>{{v.venue}}</h2><div class="cards">
     {% for r in v.races %}{{ race_card(r) }}{% endfor %}
@@ -348,6 +421,45 @@ SUMMARY_BODY = """
 """
 
 
+WIN5_BODY = """
+<h2 style="margin:6px 0">🎯 WIN5 — {{v.day_label}}
+  {% if v.carryover %}<span class="badge" style="background:#5a1a1a;color:#ff9a9a">🔥 キャリーオーバー</span>{% endif %}
+  {% if v.all_finished %}<span class="badge {{'b-win' if v.won else 'b-miss'}}">{{ '的中' if v.won else '不的中' }}</span>{% endif %}
+</h2>
+<div class="panel sum">
+  <div>推奨 <b>¥{{'{:,}'.format(v.rec.cost_yen)}}</b> <span class="sub">({{v.rec.points}}点)</span></div>
+  <div>的中率 <b>{{'%.2f'|format(v.rec.hit_prob*100)}}%</b></div>
+  <div>フェア配当 <b>{{'{:,.0f}'.format(v.rec.fair_odds)}}倍↑</b></div>
+  <div>頭数 <b>{{v.rec.counts|join('-')}}</b></div>
+</div>
+<div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(205px,1fr))">
+{% for leg in v.legs %}
+  <div class="race">
+    <h3><span>{{loop.index}}. {{leg.label}}</span>
+      {% if leg.finished %}<span class="badge {{'b-win' if (leg.win_post in leg.sel_posts) else 'b-miss'}}">{{ '◎的中' if (leg.win_post in leg.sel_posts) else '×' }}</span>{% else %}<span class="badge b-pre">発走前</span>{% endif %}</h3>
+    <table><tr><th class="l">馬番</th><th>勝率</th>{% if leg.finished %}<th>着</th>{% endif %}</tr>
+    {% for h in leg.rows %}
+      <tr class="{{'bet' if h.sel else ''}}">
+        <td class="l">{{h.post}}{% if h.sel %} <span class="mk">◎</span>{% endif %}</td>
+        <td>{{'%.1f'|format(h.win*100)}}%</td>
+        {% if leg.finished %}<td>{% if h.fin %}<span class="fin {{'f1' if h.fin==1 else 'f2' if h.fin==2 else 'f3' if h.fin==3 else 'fx'}}">{{h.fin}}</span>{% else %}<span class="fx">-</span>{% endif %}</td>{% endif %}
+      </tr>
+    {% endfor %}
+    </table>
+  </div>
+{% endfor %}
+</div>
+<div class="panel">
+  <div style="font-weight:700;margin-bottom:6px">予算別プラン(点数=Π選択頭数)</div>
+  <table style="max-width:600px"><tr><th class="l">金額</th><th>点数</th><th>頭数</th><th>的中率</th><th>フェア配当</th></tr>
+  {% for t in v.tiers %}<tr class="{{'bet' if t.is_rec else ''}}"><td class="l">¥{{'{:,}'.format(t.yen)}}</td><td>{{t.points}}</td><td>{{t.counts|join('-')}}</td><td>{{'%.2f'|format(t.hit*100)}}%</td><td>{{'{:,.0f}'.format(t.fair)}}倍</td></tr>{% endfor %}
+  </table>
+</div>
+<div class="sub">※ ◎=推奨選択。1頭堅いレースは固定、混戦は手広く自動配分(的中確率/コスト最大化)。
+WIN5は控除率30%・配当はパリミュチュエル+繰越で大きく変動。フェア配当を超える配当なら理論上プラス。</div>
+"""
+
+
 def _render(body_html, cur_ord, auto=False):
     with _LOCK:
         pred = STATE["pred"]
@@ -375,6 +487,24 @@ def day(ordinal: int):
     view = _day_view(pred, ordinal)
     body = render_template_string(DAY_BODY, view=view)
     return _render(body, ordinal, auto=(ordinal == today))
+
+
+@app.route("/win5/<int:ordinal>")
+def win5_page(ordinal: int):
+    with _LOCK:
+        pred = STATE["pred"]
+    if pred is None or len(pred) == 0:
+        return _render("<div class='sub'>準備中…</div>", ordinal)
+    v = _win5_view(pred, ordinal)
+    if v is None:
+        body = ("<div class='sub'>この日はWIN5対象データ(NL_WF)が見つかりません。"
+                "取得層で重勝式レコードを取り込むと表示されます。</div>")
+    elif not v.get("available"):
+        body = ("<div class='sub'>WIN5対象5レースは検出しましたが、まだ予測データに"
+                "含まれていません(発走前の確定前など)。レース確定後に再表示されます。</div>")
+    else:
+        body = render_template_string(WIN5_BODY, v=v)
+    return _render(body, ordinal)
 
 
 @app.route("/summary")
