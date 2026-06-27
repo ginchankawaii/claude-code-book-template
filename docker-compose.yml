@@ -24,7 +24,9 @@ services:
     build: .
     image: keiba-analysis
     entrypoint: ["python", "-m", "keiba.web"]
-    command: ["--db", "/data/keiba.db", "--port", "8000"]
+    # --immutable: 取得層(realtime)が DB に書き込み中でも読めるよう immutable で開く
+    # (排他ロックを無視して現時点のスナップショットを読む。書き込みはしないので安全)
+    command: ["--db", "/data/keiba.db", "--port", "8000", "--immutable"]
     environment:
       - PYTHONUNBUFFERED=1     # 学習中の進捗ログを即表示
     ports:
