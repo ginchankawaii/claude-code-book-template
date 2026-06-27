@@ -113,6 +113,78 @@ def test_day_route_shows_allocation(state):
     assert "¥" in html and "EV" in html
 
 
+def test_startup_cache_loads_without_ingest(tmp_path):
+    import pickle
+    db = tmp_path / "k.db"
+    db.write_bytes(b"dummy")                       # cache-hit は stat しか見ない
+    cdir = tmp_path / "cache"; cdir.mkdir()
+    web.STATE.update(db=str(db), cache_dir=str(cdir), objective="binary", ev=1.15,
+                     immutable=False, predictor=None, pred=None, building=False)
+    full_key = f"{web._data_sig()}|{web._cfg_sig()}"
+    dummy = pd.DataFrame({"race_id": [1], "race_date": [1]})
+    with open(web._cache_file(), "wb") as fh:
+        pickle.dump({"full_key": full_key, "pred": dummy, "predictor": "M",
+                     "issues": [], "cutoff": 1, "today": 1, "updated": "00:00"}, fh)
+    web.rebuild(use_cache=True)                    # 取込せず即ロードされる
+    assert web.STATE["pred"] is not None and len(web.STATE["pred"]) == 1
+    assert "cache" in (web.STATE["updated"] or "")
+    web.STATE.update(cache_dir=None, db=None)
+
+
+def test_settle_best_bet_win_and_exotic():
+    # 1着=5番, 2着=3番, 3着=7番
+    g = pd.DataFrame({"post_position": [5, 3, 7, 1], "finish_pos": [1, 2, 3, 4]})
+    # 単勝 5番 的中(オッズ4.0払戻)
+    _, ret, hit = web._settle_best_bet(g, {"kind": "単勝", "sel": "5", "odds": 4.0})
+    assert hit and abs(ret - 4.0) < 1e-9
+    # 単勝 3番 は外れ(払戻0)
+    _, ret, hit = web._settle_best_bet(g, {"kind": "単勝", "sel": "3", "odds": 4.0})
+    assert not hit and ret == 0.0
+    # 馬連 5-3 的中、5-7 外れ
+    assert web._settle_best_bet(g, {"kind": "馬連", "sel": "5-3", "odds": 9.0})[2]
+    assert not web._settle_best_bet(g, {"kind": "馬連", "sel": "5-7", "odds": 9.0})[2]
+    # 三連複 5-3-7 的中、三連単 5→3→7 的中・3→5→7 外れ
+    assert web._settle_best_bet(g, {"kind": "三連複", "sel": "5-3-7", "odds": 30.0})[2]
+    assert web._settle_best_bet(g, {"kind": "三連単", "sel": "5→3→7", "odds": 99.0})[2]
+    assert not web._settle_best_bet(g, {"kind": "三連単", "sel": "3→5→7", "odds": 99.0})[2]
+
+
+def test_allocate_risk_controls():
+    races = [
+        {"cbval": "A", "label": "X 1R", "best_bet": {"kind": "単勝", "sel": "1", "odds": 5.0, "ev": 2.0}},
+        {"cbval": "B", "label": "X 2R", "best_bet": {"kind": "単勝", "sel": "3", "odds": 3.0, "ev": 1.5}},
+        {"cbval": "C", "label": "X 3R", "best_bet": {"kind": "単勝", "sel": "2", "odds": 4.0, "ev": 1.05}},
+    ]
+    picks = {"A", "B", "C"}
+    # 最低EV=1.4 → C(EV1.05)除外
+    a = web._allocate(races, picks, 10000, min_ev=1.4)
+    assert all("X 3R" != r["label"] for r in a["rows"]) and a["n_bet"] == 2
+    # 最大点数=1 → EV最大のA(EV2.0)だけ
+    a = web._allocate(races, picks, 10000, max_bets=1)
+    assert a["n_bet"] == 1 and a["rows"][0]["label"] == "X 1R"
+    # 1点上限30% → どの点も ¥3000 以下
+    a = web._allocate(races, picks, 10000, cap_pct=30)
+    assert all(r["amount"] <= 3000 for r in a["rows"])
+    # コピー文字列が金額入りで生成される
+    a = web._allocate(races, picks, 10000)
+    assert "¥" in a["copy"] and "X 1R" in a["copy"]
+
+
+def test_day_sort_ev_orders_overlays_first(state):
+    od = int(state["race_date"].max())
+    pred = state.copy()
+    # 阪神2レース化: 1つに強い+EV、もう1つは無し
+    rid = 202610020112
+    pred.loc[(pred["race_id"] == rid) & (pred["post_position"] == 1),
+             ["win_prob", "odds", "ev", "bet"]] = [0.5, 6.0, 3.0, True]
+    web.STATE.update(pred=pred)
+    v = web._day_view(pred, od, sort="ev")
+    # 各会場で best_bet ありが先頭に来る
+    for ven in v["venues"]:
+        bets = [bool(r["best_bet"]) for r in ven["races"]]
+        assert bets == sorted(bets, reverse=True)
+
+
 def _win5_pred_frame():
     """WIN5対象5レース(全確定)。1着の馬番が分かる形で並べる。"""
     base = dt.date(2026, 6, 21).toordinal()

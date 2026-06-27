@@ -35,7 +35,8 @@ services:
     entrypoint: ["python", "-m", "keiba.web"]
     # --immutable: 取得層(realtime)が DB に書き込み中でも読めるよう immutable で開く
     # (排他ロックを無視して現時点のスナップショットを読む。書き込みはしないので安全)
-    command: ["--db", "/data/keiba.db", "--port", "8000", "--immutable"]
+    # --cache-dir /cache: 学習結果/予測をキャッシュし、再起動を数分→数秒にする
+    command: ["--db", "/data/keiba.db", "--port", "8000", "--immutable", "--cache-dir", "/cache"]
     environment:
       - PYTHONUNBUFFERED=1     # 学習中の進捗ログを即表示
     ports:
@@ -44,3 +45,4 @@ services:
       # 取得層が書いている本物の DB を読み取り専用(:ro)で直接読む。
       # 既定 ../jrvltsql/data。別の場所なら KEIBA_DB_DIR で上書き。
       - ${KEIBA_DB_DIR:-../jrvltsql/data}:/data:ro
+      - ./model_cache:/cache   # 学習キャッシュ(書き込み可・再起動間で保持)

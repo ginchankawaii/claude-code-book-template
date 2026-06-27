@@ -18,6 +18,9 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import hashlib
+import os
+import pickle
 import threading
 import time
 
@@ -28,7 +31,7 @@ from flask import Flask, redirect, render_template_string, request, url_for
 from . import win5
 from .betadvice import advise_race
 from .exotic_odds import load_exotic_odds_for_day
-from .features import build_features
+from .features import FEATURE_COLUMNS, build_features
 from .ingest import IngestBackend, validate_runners
 from .model import ModelConfig
 from .predict import PredictConfig, fit_predictor, predict_range
@@ -42,8 +45,29 @@ WD = "月火水木金土日"
 STATE = {"db": None, "kind": "sqlite", "predictor": None, "pred": None,
          "updated": None, "issues": [], "building": False, "error": None,
          "objective": "binary", "ev": 1.15, "refresh_sec": 90, "cutoff": None,
-         "today": None, "immutable": False, "odds_cache": {}, "win5_cache": {}}
+         "today": None, "immutable": False, "odds_cache": {}, "win5_cache": {},
+         "cache_dir": None}
 _LOCK = threading.Lock()
+
+
+def _cache_file() -> str | None:
+    d = STATE.get("cache_dir")
+    return os.path.join(d, "web_cache.pkl") if d else None
+
+
+def _data_sig() -> str | None:
+    """DB の変更署名(mtime+size)。読み込み前に安価に取れる。"""
+    try:
+        st = os.stat(STATE["db"])
+        return f"{int(st.st_mtime)}-{st.st_size}"
+    except (OSError, TypeError):
+        return None
+
+
+def _cfg_sig() -> str:
+    """学習・特徴量の構成署名。これが変われば学習し直す。"""
+    feat = hashlib.md5(",".join(FEATURE_COLUMNS).encode()).hexdigest()[:8]
+    return f"{STATE['objective']}-{STATE['ev']}-{int(bool(STATE.get('immutable')))}-{feat}"
 
 
 def _venue(race_id) -> str:
@@ -65,12 +89,36 @@ def _date_label(ordinal) -> str:
         return str(ordinal)
 
 
-def rebuild(retrain: bool = False) -> None:
+def rebuild(retrain: bool = False, use_cache: bool = False) -> None:
+    """データ取込→学習→予測。--cache-dir 指定時はキャッシュで高速化する。
+
+    * フルキャッシュ(use_cache=True・起動時): DB が前回と未変更なら pred ごと即
+      ロードし、取込も学習も完全スキップ(起動が数秒)。
+    * 学習キャッシュ(常時): cutoff/構成が同じなら学習済みモデルを再利用し fit を
+      スキップ(更新時の再取込だけで済む)。
+    """
     with _LOCK:
         if STATE["building"]:
             return
         STATE["building"] = True
+    cf = _cache_file()
+    full_key = f"{_data_sig()}|{_cfg_sig()}"
     try:
+        # 1) フルキャッシュ: DB 未変更なら何もせず pred を復元(起動を数秒に)
+        if use_cache and cf and _data_sig() and os.path.exists(cf):
+            try:
+                with open(cf, "rb") as fh:
+                    C = pickle.load(fh)
+                if C.get("full_key") == full_key and C.get("pred") is not None:
+                    with _LOCK:
+                        STATE.update(predictor=C["predictor"], pred=C["pred"],
+                                     issues=C["issues"], cutoff=C["cutoff"],
+                                     today=C["today"], odds_cache={}, win5_cache={},
+                                     updated=C["updated"] + " (cache)", error=None)
+                    return
+            except Exception:
+                pass   # キャッシュ破損等は無視してフル再構築へ
+
         runners, _ = IngestBackend(STATE["db"], kind=STATE["kind"],
                                    include_realtime=True,
                                    immutable=STATE.get("immutable", False)).load()
@@ -80,20 +128,35 @@ def rebuild(retrain: bool = False) -> None:
         max_ord = int(feat["race_date"].max())
         year = _dt.date.fromordinal(max_ord).year
         cutoff = _dt.date(year, 1, 1).toordinal()
-        if retrain or STATE["predictor"] is None:
-            STATE["predictor"] = fit_predictor(
+        pred_key = f"{cutoff}|{_cfg_sig()}"
+        # 2) 学習キャッシュ: cutoff/構成が同じならモデル再利用(fit をスキップ)
+        predictor = STATE["predictor"]
+        if not retrain and predictor is None and cf and os.path.exists(cf):
+            try:
+                with open(cf, "rb") as fh:
+                    C = pickle.load(fh)
+                if C.get("pred_key") == pred_key:
+                    predictor = C["predictor"]
+            except Exception:
+                predictor = None
+        if retrain or predictor is None:
+            predictor = fit_predictor(
                 feat, ModelConfig(objective=STATE["objective"]),
                 PredictConfig(ev_threshold=STATE["ev"]), eval_date=cutoff)
-        pred = predict_range(STATE["predictor"], feat, cutoff, max_ord + 1)
+        pred = predict_range(predictor, feat, cutoff, max_ord + 1)
+        updated = _dt.datetime.now().strftime("%H:%M:%S")
         with _LOCK:
-            STATE["pred"] = pred
-            STATE["issues"] = issues
-            STATE["cutoff"] = cutoff
-            STATE["today"] = max_ord
-            STATE["odds_cache"] = {}   # 当日ライブオッズが変わるのでクリア
-            STATE["win5_cache"] = {}
-            STATE["updated"] = _dt.datetime.now().strftime("%H:%M:%S")
-            STATE["error"] = None
+            STATE.update(predictor=predictor, pred=pred, issues=issues, cutoff=cutoff,
+                         today=max_ord, odds_cache={}, win5_cache={},
+                         updated=updated, error=None)
+        if cf:   # キャッシュ保存(次回の高速起動用)
+            try:
+                with open(cf, "wb") as fh:
+                    pickle.dump({"full_key": full_key, "pred_key": pred_key,
+                                 "predictor": predictor, "pred": pred, "issues": issues,
+                                 "cutoff": cutoff, "today": max_ord, "updated": updated}, fh)
+            except Exception:
+                pass
     except Exception as exc:  # pragma: no cover
         with _LOCK:
             STATE["error"] = f"{type(exc).__name__}: {exc}"
@@ -243,33 +306,92 @@ def _best_bet(adv: dict) -> dict | None:
     return max(cands, key=lambda c: c["ev"]) if cands else None
 
 
-def _allocate(all_races: list, picks: set, budget: int) -> dict:
+def _allocate(all_races: list, picks: set, budget: int, min_ev: float = 1.0,
+              cap_pct: int = 100, max_bets: int = 0) -> dict:
     """選んだレースの最良買い目に、予算を分数ケリー(エッジ比例)で配分する。
 
     各買い目のケリー比率 f=(EV-1)/(オッズ-1) に比例させ、合計が予算になるよう
-    正規化して ¥100 単位に丸める。+EV の無いレースは配分しない。
+    正規化して ¥100 単位に丸める。リスク制御:
+      min_ev : この EV 未満の買い目は除外
+      cap_pct: 1点あたり予算の何%まで(集中しすぎ防止)
+      max_bets: 点数の上限(EV上位のみ。0=無制限)
     """
     chosen = [(r, r["best_bet"]) for r in all_races
-              if r.get("cbval") in picks and r.get("best_bet")]
+              if r.get("cbval") in picks and r.get("best_bet")
+              and r["best_bet"]["ev"] >= min_ev]
+    chosen.sort(key=lambda rb: -rb[1]["ev"])
+    if max_bets and len(chosen) > max_bets:
+        chosen = chosen[:max_bets]
     fs = [max(0.0, (b["ev"] - 1.0) / (b["odds"] - 1.0)) for _, b in chosen]
     tot = sum(fs)
+    cap = (int(budget * cap_pct / 100) // 100) * 100 if cap_pct < 100 else budget
     rows, total = [], 0
     if budget > 0 and tot > 0:
         for (r, b), f in zip(chosen, fs):
-            amt = int(round(budget * f / tot / 100.0)) * 100
+            amt = min(int(round(budget * f / tot / 100.0)) * 100, cap)
             if amt <= 0:
                 continue
             rows.append({"label": r["label"], "kind": b["kind"], "sel": b["sel"],
                          "odds": b["odds"], "ev": b["ev"], "amount": amt})
             total += amt
     rows.sort(key=lambda x: -x["amount"])
+    copy = "\n".join(f"{r['label']} {r['kind']} {r['sel']} ¥{r['amount']:,}" for r in rows)
     return {"rows": rows, "total": total, "leftover": max(0, budget - total),
             "requested": bool(picks) and budget > 0,
-            "n_picked": len(picks), "n_bet": len(rows)}
+            "n_picked": len(picks), "n_bet": len(rows), "copy": copy}
+
+
+def _settle_best_bet(g: pd.DataFrame, bb: dict) -> tuple:
+    """確定レースの推奨買い目(best_bet)を清算し (賭金=1.0, 払戻, 的中) を返す。
+
+    払戻は表示したオッズ(実オッズ)。連系は着順から的中判定する(ペーパー成績用)。
+    """
+    fin = {}
+    for r in g.itertuples():
+        try:
+            fin[int(r.finish_pos)] = int(r.post_position)   # 着順 -> 馬番
+        except (ValueError, TypeError):
+            continue
+    w1, w2, w3 = fin.get(1), fin.get(2), fin.get(3)
+    try:
+        parts = [int(x) for x in bb["sel"].replace("→", "-").split("-")]
+    except ValueError:
+        return 1.0, 0.0, False
+    k, hit = bb["kind"], False
+    if k == "単勝":
+        hit = bool(parts and parts[0] == w1)
+    elif k == "馬連":
+        hit = None not in (w1, w2) and set(parts) == {w1, w2}
+    elif k == "ワイド":
+        top3 = {w1, w2, w3} - {None}
+        hit = len(parts) == 2 and all(p in top3 for p in parts)
+    elif k == "馬単":
+        hit = None not in (w1, w2) and parts == [w1, w2]
+    elif k == "三連複":
+        hit = None not in (w1, w2, w3) and set(parts) == {w1, w2, w3}
+    elif k == "三連単":
+        hit = None not in (w1, w2, w3) and parts == [w1, w2, w3]
+    odds = bb.get("odds") or 0.0
+    return 1.0, (float(odds) if hit else 0.0), bool(hit)
+
+
+def _win5_rec(pred: pd.DataFrame, day_ord: int) -> dict | None:
+    """WIN5対象日なら推奨プラン(金額・点数)を返す。配分パネルに統合表示する。"""
+    if _win5_designated(day_ord) is None:
+        return None
+    try:
+        v = _win5_view(pred, day_ord)
+    except Exception:
+        return None
+    if not v or not v.get("available"):
+        return None
+    return {"cost": v["rec"]["cost_yen"], "points": v["rec"]["points"],
+            "hit": v["rec"]["hit_prob"]}
 
 
 def _day_view(pred: pd.DataFrame, day_ord: int, picks: set | None = None,
-              budget: int = 10000, submitted: bool = False) -> dict:
+              budget: int = 10000, submitted: bool = False, sort: str = "num",
+              min_ev: float = 1.0, cap_pct: int = 100, max_bets: int = 0) -> dict:
     sub = pred[pred["race_date"] == day_ord]
     day_odds = _day_odds(day_ord)
     picks = picks or set()
@@ -294,14 +416,20 @@ def _day_view(pred: pd.DataFrame, day_ord: int, picks: set | None = None,
                 "rows": [_row_view(h) for _, h in g.head(8).iterrows()], "advice": adv}
         venues.setdefault(_venue(rid), []).append(race)
     for v in venues:
-        venues[v].sort(key=lambda r: r["num"])
+        if sort == "ev":   # おすすめ順: 妙味(+EV)レースを EV 高い順に上へ
+            venues[v].sort(key=lambda r: (0 if r["best_bet"] else 1,
+                                          -(r["best_bet"]["ev"] if r["best_bet"] else 0)))
+        else:
+            venues[v].sort(key=lambda r: r["num"])
     ordered = [{"venue": v, "races": venues[v]} for v in sorted(venues)]
     all_races = [r for v in ordered for r in v["races"]]
     eff_picks = picks if submitted else {r["cbval"] for r in all_races if r["best_bet"]}
-    alloc = _allocate(all_races, eff_picks, budget)
+    alloc = _allocate(all_races, eff_picks, budget, min_ev, cap_pct, max_bets)
     return {"day_ord": day_ord, "day_label": _date_label(day_ord), "venues": ordered,
             "is_today": day_ord == STATE["today"], "budget": budget, "alloc": alloc,
-            "win5": _win5_designated(day_ord) is not None}
+            "sort": sort, "min_ev": min_ev, "cap_pct": cap_pct, "max_bets": max_bets,
+            "win5": _win5_designated(day_ord) is not None,
+            "win5_rec": _win5_rec(pred, day_ord)}
 
 
 def _summary_view(pred: pd.DataFrame) -> dict:
@@ -327,6 +455,18 @@ def _summary_view(pred: pd.DataFrame) -> dict:
         out["ev_n"] = int(len(bets))
         out["ev_roi"] = float(bret.sum() / len(bets))
         out["ev_hit"] = float((bets["finish_pos"] == 1).mean())
+    # ペーパー配分成績: 各確定レースの推奨買い目(best_bet)を flat ¥1 で清算した通算
+    pn, ph, pret = 0, 0, 0.0
+    for od, dg in fin.groupby("race_date"):
+        dodds = _day_odds(int(od))
+        for rid, g in dg.groupby("race_id", sort=False):
+            g = g.sort_values("rank")
+            bb = _best_bet(advise_race(g, dodds.get(_rid_int(rid))))
+            if not bb:
+                continue
+            _, ret, hit = _settle_best_bet(g, bb)
+            pn += 1; pret += ret; ph += 1 if hit else 0
+    out["port"] = {"n": pn, "hit": ph / pn, "roi": pret / pn} if pn else None
     # 月別
     picks["month"] = picks["race_date"].map(lambda o: _dt.date.fromordinal(int(o)).month)
     for m, g in picks.groupby("month"):
@@ -452,7 +592,10 @@ DAY_BODY = """
 <input type="hidden" name="submitted" value="1">
 <div class="races">
   <h2 style="margin:6px 0">{{view.day_label}} {% if view.is_today %}<span class="sub">(本日)</span>{% endif %}
-    {% if view.win5 %}<a class="btn" style="font-size:12px;padding:4px 10px;margin-left:8px;background:#7a3df4" href="{{url_for('win5_page', ordinal=view.day_ord)}}">🎯 WIN5予想</a>{% endif %}</h2>
+    {% if view.win5 %}<a class="btn" style="font-size:12px;padding:4px 10px;margin-left:8px;background:#7a3df4" href="{{url_for('win5_page', ordinal=view.day_ord)}}">🎯 WIN5予想</a>{% endif %}
+    <span class="sub" style="margin-left:10px;font-weight:400">表示:
+      <a href="{{url_for('day',ordinal=view.day_ord,budget=view.budget)}}" style="{{'font-weight:700;color:#fff' if view.sort!='ev'}}">レース順</a> ·
+      <a href="{{url_for('day',ordinal=view.day_ord,budget=view.budget,sort='ev')}}" style="{{'font-weight:700;color:#fff' if view.sort=='ev'}}">おすすめ順(EV高い順)</a></span></h2>
   {% for v in view.venues %}
     <div class="vsec"><h2>{{v.venue}}</h2><div class="cards">
       {% for r in v.races %}{{ race_card(r) }}{% endfor %}
@@ -461,12 +604,29 @@ DAY_BODY = """
 </div>
 <aside class="slip">
   <div class="panel slipbox">
+    <input type="hidden" name="sort" value="{{view.sort}}">
     <div style="font-weight:700;margin-bottom:8px">💰 投資配分</div>
     <label class="sub">予算(円)</label>
     <input class="bin" type="number" name="budget" value="{{view.budget}}" min="100" step="1000" inputmode="numeric">
+    <details style="margin-top:8px" {{'open' if view.min_ev>1.0 or view.cap_pct<100 or view.max_bets}}>
+      <summary class="sub" style="cursor:pointer">リスク制御</summary>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+        <label class="sub">最低EV<input class="bin" type="number" name="min_ev" value="{{'%.2f'|format(view.min_ev)}}" min="1" max="100" step="0.05"></label>
+        <label class="sub">1点上限%<input class="bin" type="number" name="cap_pct" value="{{view.cap_pct}}" min="1" max="100" step="5"></label>
+        <label class="sub">最大点数<input class="bin" type="number" name="max_bets" value="{{view.max_bets}}" min="0" max="200" step="1"></label>
+      </div>
+      <div class="sub" style="margin-top:4px">最低EV未満は除外/1点に予算の上限%/点数の上限(0=無制限)</div>
+    </details>
     <button class="btn" style="width:100%;margin-top:8px">この予算で配分</button>
     <div class="sub" style="margin-top:6px;line-height:1.5">レースを ☑ → 予算入力 → 配分。
-      <b>妙味</b>(+EV)の買い目だけに、エッジ比例(分数ケリー)で割り振る。</div>
+      <b>妙味</b>(+EV)買い目に、エッジ比例(分数ケリー)で割り振る。</div>
+    {% if view.win5_rec %}
+      <div class="panel" style="margin:8px 0;padding:7px 9px;background:#1a1330;border-color:#3a2a5a">
+        <a href="{{url_for('win5_page',ordinal=view.day_ord)}}" style="font-weight:700;color:#c9b3ff">🎯 WIN5</a>
+        <span class="sub">推奨 ¥{{'{:,}'.format(view.win5_rec.cost)}}({{view.win5_rec.points}}点・的中{{'%.2f'|format(view.win5_rec.hit*100)}}%)</span>
+        <div class="sub" style="margin-top:2px">※ WIN5は別枠予算(配分合計には含めない)</div>
+      </div>
+    {% endif %}
     {% if view.alloc.rows %}
       <table style="margin-top:10px"><tr><th class="l">レース</th><th class="l">買い目</th><th>金額</th></tr>
       {% for a in view.alloc.rows %}
@@ -480,8 +640,12 @@ DAY_BODY = """
         {% if view.alloc.leftover %}<div class="sub">余り ¥{{'{:,}'.format(view.alloc.leftover)}}</div>{% endif %}
       </div>
       <div class="sub" style="margin-top:6px">{{view.alloc.n_bet}}点 / 選択{{view.alloc.n_picked}}レース。¥100単位。</div>
+      <label class="sub" style="display:block;margin-top:8px">買い目リスト(コピー用)</label>
+      <textarea class="bin" rows="{{view.alloc.rows|length + 1}}" readonly onclick="this.select()"
+        style="font-size:12px;resize:vertical">{{view.alloc.copy}}
+合計 ¥{{'{:,}'.format(view.alloc.total)}}</textarea>
     {% elif view.alloc.requested %}
-      <div class="sub" style="margin-top:10px">選んだレースに妙味(+EV)買い目がありません。☑を増やすか、実オッズ(O1〜O6)取得を確認。</div>
+      <div class="sub" style="margin-top:10px">選んだレースに条件を満たす妙味(+EV)買い目がありません。☑/最低EVを調整、または実オッズ(O1〜O6)取得を確認。</div>
     {% else %}
       <div class="sub" style="margin-top:10px">妙味のあるレースを既定で ☑ 済み。予算を入れて「配分」。</div>
     {% endif %}
@@ -502,6 +666,14 @@ SUMMARY_BODY = """
   {% if s.honmei_roi is not none %}<div>本命 単勝回収率 <b>{{'%.0f'|format(s.honmei_roi*100)}}%</b></div>{% endif %}
   {% if s.ev_roi is not none %}<div>EV買い目 回収率 <b>{{'%.0f'|format(s.ev_roi*100)}}%</b> <span class="sub">({{s.ev_n}}点/的中{{'%.0f'|format(s.ev_hit*100)}}%)</span></div>{% endif %}
 </div>
+{% if s.port %}
+<div class="panel sum">
+  <div>📋 ペーパー配分成績 <span class="sub">(各レース推奨買い目をflat¥1)</span></div>
+  <div>点数 <b>{{s.port.n}}</b></div>
+  <div>的中率 <b>{{'%.1f'|format(s.port.hit*100)}}%</b></div>
+  <div>回収率 <b>{{'%.0f'|format(s.port.roi*100)}}%</b></div>
+</div>
+{% endif %}
 <div class="panel">
   <div style="font-weight:700;margin-bottom:6px">月別(本命単勝)</div>
   <table style="max-width:520px"><tr><th class="l">月</th><th>レース</th><th>的中率</th><th>回収率</th></tr>
@@ -582,7 +754,15 @@ def day(ordinal: int):
     budget = request.args.get("budget", type=int) or 10000
     budget = max(0, min(budget, 100_000_000))
     picks = set(request.args.getlist("pick"))
-    view = _day_view(pred, ordinal, picks=picks, budget=budget, submitted=submitted)
+    sort = "ev" if request.args.get("sort") == "ev" else "num"
+    min_ev = request.args.get("min_ev", type=float)
+    min_ev = 1.0 if min_ev is None else max(1.0, min(min_ev, 100.0))
+    cap_pct = request.args.get("cap_pct", type=int) or 100
+    cap_pct = max(1, min(cap_pct, 100))
+    max_bets = request.args.get("max_bets", type=int) or 0
+    max_bets = max(0, min(max_bets, 200))
+    view = _day_view(pred, ordinal, picks=picks, budget=budget, submitted=submitted,
+                     sort=sort, min_ev=min_ev, cap_pct=cap_pct, max_bets=max_bets)
     body = render_template_string(DAY_BODY, view=view)
     # 配分フォーム送信時は自動更新(meta refresh)を切る(入力が消えないように)
     return _render(body, ordinal, auto=(ordinal == today and not submitted))
@@ -639,11 +819,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--reingest", type=int, default=240)
     p.add_argument("--immutable", action="store_true",
                    help="realtime 取り込みが DB をロック中でも読めるよう immutable オープンする")
+    p.add_argument("--cache-dir", default=None,
+                   help="学習結果/予測のキャッシュ保存先。指定すると再起動が数分→数秒に")
     args = p.parse_args(argv)
+    if args.cache_dir:
+        os.makedirs(args.cache_dir, exist_ok=True)
     STATE.update(db=args.db, kind=args.db_kind, objective=args.objective,
-                 ev=args.ev, refresh_sec=args.refresh, immutable=args.immutable)
-    print("初回の学習中…(2026を除外して学習・数分)", flush=True)
-    rebuild(retrain=True)
+                 ev=args.ev, refresh_sec=args.refresh, immutable=args.immutable,
+                 cache_dir=args.cache_dir)
+    print("準備中…(初回は学習で数分。キャッシュ有効かつDB未変更なら数秒)", flush=True)
+    rebuild(use_cache=True)
     print(f"準備完了。ブラウザで http://localhost:{args.port} を開いてください。", flush=True)
     threading.Thread(target=_auto_refresh_loop, args=(args.reingest,), daemon=True).start()
     app.run(host=args.host, port=args.port, debug=False)
