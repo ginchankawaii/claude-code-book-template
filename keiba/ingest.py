@@ -49,6 +49,9 @@ O1_FIELDS = {  # 単勝オッズ(馬番別)
 TABLE_MAP = {"se": "NL_SE", "ra": "NL_RA", "o1": "NL_O1", "hr": "NL_HR",
              "rt_se": "RT_SE", "rt_ra": "RT_RA", "rt_odds": "TS_SOKUHO_O1"}
 
+# 中央競馬(JRA)の競馬場コード。これ以外(30番台〜=地方NAR, 50番台〜=海外)は除外する。
+CENTRAL_JYO = {f"{i:02d}" for i in range(1, 11)}  # 01..10 札幌〜小倉
+
 
 @dataclass
 class IngestConfig:
@@ -59,6 +62,8 @@ class IngestConfig:
     # 生の JV-Data 整数(×0.1)を読む実装に差し替える場合は 10.0 にする。
     odds_scale: float = 1.0
     futan_scale: float = 1.0
+    # 中央競馬(JRA)のみに絞る。地方競馬(NAR)・海外を学習/予測から除外する。
+    central_only: bool = True
 
 
 def _col(df: pd.DataFrame, name: str):
@@ -172,6 +177,13 @@ def normalize(se: pd.DataFrame, ra: pd.DataFrame, o1: pd.DataFrame | None = None
 
     races = ra_attr.copy()
     races["race_date"] = se.groupby("race_id")["race_date"].first().reindex(races["race_id"]).to_numpy()
+
+    # 中央競馬(JRA)のみに絞る: race_id の [4:6] が競馬場コード。
+    # 地方(NAR)が混ざると学習が薄まり、race_id 衝突で「1着が複数」も起きるため除外。
+    if cfg.central_only:
+        out = out[out["race_id"].astype(str).str[4:6].isin(CENTRAL_JYO)]
+        races = races[races["race_id"].astype(str).str[4:6].isin(CENTRAL_JYO)]
+
     return out.reset_index(drop=True), races.reset_index(drop=True)
 
 
