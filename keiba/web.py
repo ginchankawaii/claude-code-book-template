@@ -23,7 +23,7 @@ import time
 
 import numpy as np
 import pandas as pd
-from flask import Flask, redirect, render_template_string, url_for
+from flask import Flask, redirect, render_template_string, request, url_for
 
 from . import win5
 from .betadvice import advise_race
@@ -226,9 +226,53 @@ def _win5_view(pred: pd.DataFrame, day_ord: int) -> dict | None:
             "all_finished": all_fin, "won": won}
 
 
-def _day_view(pred: pd.DataFrame, day_ord: int) -> dict:
+def _best_bet(adv: dict) -> dict | None:
+    """1レースのアドバイスから、実オッズで +EV の最良買い目を1つ選ぶ(配分の単位)。
+
+    単勝の妙味馬と、実オッズで妙味(buy)の出た連系を候補にし、EV最大を返す。
+    """
+    cands = []
+    for b in adv.get("tan_bets", []):
+        if b.get("ev") and b.get("odds") and b["odds"] > 1:
+            cands.append({"kind": "単勝", "sel": str(b["post"]),
+                          "odds": float(b["odds"]), "ev": float(b["ev"])})
+    for e in adv.get("exotic", []):
+        if e.get("buy") and e.get("odds") and e.get("ev") and e["odds"] > 1:
+            cands.append({"kind": e["kind"], "sel": e["sel"],
+                          "odds": float(e["odds"]), "ev": float(e["ev"])})
+    return max(cands, key=lambda c: c["ev"]) if cands else None
+
+
+def _allocate(all_races: list, picks: set, budget: int) -> dict:
+    """選んだレースの最良買い目に、予算を分数ケリー(エッジ比例)で配分する。
+
+    各買い目のケリー比率 f=(EV-1)/(オッズ-1) に比例させ、合計が予算になるよう
+    正規化して ¥100 単位に丸める。+EV の無いレースは配分しない。
+    """
+    chosen = [(r, r["best_bet"]) for r in all_races
+              if r.get("cbval") in picks and r.get("best_bet")]
+    fs = [max(0.0, (b["ev"] - 1.0) / (b["odds"] - 1.0)) for _, b in chosen]
+    tot = sum(fs)
+    rows, total = [], 0
+    if budget > 0 and tot > 0:
+        for (r, b), f in zip(chosen, fs):
+            amt = int(round(budget * f / tot / 100.0)) * 100
+            if amt <= 0:
+                continue
+            rows.append({"label": r["label"], "kind": b["kind"], "sel": b["sel"],
+                         "odds": b["odds"], "ev": b["ev"], "amount": amt})
+            total += amt
+    rows.sort(key=lambda x: -x["amount"])
+    return {"rows": rows, "total": total, "leftover": max(0, budget - total),
+            "requested": bool(picks) and budget > 0,
+            "n_picked": len(picks), "n_bet": len(rows)}
+
+
+def _day_view(pred: pd.DataFrame, day_ord: int, picks: set | None = None,
+              budget: int = 10000, submitted: bool = False) -> dict:
     sub = pred[pred["race_date"] == day_ord]
     day_odds = _day_odds(day_ord)
+    picks = picks or set()
     venues = {}
     for rid, g in sub.groupby("race_id", sort=False):
         g = g.sort_values("rank")
@@ -240,16 +284,23 @@ def _day_view(pred: pd.DataFrame, day_ord: int) -> dict:
             pf = None if fp != fp else int(fp)
             status = "的中" if pf == 1 else ("複勝圏" if (pf is not None and pf <= 3) else "外")
         adv = advise_race(g, day_odds.get(_rid_int(rid)))
-        race = {"race_id": rid, "num": _racenum(rid), "label": f"{_venue(rid)} {_racenum(rid)}R",
-                "finished": finished, "status": status,
-                "rows": [_row_view(h) for _, h in g.head(8).iterrows()],
-                "advice": adv}
+        bb = _best_bet(adv)
+        cbval = str(rid)
+        # 送信済みなら ☑ 状態を尊重。未送信(初回)は +EV のあるレースを既定 ☑。
+        checked = (cbval in picks) if submitted else (bb is not None)
+        race = {"race_id": rid, "cbval": cbval, "num": _racenum(rid),
+                "label": f"{_venue(rid)} {_racenum(rid)}R", "finished": finished,
+                "status": status, "checked": checked, "best_bet": bb,
+                "rows": [_row_view(h) for _, h in g.head(8).iterrows()], "advice": adv}
         venues.setdefault(_venue(rid), []).append(race)
     for v in venues:
         venues[v].sort(key=lambda r: r["num"])
     ordered = [{"venue": v, "races": venues[v]} for v in sorted(venues)]
+    all_races = [r for v in ordered for r in v["races"]]
+    eff_picks = picks if submitted else {r["cbval"] for r in all_races if r["best_bet"]}
+    alloc = _allocate(all_races, eff_picks, budget)
     return {"day_ord": day_ord, "day_label": _date_label(day_ord), "venues": ordered,
-            "is_today": day_ord == STATE["today"],
+            "is_today": day_ord == STATE["today"], "budget": budget, "alloc": alloc,
             "win5": _win5_designated(day_ord) is not None}
 
 
@@ -335,6 +386,13 @@ BASE_CSS = """
  .sum{display:flex;gap:18px;flex-wrap:wrap;font-size:13px} .sum b{font-size:18px;color:#fff}
  a.btn{display:inline-block;background:var(--accent);color:#fff;padding:6px 12px;border-radius:8px;font-size:13px}
  .foot{color:var(--mut);font-size:11px;margin-top:18px;line-height:1.7}
+ .daygrid{display:flex;gap:16px;align-items:flex-start}
+ .daygrid .races{flex:1;min-width:0} .daygrid .slip{flex:0 0 244px;width:244px}
+ .slipbox{position:sticky;top:60px}
+ .bin{width:100%;padding:7px 9px;border-radius:8px;border:1px solid var(--line);background:#0f141c;color:#e6e6e6;font-size:15px}
+ button.btn{border:none;cursor:pointer;font-family:inherit}
+ input[type=checkbox]{accent-color:var(--accent);margin-right:5px;vertical-align:middle;width:15px;height:15px}
+ @media(max-width:900px){.daygrid{flex-direction:column}.daygrid .slip{width:auto;flex:none}.slipbox{position:static}}
 """
 
 LAYOUT = """
@@ -369,7 +427,8 @@ LAYOUT = """
 DAY_BODY = """
 {% macro race_card(r) %}
   <div class="race">
-    <h3><span>{{r.label}}</span>
+    <h3><span><label style="cursor:pointer"><input type="checkbox" name="pick" value="{{r.cbval}}" {{'checked' if r.checked}}>{{r.label}}</label>
+      {% if r.best_bet %}<span class="badge b-top3" style="margin-left:4px" title="実オッズで+EVの妙味買い目あり">妙味</span>{% endif %}</span>
       <span class="badge {{'b-win' if r.status=='的中' else 'b-top3' if r.status=='複勝圏' else 'b-miss' if r.status=='外' else 'b-pre'}}">{{r.status}}</span></h3>
     <table><tr><th>予</th><th class="l">馬番</th><th>勝率</th><th>オッズ</th><th>EV</th>{% if r.finished %}<th>着</th>{% endif %}</tr>
     {% for h in r.rows %}
@@ -389,13 +448,48 @@ DAY_BODY = """
     </div>
   </div>
 {% endmacro %}
-<h2 style="margin:6px 0">{{view.day_label}} {% if view.is_today %}<span class="sub">(本日・自動更新)</span>{% endif %}
-  {% if view.win5 %}<a class="btn" style="font-size:12px;padding:4px 10px;margin-left:8px;background:#7a3df4" href="{{url_for('win5_page', ordinal=view.day_ord)}}">🎯 WIN5予想</a>{% endif %}</h2>
-{% for v in view.venues %}
-  <div class="vsec"><h2>{{v.venue}}</h2><div class="cards">
-    {% for r in v.races %}{{ race_card(r) }}{% endfor %}
-  </div></div>
-{% endfor %}
+<form method="get" action="{{url_for('day', ordinal=view.day_ord)}}" class="daygrid">
+<input type="hidden" name="submitted" value="1">
+<div class="races">
+  <h2 style="margin:6px 0">{{view.day_label}} {% if view.is_today %}<span class="sub">(本日)</span>{% endif %}
+    {% if view.win5 %}<a class="btn" style="font-size:12px;padding:4px 10px;margin-left:8px;background:#7a3df4" href="{{url_for('win5_page', ordinal=view.day_ord)}}">🎯 WIN5予想</a>{% endif %}</h2>
+  {% for v in view.venues %}
+    <div class="vsec"><h2>{{v.venue}}</h2><div class="cards">
+      {% for r in v.races %}{{ race_card(r) }}{% endfor %}
+    </div></div>
+  {% endfor %}
+</div>
+<aside class="slip">
+  <div class="panel slipbox">
+    <div style="font-weight:700;margin-bottom:8px">💰 投資配分</div>
+    <label class="sub">予算(円)</label>
+    <input class="bin" type="number" name="budget" value="{{view.budget}}" min="100" step="1000" inputmode="numeric">
+    <button class="btn" style="width:100%;margin-top:8px">この予算で配分</button>
+    <div class="sub" style="margin-top:6px;line-height:1.5">レースを ☑ → 予算入力 → 配分。
+      <b>妙味</b>(+EV)の買い目だけに、エッジ比例(分数ケリー)で割り振る。</div>
+    {% if view.alloc.rows %}
+      <table style="margin-top:10px"><tr><th class="l">レース</th><th class="l">買い目</th><th>金額</th></tr>
+      {% for a in view.alloc.rows %}
+        <tr><td class="l">{{a.label}}</td>
+          <td class="l">{{a.kind}} {{a.sel}}<br><span class="sub">{{'%.1f'|format(a.odds)}}倍・EV{{'%.2f'|format(a.ev)}}</span></td>
+          <td><b>¥{{'{:,}'.format(a.amount)}}</b></td></tr>
+      {% endfor %}
+      </table>
+      <div class="sum" style="margin-top:8px;font-size:12px">
+        <div>合計 <b>¥{{'{:,}'.format(view.alloc.total)}}</b></div>
+        {% if view.alloc.leftover %}<div class="sub">余り ¥{{'{:,}'.format(view.alloc.leftover)}}</div>{% endif %}
+      </div>
+      <div class="sub" style="margin-top:6px">{{view.alloc.n_bet}}点 / 選択{{view.alloc.n_picked}}レース。¥100単位。</div>
+    {% elif view.alloc.requested %}
+      <div class="sub" style="margin-top:10px">選んだレースに妙味(+EV)買い目がありません。☑を増やすか、実オッズ(O1〜O6)取得を確認。</div>
+    {% else %}
+      <div class="sub" style="margin-top:10px">妙味のあるレースを既定で ☑ 済み。予算を入れて「配分」。</div>
+    {% endif %}
+    <div class="sub" style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">
+      ※ 紙上の目安。資金管理は自己責任。控除率の壁あり。</div>
+  </div>
+</aside>
+</form>
 """
 
 SUMMARY_BODY = """
@@ -484,9 +578,14 @@ def day(ordinal: int):
         pred = STATE["pred"]; today = STATE["today"]
     if pred is None or len(pred) == 0:
         return _render("<div class='sub'>準備中…</div>", ordinal)
-    view = _day_view(pred, ordinal)
+    submitted = request.args.get("submitted") is not None
+    budget = request.args.get("budget", type=int) or 10000
+    budget = max(0, min(budget, 100_000_000))
+    picks = set(request.args.getlist("pick"))
+    view = _day_view(pred, ordinal, picks=picks, budget=budget, submitted=submitted)
     body = render_template_string(DAY_BODY, view=view)
-    return _render(body, ordinal, auto=(ordinal == today))
+    # 配分フォーム送信時は自動更新(meta refresh)を切る(入力が消えないように)
+    return _render(body, ordinal, auto=(ordinal == today and not submitted))
 
 
 @app.route("/win5/<int:ordinal>")

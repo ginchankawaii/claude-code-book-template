@@ -73,6 +73,46 @@ def test_index_redirects_to_today(state):
     assert r.status_code in (301, 302)
 
 
+def test_best_bet_picks_max_ev():
+    adv = {"tan_bets": [{"post": 1, "odds": 5.0, "ev": 2.0}],
+           "exotic": [{"kind": "馬連", "sel": "1-2", "odds": 30.0,
+                       "prob": 0.05, "ev": 1.5, "buy": True}]}
+    b = web._best_bet(adv)
+    assert b["kind"] == "単勝" and abs(b["ev"] - 2.0) < 1e-9   # EV最大を選ぶ
+
+
+def test_best_bet_none_when_no_overlay():
+    assert web._best_bet({"tan_bets": [], "exotic": [{"kind": "馬連", "buy": False}]}) is None
+
+
+def test_allocate_kelly_proportional():
+    races = [
+        {"cbval": "A", "label": "X 1R", "best_bet": {"kind": "単勝", "sel": "1", "odds": 5.0, "ev": 2.0}},
+        {"cbval": "B", "label": "X 2R", "best_bet": {"kind": "単勝", "sel": "3", "odds": 3.0, "ev": 1.5}},
+        {"cbval": "C", "label": "X 3R", "best_bet": None},  # 妙味なし→配分されない
+    ]
+    a = web._allocate(races, {"A", "B", "C"}, 10000)
+    assert a["total"] <= 10000 and a["leftover"] == 10000 - a["total"]
+    # f_A=(2-1)/(5-1)=0.25, f_B=(1.5-1)/(3-1)=0.25 → 均等
+    amt = {r["label"]: r["amount"] for r in a["rows"]}
+    assert amt["X 1R"] == amt["X 2R"] and a["total"] == 10000
+    assert "X 3R" not in amt          # best_bet 無しは含まれない
+
+
+def test_day_route_shows_allocation(state):
+    od = int(state["race_date"].max())
+    # 阪神(発走前)レースに +EV の単勝が出るよう pred を差し替え
+    pred = state.copy()
+    rid = 202610020112
+    m = pred["race_id"] == rid
+    pred.loc[m & (pred["post_position"] == 1), ["win_prob", "odds", "ev", "bet"]] = [0.40, 5.0, 2.0, True]
+    web.STATE.update(pred=pred)
+    cli = web.app.test_client()
+    html = cli.get(f"/day/{od}?submitted=1&budget=10000&pick={rid}").get_data(as_text=True)
+    assert "投資配分" in html
+    assert "¥" in html and "EV" in html
+
+
 def _win5_pred_frame():
     """WIN5対象5レース(全確定)。1着の馬番が分かる形で並べる。"""
     base = dt.date(2026, 6, 21).toordinal()

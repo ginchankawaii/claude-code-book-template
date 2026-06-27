@@ -41,6 +41,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-enrich", action="store_true",
                    help="血統/データマイニング/オッズ時系列の強化を無効化(効果のA/B比較用)")
     p.add_argument("--no-audit", action="store_true", help="リーク監査をスキップ(高速)")
+    p.add_argument("--segments", action="store_true",
+                   help="C1エッジ探索: 条件別(人気帯/頭数)の回収率を輪切り表示")
     p.add_argument("--quiet", action="store_true", help="フォールド毎の進捗を出さない")
     args = p.parse_args(argv)
 
@@ -71,6 +73,9 @@ def main(argv: list[str] | None = None) -> int:
         verbose=not args.quiet,
     )
     print(format_report(result))
+    if args.segments:
+        from .segments import segment_report
+        print(segment_report(result.backtest.get("preds"), ev_threshold=args.ev))
     return 0
 
 
