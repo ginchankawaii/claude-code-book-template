@@ -80,11 +80,26 @@ def test_validate_clean():
 def test_validate_catches_duplicate_winner():
     se, ra, o1 = _jv_frames()
     runners, _ = normalize(se, ra, o1)
-    # 同一レースに2着→1着 を捏造(キー衝突等を模擬)
-    runners.loc[runners.index[2], "finish_pos"] = 1
-    runners.loc[runners.index[2], "is_win"] = 1.0
+    # race_id 衝突を模擬: 1レース内で着順表が丸ごと2重化(1着も2着も重複)。
+    rid = runners["race_id"].iloc[0]
+    g = runners[runners["race_id"] == rid].head(2).copy()
+    g["finish_pos"] = [1.0, 2.0]
+    runners = pd.concat([runners, g], ignore_index=True)
+    base = runners[runners["race_id"] == rid]
+    runners.loc[base.index[:2], "finish_pos"] = [1.0, 2.0]
     issues = validate_runners(runners)
     assert any("1着が複数" in s for s in issues)
+
+
+def test_validate_allows_dead_heat():
+    se, ra, o1 = _jv_frames()
+    runners, _ = normalize(se, ra, o1)
+    # 正規の同着: 1着が2頭(1着以外は重複しない) → 警告しない。
+    rid = runners["race_id"].iloc[0]
+    idx = runners[runners["race_id"] == rid].index[:2]
+    runners.loc[idx, "finish_pos"] = 1.0
+    issues = validate_runners(runners)
+    assert not any("1着が複数" in s for s in issues)
 
 
 def test_validate_catches_odds_scale():

@@ -201,8 +201,17 @@ def validate_runners(df: pd.DataFrame) -> list[str]:
     if "race_date" in df and df["race_date"].le(0).any():
         issues.append("race_date に不正値(<=0)がある(日付パース失敗 or Year/MonthDay 列名違い)")
     if "finish_pos" in df and df["finish_pos"].notna().any():
-        per_race_winner = df[df.finish_pos == 1].groupby("race_id").size()
-        if (per_race_winner > 1).any():
+        fin = df[df["finish_pos"].notna()]
+        multi_win = fin[fin["finish_pos"] == 1].groupby("race_id").size()
+        # 1着が2頭=JRAで稀に起きる正規の「同着」。これ自体は異常ではない。
+        # race_id 衝突なら別レースの着順表が丸ごと混ざるので 2着以降も重複する——
+        # 1着以外の着順も重複しているレースだけを「不整合」として警告する。
+        structural = [
+            rid for rid in multi_win[multi_win > 1].index
+            if (fin.loc[fin["race_id"] == rid, "finish_pos"]
+                .value_counts().drop(index=1, errors="ignore") > 1).any()
+        ]
+        if structural:
             issues.append("1着が複数あるレースがある(race_id 構成 or 着順の不整合)")
     if "final_odds" in df and df["final_odds"].notna().any():
         if (df["final_odds"] < 1.0).mean() > 0.5:
