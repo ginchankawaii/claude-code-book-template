@@ -1,7 +1,14 @@
 # keiba 分析層を Docker で動かす。取得(JV-Link)は Windows 側で別途。
 #
+# ★ web は「取得層(realtime)が今まさに書いている本物の DB」を読み取り専用で直接読む。
+#    既定マウント元 = ../jrvltsql/data (= 取得層が keiba.db を書くフォルダ)。
+#    レイアウトが違う場合は環境変数 KEIBA_DB_DIR で上書き:
+#       PowerShell:  $env:KEIBA_DB_DIR="C:\keiba_ateru\jrvltsql\data" ; docker compose up web
+#    ※ Copy-Item で DB を複製しないこと(書き込み中の SQLite はページが破れて壊れる)。
+#      直接 :ro マウント + --immutable なら元 DB を一切書かないので安全。
+#
 # 使い方:
-#   1) 取得層(jrvltsql 等)が作った keiba.db を ./data/ に置く
+#   1) 取得層(jrvltsql 等)が keiba.db を書き続ける(別途 Windows 側)
 #   2) 合成デモ:        docker compose run --rm keiba --days 360
 #   3) 実データで解析:   docker compose run --rm keiba --db /data/keiba.db --exotic
 #   4) 可視化:          docker compose run --rm --entrypoint python keiba \
@@ -32,4 +39,6 @@ services:
     ports:
       - "${KEIBA_PORT:-8087}:8000"
     volumes:
-      - ./data:/data
+      # 取得層が書いている本物の DB を読み取り専用(:ro)で直接読む。
+      # 既定 ../jrvltsql/data。別の場所なら KEIBA_DB_DIR で上書き。
+      - ${KEIBA_DB_DIR:-../jrvltsql/data}:/data:ro
