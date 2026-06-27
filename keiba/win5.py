@@ -24,12 +24,20 @@ import numpy as np
 WIN5_TAKEOUT = 0.30
 
 
+# 重勝式(WF)レコードを探すテーブルの優先順。
+#   TS_WF/RT_WF = 速報系(当日の指定5レース。速報重勝式 spec 0B41 で取得)
+#   NL_WF       = 蓄積系(過去分。setup/蓄積ダウンロードに含まれる)
+# 当日は速報系にしか無く、過去日は蓄積系にしか無いので両方を順に見る。
+_WF_TABLES = ("TS_WF", "RT_WF", "NL_WF")
+
+
 def load_designated(path, year: int, monthday: int, kind: str = "sqlite",
                     immutable: bool = False) -> dict | None:
-    """NL_WF(重勝式レコード)から指定日のWIN5対象5レースを取得する。
+    """重勝式(WF)レコードから指定日のWIN5対象5レースを取得する。
 
     RaceInfo1〜5 は各8桁 = JyoCD+Kaiji+Nichiji+RaceNum。
     race_id = f"{Year}{RaceInfo}" でシステムの race_id に一致する。
+    速報(TS/RT_WF)を優先し、無ければ蓄積(NL_WF)を見る。
     返り値: {"races": [race_id×5(int)], "carryover": 繰越の有無(bool)} / 無ければ None。
     """
     if kind == "duckdb":
@@ -41,13 +49,18 @@ def load_designated(path, year: int, monthday: int, kind: str = "sqlite",
                else f"file:{str(path).replace(chr(92), '/')}?mode=ro")
         con = sqlite3.connect(uri, uri=True)
         fetch = lambda sql, p: con.execute(sql, p).fetchall()
+    rows = []
     try:
-        rows = fetch(
-            "SELECT RaceInfo1,RaceInfo2,RaceInfo3,RaceInfo4,RaceInfo5,CarryOverStart "
-            "FROM NL_WF WHERE Year=? AND CAST(MonthDay AS INTEGER)=? "
-            "ORDER BY MakeDate DESC LIMIT 1", [int(year), int(monthday)])
-    except Exception:
-        return None
+        for tbl in _WF_TABLES:
+            try:
+                rows = fetch(
+                    "SELECT RaceInfo1,RaceInfo2,RaceInfo3,RaceInfo4,RaceInfo5,CarryOverStart "
+                    f"FROM {tbl} WHERE Year=? AND CAST(MonthDay AS INTEGER)=? "
+                    "ORDER BY MakeDate DESC LIMIT 1", [int(year), int(monthday)])
+            except Exception:
+                continue  # そのテーブルが無い/列名が違う → 次の候補へ
+            if rows:
+                break
     finally:
         con.close()
     if not rows:
