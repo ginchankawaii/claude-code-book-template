@@ -33,6 +33,7 @@ def _make_main(path, rows):
 
 
 def _row(umaban, odds, collected):
+    # CollectedAt は実物と同じ ISO形式
     return (2026, 628, "05", 1, 5, 11, "1500", umaban, odds, collected)
 
 
@@ -42,11 +43,11 @@ def test_prune_downsamples_to_per_minute_and_clears(tmp_path):
     # 1番: 同じ分(10:15)に3スナップ + 別の分(10:20)に1スナップ → 間引きで 2 行
     # 2番: 10:15 に1スナップ → 1 行
     _make_main(main, [
-        _row(1, 3.4, "20260628101501"),
-        _row(1, 3.2, "20260628101533"),
-        _row(1, 3.0, "20260628101559"),   # 10:15 の最後 → これだけ残る(3.0)
-        _row(1, 2.6, "20260628102004"),   # 10:20 → 残る
-        _row(2, 9.9, "20260628101510"),
+        _row(1, 3.4, "2026-06-28T10:15:01.100000+00:00"),
+        _row(1, 3.2, "2026-06-28T10:15:33.200000+00:00"),
+        _row(1, 3.0, "2026-06-28T10:15:59.900000+00:00"),  # 10:15 の最後 → 残る(3.0)
+        _row(1, 2.6, "2026-06-28T10:20:04.000000+00:00"),  # 10:20 → 残る
+        _row(2, 9.9, "2026-06-28T10:15:10.000000+00:00"),
     ])
 
     res = prune(str(main), str(arch))
@@ -60,7 +61,8 @@ def test_prune_downsamples_to_per_minute_and_clears(tmp_path):
     assert a.execute("SELECT COUNT(*) FROM TS_O1 WHERE Umaban=1").fetchone()[0] == 2
     # 10:15 帯は最後の値(3.0)が残る(3.4/3.2は間引かれる)
     got = a.execute(
-        "SELECT TanOdds FROM TS_O1 WHERE Umaban=1 AND substr(CollectedAt,1,12)='202606281015'"
+        "SELECT TanOdds FROM TS_O1 WHERE Umaban=1 "
+        "AND substr(CollectedAt,1,16)='2026-06-28T10:15'"
     ).fetchall()
     assert got == [(3.0,)]
     a.close()
@@ -76,7 +78,8 @@ def test_prune_is_idempotent_across_sessions(tmp_path):
     # 前週分を再取得しても重複しない(ユニーク索引 + INSERT OR IGNORE)
     main = tmp_path / "keiba.db"
     arch = tmp_path / "odds_history.db"
-    rows = [_row(1, 3.0, "20260628101559"), _row(2, 9.9, "20260628101510")]
+    rows = [_row(1, 3.0, "2026-06-28T10:15:59.900000+00:00"),
+            _row(2, 9.9, "2026-06-28T10:15:10.000000+00:00")]
     _make_main(main, rows)
     prune(str(main), str(arch))
 

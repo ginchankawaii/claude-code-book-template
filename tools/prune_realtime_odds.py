@@ -79,12 +79,14 @@ def prune(main_db: str, archive_db: str) -> dict:
             if downsample:
                 keylist = ",".join(f'"{k}"' for k in keys)
                 # (レース×馬番×分) ごとに最後の CollectedAt の行だけを退避
+                # CollectedAt は ISO形式 "YYYY-MM-DDTHH:MM:SS.ffffff+00:00"。
+                # 分バケット = 先頭16文字 "YYYY-MM-DDTHH:MM"。
                 con.execute(
                     f'INSERT OR IGNORE INTO arch."{KEEP}" ({collist}) '
                     f'SELECT {collist} FROM "{KEEP}" '
                     f'WHERE ({keylist},"CollectedAt") IN ('
                     f'  SELECT {keylist}, MAX("CollectedAt") FROM "{KEEP}" '
-                    f'  GROUP BY {keylist}, substr("CollectedAt",1,12))')
+                    f'  GROUP BY {keylist}, substr("CollectedAt",1,16))')
             else:
                 # 想定列が無い場合は素直に全行(冪等索引が無いので重複しうる点に注意)
                 con.execute(
