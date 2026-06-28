@@ -1,17 +1,20 @@
 # =====================================================================
-# 土日だけ動く「賢い金(中間オッズ)」軽量キャプチャ
-# ---------------------------------------------------------------------
-# 流れ: realtime起動(0B30=全賭式オッズ等) → 夕方まで待機 → プロセスをkill
-#       → 単勝の時系列だけ odds_history.db へ退避 → 本体のTS_SOKUHOを一掃
-#       → fetchキャッシュ掃除。これで本体DB(約21GB)を肥大させない。
+# Weekend "smart money" interim-odds capture (disk-safe).
+# (Comments kept ASCII on purpose: Windows PowerShell 5.1 misreads UTF-8
+#  Japanese as Shift-JIS and breaks parsing. See docs/SMARTMONEY_CAPTURE.md.)
 #
-# jltsql の "stop" は未実装(no-op)なので、停止はプロセスのkillで行う。
-# タスクスケジューラから土・日の朝に起動される(register_weekend_tasks.ps1)。
-# 手動テストもできる:  powershell -ExecutionPolicy Bypass -File scripts\weekend_capture.ps1
+# Flow: start realtime (0B30 = all-bet odds, + race card / results / weight)
+#       -> wait until evening -> kill the process (jltsql "stop" is a no-op)
+#       -> archive win-odds timeseries (TS_SOKUHO_O1) into odds_history.db
+#       -> wipe TS_SOKUHO_O1..O6 in the main DB -> clean fetch cache.
+# This keeps the ~21GB main DB from bloating.
+#
+# Launched by Task Scheduler (register_weekend_tasks.ps1) Sat/Sun morning.
+# Manual test: powershell -ExecutionPolicy Bypass -File scripts\weekend_capture.ps1
 # =====================================================================
 $ErrorActionPreference = "Stop"
 
-# --- 環境(必要ならここだけ書き換える) ---
+# --- Environment (edit here only if paths differ) ---
 $Root   = "C:\keiba_ateru\jrvltsql"
 $Repo   = "C:\keiba_ateru\keiba-ateru"
 $Jlt    = Join-Path $Root "jvenv\Scripts\jltsql.exe"
@@ -19,8 +22,8 @@ $Py     = Join-Path $Root "jvenv\Scripts\python.exe"
 $DB     = Join-Path $Root "data\keiba.db"
 $Arch   = Join-Path $Root "data\odds_history.db"
 $Prune  = Join-Path $Repo "tools\prune_realtime_odds.py"
-$Specs  = "0B11,0B12,0B14,0B15,0B30"   # 馬体重/結果/馬場/出馬表/全賭式オッズ
-$StopAt = "17:50"                       # この時刻に自動停止(最終レース後)
+$Specs  = "0B11,0B12,0B14,0B15,0B30"   # weight / results / track / race-card / all-odds
+$StopAt = "17:50"                       # auto-stop time (after last race)
 
 $LogDir = Join-Path $Root "logs"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
@@ -33,21 +36,20 @@ function Get-RealtimeProcs {
         Where-Object { $_.CommandLine -and $_.CommandLine -match 'jltsql.*realtime' }
 }
 
-Log "=== weekend_capture 開始 ==="
+Log "=== weekend_capture start ==="
 
-# --- 二重起動防止: 既に realtime が居たら何もしない ---
+# --- Prevent double start: if realtime already running, do nothing ---
 $already = Get-RealtimeProcs
 if ($already) {
-    Log "既に realtime 稼働中 (PID $($already.ProcessId -join ',')) → 起動せず終了"
+    Log "realtime already running (PID $($already.ProcessId -join ',')) -> skip"
     exit 0
 }
+if (-not (Test-Path $Jlt)) { Log "jltsql not found: $Jlt"; exit 1 }
 
-if (-not (Test-Path $Jlt)) { Log "jltsql が見つからない: $Jlt"; exit 1 }
-
-# --- realtime 起動 ---
+# --- Start realtime ---
 $end = [datetime]::Today.Add([timespan]::Parse($StopAt))
-if ((Get-Date) -ge $end) { Log "既に停止時刻を過ぎている($StopAt) → 起動せず終了"; exit 0 }
-Log "realtime 起動: specs=$Specs  自動停止予定=$end"
+if ((Get-Date) -ge $end) { Log "past stop time ($StopAt) -> skip"; exit 0 }
+Log "start realtime: specs=$Specs  auto-stop=$end"
 $rtOut = Join-Path $LogDir "rt_$Stamp.out"
 $rtErr = Join-Path $LogDir "rt_$Stamp.err"
 $spArgs = @{
@@ -60,38 +62,37 @@ $spArgs = @{
     RedirectStandardError  = $rtErr
 }
 $p = Start-Process @spArgs
-Log "起動 PID=$($p.Id)"
+Log "started PID=$($p.Id)"
 
-# --- 夕方まで監視(60秒ごと) ---
+# --- Monitor until evening (every 60s) ---
 while ((Get-Date) -lt $end) {
-    if ($p.HasExited) { Log "realtime が予期せず終了 (ExitCode $($p.ExitCode))。errログ: $rtErr"; break }
+    if ($p.HasExited) { Log "realtime exited early (code $($p.ExitCode)). see $rtErr"; break }
     Start-Sleep -Seconds 60
 }
 
-# --- 停止(stopはno-opなのでプロセス木をkill) ---
-Log "停止: taskkill /T /F PID=$($p.Id)"
+# --- Stop (kill tree; jltsql stop is a no-op) ---
+Log "stop: taskkill /T /F PID=$($p.Id)"
 & taskkill /PID $p.Id /T /F 2>&1 | Out-Null
 Start-Sleep -Seconds 3
-# 取りこぼした realtime プロセスも掃除(子python等)
 foreach ($q in (Get-RealtimeProcs)) {
-    Log "残存 realtime kill PID=$($q.ProcessId)"
+    Log "kill leftover realtime PID=$($q.ProcessId)"
     Stop-Process -Id $q.ProcessId -Force -ErrorAction SilentlyContinue
 }
 Start-Sleep -Seconds 3
 
-# --- 剪定: 単勝軌跡を退避し本体TS_SOKUHOを一掃 ---
+# --- Prune: archive win-odds timeseries, wipe TS_SOKUHO in main DB ---
 if (Test-Path $Prune) {
-    Log "剪定実行: $Prune"
+    Log "prune: archive win-odds to odds_history.db, wipe TS_SOKUHO_O1..O6"
     & $Py $Prune --db $DB --archive $Arch 2>&1 | Tee-Object -FilePath $Log -Append
 } else {
-    Log "剪定スクリプトが無い: $Prune (本体DBが肥大するので要修正)"
+    Log "prune script missing: $Prune (main DB will bloat - fix this)"
 }
 
-# --- fetchキャッシュ掃除(残骸が出ることがある) ---
+# --- Clean fetch cache (realtime can leave residue) ---
 $cache = Join-Path $Root "data\cache"
-if (Test-Path $cache) { Log "cache 掃除: $cache"; Remove-Item $cache -Recurse -Force -ErrorAction SilentlyContinue }
+if (Test-Path $cache) { Log "clean cache: $cache"; Remove-Item $cache -Recurse -Force -ErrorAction SilentlyContinue }
 
-# --- 空き容量を記録 ---
+# --- Record free space ---
 $free = [math]::Round((Get-PSDrive C).Free / 1GB, 2)
-Log "完了。C: 空き $free GB"
-Log "=== weekend_capture 終了 ==="
+Log "done. C: free $free GB"
+Log "=== weekend_capture end ==="
