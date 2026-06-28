@@ -1,6 +1,6 @@
 # =====================================================================
 # weekend_capture.ps1 を「毎週土・日の朝9時」に自動起動するタスクを登録する。
-# 一度だけ管理者PowerShellで実行すればよい。
+# 管理者PowerShellで一度だけ実行する(最上位権限の登録には管理者が要る場合がある):
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\register_weekend_tasks.ps1
 #
@@ -15,34 +15,48 @@
 # =====================================================================
 $ErrorActionPreference = "Stop"
 
-$Repo   = "C:\keiba_ateru\keiba-ateru"
-$Script = Join-Path $Repo "scripts\weekend_capture.ps1"
+$Repo     = "C:\keiba_ateru\keiba-ateru"
+$Script   = Join-Path $Repo "scripts\weekend_capture.ps1"
 $TaskName = "KeibaWeekendOddsCapture"
 
 if (-not (Test-Path $Script)) { throw "キャプチャ本体が見つからない: $Script" }
 
-$action = New-ScheduledTaskAction -Execute "powershell.exe" `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Script`""
+# バックティック行継続は壊れやすいので、1行 + splatting(ハッシュテーブル渡し)で組む
+$actionArg = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Script`""
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $actionArg
 
 # 土・日の 09:00 起動(1Rの前。朝のオッズ形成から拾う)
 $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Saturday, Sunday -At 9:00am
 
-$settings = New-ScheduledTaskSettingsSet `
-    -StartWhenAvailable `
-    -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-    -WakeToRun `
-    -ExecutionTimeLimit (New-TimeSpan -Hours 11) `
-    -MultipleInstances IgnoreNew
+$settingsParams = @{
+    StartWhenAvailable         = $true
+    AllowStartIfOnBatteries    = $true
+    DontStopIfGoingOnBatteries = $true
+    WakeToRun                  = $true
+    ExecutionTimeLimit         = (New-TimeSpan -Hours 11)
+    MultipleInstances          = 'IgnoreNew'
+}
+$settings = New-ScheduledTaskSettingsSet @settingsParams
 
 # 対話デスクトップが要る(JV-Link COM)ため、ログオン中ユーザで最上位権限実行
-$principal = New-ScheduledTaskPrincipal `
-    -UserId "$env:USERDOMAIN\$env:USERNAME" `
-    -LogonType Interactive -RunLevel Highest
+$principalParams = @{
+    UserId    = "$env:USERDOMAIN\$env:USERNAME"
+    LogonType = 'Interactive'
+    RunLevel  = 'Highest'
+}
+$principal = New-ScheduledTaskPrincipal @principalParams
 
-Register-ScheduledTask -TaskName $TaskName `
-    -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
+$registerParams = @{
+    TaskName  = $TaskName
+    Action    = $action
+    Trigger   = $trigger
+    Settings  = $settings
+    Principal = $principal
+    Force     = $true
+}
+Register-ScheduledTask @registerParams | Out-Null
 
 Write-Host "登録完了: タスク '$TaskName' (毎週 土・日 09:00 起動 / 17:50 自動停止)"
 Write-Host "確認:   Get-ScheduledTask -TaskName $TaskName"
 Write-Host "今すぐ手動テスト: Start-ScheduledTask -TaskName $TaskName"
-Write-Host "ログ:   $Repo の親 ..\jrvltsql\logs\capture_<日付>.log"
+Write-Host "ログ:   ..\jrvltsql\logs\capture_<日付>.log"
