@@ -4,11 +4,13 @@
 実測でわかったこと(2026-06 時点の jrvltsql realtime 0B30)
 ------------------------------------------------------------
 * リアルタイムの単複オッズは **TS_O1** に入る(TS_SOKUHO_O1 ではない)。
-  列: RecordSpec.. Year,MonthDay,JyoCD,Kaiji,Nichiji,RaceNum,HassoTime,
-      Umaban,TanOdds,TanNinki,FukuOddsLow/High,.. ,CollectedAt(取得時刻)。
-* realtime は数秒ごとに再取り込みするため TS_O1 が猛烈に増える(同一馬・同一オッズの
-  超細かいスナップショットが大量)。賢い金シグナルに必要なのは秒単位ではないので、
-  **(レース×馬番×分) 単位に間引いて**(各分の最後の値だけ)退避する。
+  列: .. Year,MonthDay,JyoCD,Kaiji,Nichiji,RaceNum, **HassoTime**, Umaban,
+      **TanOdds**, **TanVote**(票数=入った金), .. , CollectedAt。
+* 真の時間軸は **HassoTime(発表時刻 MMDDHHMM)**。前売り〜締切まで刻まれている。
+  CollectedAt(取り込み時刻)は起動時の一括取込でバースト潰れし時間軸にならない。
+* 退避は (レース×馬番×HassoTime) でユニーク化し、**全スナップショット=軌跡を保持**する
+  (CollectedAtでは間引かない)。実馬(Umaban>0)のみ退避(Umaban=0の集計行は不要)。
+* TanVote(単勝票数)が締切直前に急増する様子が「賢い金」の直接信号。
 * 三連単等(TS_O2..O6)は本実験に不要なので退避せず一掃のみ。
 
 VACUUM はしない
@@ -38,8 +40,11 @@ import sqlite3
 KEEP = "TS_O1"   # 退避する実テーブル(単複オッズの時系列)
 # 一掃する速報オッズ表(現行 TS_O* と、空のレガシー TS_SOKUHO_O* の両方を防御的に)
 CLEAR = [f"TS_O{i}" for i in range(1, 7)] + [f"TS_SOKUHO_O{i}" for i in range(1, 7)]
-# レース＋馬番のキー(間引きとユニーク索引に使う)
-KEYS = ["Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum", "Umaban"]
+# 1スナップショットを一意に決めるキー。HassoTime が「発表時刻(MMDDHHMM)」で、
+# これが真の時間軸(CollectedAt=取り込み時刻はバースト取込で潰れて使えない)。
+# (レース×馬番×発表時刻)で重複排除すれば、全スナップショット=軌跡を保持できる。
+SNAP_KEYS = ["Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum",
+             "Umaban", "HassoTime"]
 
 
 def _exists(con: sqlite3.Connection, name: str) -> bool:
@@ -65,33 +70,25 @@ def prune(main_db: str, archive_db: str) -> dict:
         if _exists(con, KEEP):
             cols = _cols(con, KEEP)
             collist = ",".join(f'"{c}"' for c in cols)
-            keys = [k for k in KEYS if k in cols]
-            downsample = ("CollectedAt" in cols) and (len(keys) == len(KEYS))
+            have_key = all(c in cols for c in SNAP_KEYS)
+            # 集計/プレースホルダ行(Umaban=0)は実験に不要 → 実馬のみ退避(容量も約7割減)
+            where = "WHERE Umaban>0" if "Umaban" in cols else ""
 
             con.execute(
                 f'CREATE TABLE IF NOT EXISTS arch."{KEEP}" AS SELECT * FROM "{KEEP}" WHERE 0')
-            if downsample:
-                uniq = ",".join(f'"{c}"' for c in keys + ["CollectedAt"])
+            if have_key:
+                # (レース×馬番×発表時刻)でユニーク → 全スナップショット=軌跡を保持しつつ
+                # 前週分の再取得や同一スナップの重複取込は無視(冪等)。CollectedAtでは
+                # 間引かない(取り込み時刻はバーストで潰れており時間軸にならないため)。
+                uniq = ",".join(f'"{c}"' for c in SNAP_KEYS)
                 con.execute(
-                    f'CREATE UNIQUE INDEX IF NOT EXISTS arch."ux_ts_o1" ON "{KEEP}" ({uniq})')
+                    f'CREATE UNIQUE INDEX IF NOT EXISTS arch."ux_ts_o1_snap" '
+                    f'ON "{KEEP}" ({uniq})')
 
             before = con.execute(f'SELECT COUNT(*) FROM arch."{KEEP}"').fetchone()[0]
-            if downsample:
-                keylist = ",".join(f'"{k}"' for k in keys)
-                # (レース×馬番×分) ごとに最後の CollectedAt の行だけを退避
-                # CollectedAt は ISO形式 "YYYY-MM-DDTHH:MM:SS.ffffff+00:00"。
-                # 分バケット = 先頭16文字 "YYYY-MM-DDTHH:MM"。
-                con.execute(
-                    f'INSERT OR IGNORE INTO arch."{KEEP}" ({collist}) '
-                    f'SELECT {collist} FROM "{KEEP}" '
-                    f'WHERE ({keylist},"CollectedAt") IN ('
-                    f'  SELECT {keylist}, MAX("CollectedAt") FROM "{KEEP}" '
-                    f'  GROUP BY {keylist}, substr("CollectedAt",1,16))')
-            else:
-                # 想定列が無い場合は素直に全行(冪等索引が無いので重複しうる点に注意)
-                con.execute(
-                    f'INSERT OR IGNORE INTO arch."{KEEP}" ({collist}) '
-                    f'SELECT {collist} FROM "{KEEP}"')
+            con.execute(
+                f'INSERT OR IGNORE INTO arch."{KEEP}" ({collist}) '
+                f'SELECT {collist} FROM "{KEEP}" {where}')
             con.commit()
             after = con.execute(f'SELECT COUNT(*) FROM arch."{KEEP}"').fetchone()[0]
             archived = after - before
@@ -117,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
                    help="単複オッズ時系列の蓄積先(無ければ作成。例 odds_history.db)")
     args = p.parse_args(argv)
     res = prune(args.db, args.archive)
-    print(f"退避 {KEEP}(1分間引き): +{res['archived']:,} 行 → {args.archive}")
+    print(f"退避 {KEEP}(実馬・全スナップショット): +{res['archived']:,} 行 → {args.archive}")
     cleared_nonzero = {t: n for t, n in res["cleared"].items() if n}
     if cleared_nonzero:
         for t, n in cleared_nonzero.items():

@@ -67,33 +67,37 @@ Start-ScheduledTask -TaskName KeibaWeekendOddsCapture
 - 日中**スリープさせない**(電源プランで「スリープしない」)。途中で寝ると取得が止まる。
 - ログ: `..\jrvltsql\logs\capture_<日付>.log`
 
-### 初回に必ず確認すること(実験成立の前提)
-realtime が同一馬の単勝オッズを**追記(スナップショットを貯める)**か、上書きか。
-追記でないと軌跡が取れず実験が成立しない。1開催ぶん取ったあとに確認:
+### データの実態(2026-06 実測で判明)
+* **真の時間軸は `HassoTime`(発表時刻 MMDDHHMM)**。前売り(前日夕)〜締切まで刻まれる。
+  `CollectedAt`(取り込み時刻)は起動時の一括取込でバースト潰れ(16秒に集中)し**使えない**。
+* `TanOdds`(単勝オッズ)と `TanVote`(単勝票数=その馬に入った金額)が各 HassoTime で取れる。
+  実測例: 締切直前に票数が 38,674 → 298,186 へ急増 = **賢い金そのもの**。
+* 実馬は `Umaban>0`。`Umaban=0` は集計/プレースホルダ行(退避対象外)。
+
+確認(1開催ぶん退避後):各馬で HassoTime の異なるスナップショットが並び、
+`TanVote` が時間とともに増えていれば軌跡が取れている=GO。
 
 ```powershell
-C:\keiba_ateru\jrvltsql\jvenv\Scripts\python.exe -c "import sqlite3;c=sqlite3.connect(r'C:\keiba_ateru\jrvltsql\data\odds_history.db');print(c.execute('SELECT Year,MonthDay,JyoCD,RaceNum,Umaban,COUNT(*) c,MIN(CollectedAt),MAX(CollectedAt) FROM TS_O1 GROUP BY 1,2,3,4,5 ORDER BY c DESC LIMIT 5').fetchall())"
+C:\keiba_ateru\jrvltsql\jvenv\Scripts\python.exe -c "import sqlite3;c=sqlite3.connect(r'C:\keiba_ateru\jrvltsql\data\odds_history.db');print(c.execute('SELECT Umaban,COUNT(DISTINCT HassoTime) snaps,MIN(HassoTime),MAX(HassoTime) FROM TS_O1 WHERE Umaban>0 GROUP BY Year,MonthDay,JyoCD,Kaiji,Nichiji,RaceNum,Umaban ORDER BY snaps DESC LIMIT 5').fetchall())"
 ```
-
-各馬の `c`(スナップショット数)が **2以上**で、`MIN`≠`MAX`(時刻が複数)なら軌跡が
-取れている=GO。`c=1` ばかりなら上書きされているので取得方式を見直す。
 
 ## 検証設計(データが数ヶ月貯まってから / エビデンス反映)
 
-`odds_history.db` の `TS_O1` スナップショット列(`TanOdds`/`Umaban`/`HassoTime`/
-`CollectedAt`)から特徴量を作り、既存の
+`odds_history.db` の `TS_O1` を **HassoTime 昇順**に並べて特徴量を作り、既存の
 `keiba` パイプライン(walk-forward + 95%CIブートストラップ)に載せる。
 
 ### 特徴量(各馬・各レース)
-各スナップショット時刻 t で単勝暗黙確率 `p_t = (1/odds_t) / Σ(1/odds)`(レース内正規化)。
-締切時刻 T(発走時刻)からの相対で:
+各スナップショット t(=HassoTime)で単勝暗黙確率 `p_t = (1/TanOdds_t)/Σ(1/TanOdds)`、
+票数シェア `v_t = TanVote_t / Σ TanVote_t`。締切 T(=最後の HassoTime ≒ 発走)からの相対で:
 
-- **drift_late** = `p(T-1min) − p(T-10min)` … 締切直前の確率上昇(=金が入った)。論文の核心。
+- **drift_late** = `p(T) − p(T-10min)` … 締切直前のオッズ確率の上昇(論文の核心)。
+- **vote_surge** = `v(T) − v(T-10min)` … 締切直前の票数シェア急増(=金の流入。最も直接的)。
 - **drift_slope** = 直近K点の `p_t` の傾き(回帰係数)
 - **rank_jump** = 人気順位が直近で上がった数
 - **level** = 最終オッズ(favorite-longshot との交互作用のため必ず併用)
 
-論文の主張(締切直前に急落=高回収)を最も忠実に表すのは `drift_late`。
+論文の主張(締切直前に急落=高回収)を最も忠実に表すのは `drift_late` と `vote_surge`。
+TanVote が取れている分、オッズ変化より**直接的な信号**になりうる。
 
 ### 賭けルール(Chapman / Ziemba を反映)
 - **極端な大穴を除外**: 推定勝率 `p < 0.04` は捨てる(Chapman 香港: これで回収改善)。

@@ -1,4 +1,9 @@
-"""tools/prune_realtime_odds.py のテスト(TS_O1の1分間引き退避＋速報表一掃)。"""
+"""tools/prune_realtime_odds.py のテスト。
+
+実物の TS_O1 に合わせ、真の時間軸は HassoTime(発表時刻 MMDDHHMM)。
+退避は (レース×馬番×HassoTime) で重複排除し、全スナップショット=軌跡を保持。
+集計行(Umaban=0)は退避しない。CollectedAt はバーストで潰れるので軸に使わない。
+"""
 
 import importlib.util
 import sqlite3
@@ -12,9 +17,16 @@ prune_mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(prune_mod)
 prune = prune_mod.prune
 
-# 実物 TS_O1 の主要列(簡略版)
+# 実物 TS_O1 の主要列(簡略版)。HassoTime/Umaban/TanOdds/TanVote/CollectedAt を持つ。
 _O1_COLS = ("Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum",
-            "HassoTime", "Umaban", "TanOdds", "CollectedAt")
+            "Umaban", "HassoTime", "TanOdds", "TanVote", "CollectedAt")
+
+# 全行とも CollectedAt は同じ16秒窓(=取り込み時刻が潰れている実態を再現)
+_BURST = "2026-06-27T04:59:51.500000+00:00"
+
+
+def _row(umaban, hassotime, odds, vote):
+    return (2026, 627, "05", 2, 1, 6, umaban, hassotime, odds, vote, _BURST)
 
 
 def _make_main(path, rows):
@@ -25,46 +37,42 @@ def _make_main(path, rows):
     # 容量爆弾(三連単)も入れておく → 一掃対象
     con.execute("CREATE TABLE TS_O6(Year,MonthDay,JyoCD,RaceNum,Kumi,Odds,CollectedAt)")
     con.executemany("INSERT INTO TS_O6 VALUES(?,?,?,?,?,?,?)", [
-        (2026, 628, "05", 11, "010203", 321.0, "20260628102001"),
-        (2026, 628, "05", 11, "010204", 998.0, "20260628102002"),
+        (2026, 627, "05", 6, "010203", 321.0, _BURST),
+        (2026, 627, "05", 6, "010204", 998.0, _BURST),
     ])
     con.commit()
     con.close()
 
 
-def _row(umaban, odds, collected):
-    # CollectedAt は実物と同じ ISO形式
-    return (2026, 628, "05", 1, 5, 11, "1500", umaban, odds, collected)
-
-
-def test_prune_downsamples_to_per_minute_and_clears(tmp_path):
+def test_prune_keeps_full_trajectory_and_drops_aggregate(tmp_path):
     main = tmp_path / "keiba.db"
     arch = tmp_path / "odds_history.db"
-    # 1番: 同じ分(10:15)に3スナップ + 別の分(10:20)に1スナップ → 間引きで 2 行
-    # 2番: 10:15 に1スナップ → 1 行
     _make_main(main, [
-        _row(1, 3.4, "2026-06-28T10:15:01.100000+00:00"),
-        _row(1, 3.2, "2026-06-28T10:15:33.200000+00:00"),
-        _row(1, 3.0, "2026-06-28T10:15:59.900000+00:00"),  # 10:15 の最後 → 残る(3.0)
-        _row(1, 2.6, "2026-06-28T10:20:04.000000+00:00"),  # 10:20 → 残る
-        _row(2, 9.9, "2026-06-28T10:15:10.000000+00:00"),
+        # 1番: 3スナップ(発表時刻が違う=軌跡)。票数が増えていく=賢い金
+        _row(1, "06262005", 16.2, 1155),
+        _row(1, "06270923", 16.2, 38674),
+        _row(1, "06271005", 24.5, 298186),
+        # 2番: 1スナップ
+        _row(2, "06271005", 3.1, 500000),
+        # 集計行(Umaban=0)→ 退避されない
+        _row(0, "06271005", 0.0, 9999999),
     ])
 
     res = prune(str(main), str(arch))
 
-    # 退避は (馬×分) 単位に間引かれて 3 行(1番=2, 2番=1)
-    assert res["archived"] == 3
+    # 実馬の全スナップショット(1番=3, 2番=1)=4 行。Umaban=0 は除外。
+    assert res["archived"] == 4
     assert res["cleared"]["TS_O6"] == 2
 
     a = sqlite3.connect(str(arch))
-    # 1番は2スナップショット=軌跡が取れている
-    assert a.execute("SELECT COUNT(*) FROM TS_O1 WHERE Umaban=1").fetchone()[0] == 2
-    # 10:15 帯は最後の値(3.0)が残る(3.4/3.2は間引かれる)
-    got = a.execute(
-        "SELECT TanOdds FROM TS_O1 WHERE Umaban=1 "
-        "AND substr(CollectedAt,1,16)='2026-06-28T10:15'"
-    ).fetchall()
-    assert got == [(3.0,)]
+    # 1番は3スナップショット=軌跡が壊れず保持されている(CollectedAtが同一でも潰れない)
+    assert a.execute("SELECT COUNT(*) FROM TS_O1 WHERE Umaban=1").fetchone()[0] == 3
+    # 票数の増加(賢い金)がそのまま残る
+    votes = [r[0] for r in a.execute(
+        "SELECT TanVote FROM TS_O1 WHERE Umaban=1 ORDER BY HassoTime")]
+    assert votes == [1155, 38674, 298186]
+    # 集計行(Umaban=0)は退避されていない
+    assert a.execute("SELECT COUNT(*) FROM TS_O1 WHERE Umaban=0").fetchone()[0] == 0
     a.close()
 
     # 本体は一掃済み
@@ -75,15 +83,13 @@ def test_prune_downsamples_to_per_minute_and_clears(tmp_path):
 
 
 def test_prune_is_idempotent_across_sessions(tmp_path):
-    # 前週分を再取得しても重複しない(ユニーク索引 + INSERT OR IGNORE)
+    # 前週分の再取得(同一スナップショット)は重複しない
     main = tmp_path / "keiba.db"
     arch = tmp_path / "odds_history.db"
-    rows = [_row(1, 3.0, "2026-06-28T10:15:59.900000+00:00"),
-            _row(2, 9.9, "2026-06-28T10:15:10.000000+00:00")]
+    rows = [_row(1, "06271005", 24.5, 298186), _row(2, "06271005", 3.1, 500000)]
     _make_main(main, rows)
     prune(str(main), str(arch))
 
-    # まったく同じ行を再投入(本体テーブルは prune後も残り空になっている)してもう一度剪定
     con = sqlite3.connect(str(main))
     con.executemany(
         "INSERT INTO TS_O1 VALUES(%s)" % ",".join("?" * len(_O1_COLS)), rows)
@@ -91,7 +97,7 @@ def test_prune_is_idempotent_across_sessions(tmp_path):
     con.close()
     res2 = prune(str(main), str(arch))
 
-    assert res2["archived"] == 0   # 重複は無視される
+    assert res2["archived"] == 0   # 同一(レース×馬番×発表時刻)は無視
     a = sqlite3.connect(str(arch))
     assert a.execute("SELECT COUNT(*) FROM TS_O1").fetchone()[0] == 2
     a.close()
