@@ -1,0 +1,655 @@
+[
+  {
+    "dimension": "JV-Link / JRA-VAN DataLab のデータ取得の技術的実態",
+    "summary": "JV-LinkはWindows専用の32bit COM/ActiveXコンポーネント(ProgID: JVDTLab.JVLink)で、JVInit→(JVSetServiceKey)→JVOpen/JVRTOpen→JVStatus→JVRead/JVGets→JVClose という固定フローでデータを取得する。蓄積系は4桁固定のdataspec(RACE, DIFF/DIFN, BLOD/BLDN, SNAP, SLOP, WOOD, YSCH, HOSE, COMM, MING等)をJVOpenに渡し、option(1=通常/差分, 2=今週, 3=セットアップ・ダイアログ有, 4=セットアップ・ダイアログ無)とfromtime(YYYYMMDDhhmmss、ハイフンで範囲指定可)で取得範囲を制御する。速報系は0B11〜0B51のdataspecをJVRTOpenにkey付きで渡す(ダウンロードスレッドを使わず即時完了)。各dataspecは複数のレコード種別(RA,SE,HR,H1,H6,O1〜O6,WF,JG,UM/競走馬マスタ,KS,CH,BR,BN,RC,SK,BT,TM,DM,AV,JC,TC,CC,WH等)を1ファイル内に内包し、JVReadは1レコード=1行をShift-JISで返す。Pythonではpywin32のwin32com.client.Dispatchで呼べるが、JV-Linkがx86 COMのため32bit Pythonが事実上必須(64bitはREGDB_E_CLASSNOTREG)。料金はDataLab会員 月額2,090円(税込)、JV-Link導入日から1か月無料体験、過去データはセットアップで1986年以降(賭式により提供開始年が異なる)を一括取得できる。",
+    "key_facts": [
+      {
+        "claim": "JV-Linkの主要メソッドと役割・引数(公式JV-Link v4.9.0.1仕様準拠)",
+        "detail": "JVInit(String sid): 必ず最初に呼ぶ初期化(sidは最大64バイト、戻り0で成功)。JVSetServiceKey(String servicekey): 17桁の認証キー設定(失敗時-100)。JVOpen(dataspec, fromtime, option, ref readcount, ref downloadcount, out lastfiletimestamp): 蓄積系データの読込準備とダウンロードスレッド起動。JVRTOpen(dataspec, key): 速報系をキー指定で要求し、戻る前に完了(バックグラウンドスレッドなし)。JVRead(buff,size,filename): 1呼び出し1レコード読込・SJIS→Unicode変換(戻り: バイト数/-1=ファイル境界/0=EOF/負=エラー)。JVGets(byte[] buff,size,filename): Shift-JISのまま返す高速版。JVStatus(): ダウンロード済みファイル数を返す(引数なし)。JVSkip(): 現在ファイルを読み飛ばし次へ(戻り値なし)。JVCancel(): ダウンロード停止。JVClose(): 全ファイルを閉じダウンロード停止。JVFiledelete(filename): 保存ファイル削除。",
+        "source_url": "https://github.com/cariandrum22/Xanthos/blob/main/design/specs/methods.md",
+        "confidence": "high"
+      },
+      {
+        "claim": "基本のデータ取得フローは JVInit → (サービスキー設定) → JVOpen → JVStatus でDL完了待ち → JVRead ループ → JVClose",
+        "detail": "SQLiteに保存する単純な蓄積ソフトなら JVInit→JVOpen→(JVStatus)→JVRead→JVClose で足りる。JVOpenがダウンロードスレッドを起動するため、JVStatus()でダウンロード済みファイル数を監視しつつJVReadで逐次読み出す。JVReadの戻り値で 0=全終了、-1=現ファイル終端(次ファイルへ)、負値=エラーを判定する。",
+        "source_url": "https://zenn.dev/nozele/articles/c64e456d0c77e4",
+        "confidence": "high"
+      },
+      {
+        "claim": "蓄積系dataspecとその内包レコード種別(公式 JV-Data4901.xlsx データ種別一覧)",
+        "detail": "RACE=レース詳細(RA)・馬毎レース情報(SE)・払戻(HR)・票数(H1,H6)・オッズ(O1〜O6)・WIN5(WF)・競走馬除外(JG)。DIFF/DIFN=競走馬マスタ(UM)・騎手(KS)・調教師(CH)・生産者(BR)・馬主(BN)・レコード(RC)等の差分。BLOD/BLDN=繁殖馬マスタ(HN)・産駒マスタ(SK)・系統(BT)。MING=タイム型(DM)・対戦型(TM)マイニング予想。SNAP/SNPN=出走別着度数。SLOP=坂路調教、WOOD=ウッドチップ調教、YSCH=開催スケジュール、HOSE/HOSN=競走馬市場取引価格、HOYU=馬名意味由来、COMM=コース情報。TCOV/TCVN・RCOV/RCVNは非蓄積系の補てん用(今週オプション専用)。",
+        "source_url": "https://github.com/cariandrum22/Xanthos/blob/main/design/specs/data_types.md",
+        "confidence": "high"
+      },
+      {
+        "claim": "速報系(JVRTOpen)dataspecは0B11〜0B51の4桁ID",
+        "detail": "0B12=速報レース情報(成績確定後: RA/SE/HR)、0B15=速報レース情報(出走馬名表~)、0B11=速報馬体重(WH)、0B14/0B16=速報開催情報(天候馬場/出走取消(AV)/騎手変更(JC)/発走時刻変更(TC)/コース変更(CC))、0B20=速報票数、0B30=速報オッズ全賭式、0B31〜0B36=各賭式オッズ(単複枠/馬連/ワイド/馬単/三連複/三連単 = O1〜O6)、0B41/0B42=時系列オッズ(単複枠/馬連)、0B13/0B17=速報マイニング予想、0B51=速報WIN5。JVRTOpenはダウンロードスレッドを使わず呼び出し時に完結する。",
+        "source_url": "https://github.com/cariandrum22/Xanthos/blob/main/design/specs/data_types.md",
+        "confidence": "high"
+      },
+      {
+        "claim": "JVOpenのoption値と指定可能なdataspecの対応(公式表)",
+        "detail": "option=1(通常/差分データ): TOKU,RACE,DIFF,BLOD,SNAP,SLOP,WOOD,YSCH,HOSE,HOYU,COMM,MING,DIFN,BLDN,SNPN,HOSN。option=2(今週データ): TOKU,RACE,TCOV,RCOV,SNAP,TCVN,RCVN,SNPN。option=3,4(セットアップデータ): option=1と同じ集合。3はダイアログ表示あり、4はダイアログ非表示(初回のみ可)。fromtimeはYYYYMMDDhhmmss、'20240101000000-20241231235959'のようにハイフンで範囲指定可能。差分取得は前回取得時のlastfiletimestampを次回fromtimeに渡す運用が基本。",
+        "source_url": "https://github.com/cariandrum22/Xanthos/blob/main/design/specs/data_types.md",
+        "confidence": "high"
+      },
+      {
+        "claim": "セットアップ(過去データ)の提供開始年は賭式・データ別に異なる",
+        "detail": "RACEセットアップ: 馬毎レース情報(SE)・払戻(HR)・票数1(H1)は1986年以降、票数6(三連単H6)は2004年8月以降、オッズ1(O1単複枠)・オッズ2(O2馬連)は1993年6月以降、オッズ3(O3ワイド)は1999年10月以降、オッズ4(O4馬単)・オッズ5(O5三連複)は2002年6月以降、オッズ6(O6三連単)は2004年8月以降、WIN5(WF)は2011年4月以降、競走馬除外(JG)は2011年6月以降。生産者(BR)・馬主(BN)・産駒(SK)・レコード(RC)も1986年以降。地方交流・海外国際レースは2000年以降のみ。",
+        "source_url": "https://github.com/cariandrum22/Xanthos/blob/main/design/specs/data_types.md",
+        "confidence": "high"
+      },
+      {
+        "claim": "Pythonからはpywin32のwin32com.client.Dispatch('JVDTLab.JVLink')で呼び出す",
+        "detail": "jvlink = win32com.client.Dispatch('JVDTLab.JVLink'); jvlink.JVInit('UNKNOWN') が定石。ref/outパラメータを持つメソッドはpywin32がタプルで返す。例: JVOpenは(return_code, read_count, download_count, last_file_timestamp)の4要素タプル、JVReadは(return_code, buff_str, size, filename)、JVRTOpenは(return_code, read_count)。sid('UNKNOWN'等)は認証ではなくソフト識別用で、認証はサービスキーで行う。",
+        "source_url": "https://github.com/miyamamoto/jrvltsql/blob/master/src/jvlink/wrapper.py",
+        "confidence": "high"
+      },
+      {
+        "claim": "JV-Linkは32bit(x86) COMサーバーで、64bit Pythonからは直接使えない",
+        "detail": "64bitプロセスから呼ぶとREGDB_E_CLASSNOTREGエラーになるため32bit Pythonが事実上必須。jrvltsqlのREADMEも『JV-Link COMを直接使う環境では32-bit Pythonを推奨』と明記。64bitで使う場合はDllSurrogate設定(out-of-processサーバー化)などの回避策が必要。Jupyter等で32bit Pythonを使う際の環境構築トラブルも報告されている。",
+        "source_url": "https://github.com/miyamamoto/jrvltsql/blob/master/README.md",
+        "confidence": "high"
+      },
+      {
+        "claim": "JVSetServiceKey APIは不安定で-100を返すことがあり、レジストリ直書きが回避策として使われる",
+        "detail": "jrvltsqlの実装では『JVSetServiceKey API is unreliable (returns -100), use registry instead』として、HKLM\\SOFTWARE\\JRA-VAN\\JV-Link の ServiceKey 値に reg add で直接書き込む方式を採用。サービスキーは通常JRA-VAN DataLabアプリ側で設定し、JV-Linkがそれを参照する。JVRTOpenの戻り -1=該当データなし(正常)、-114=契約外データ種別 などのエラーコードを区別する必要がある。",
+        "source_url": "https://github.com/miyamamoto/jrvltsql/blob/master/src/jvlink/wrapper.py",
+        "confidence": "high"
+      },
+      {
+        "claim": "JVReadはShift-JIS(CP932)でレコードを返し、未知レコード種別IDは読み飛ばす設計が必須",
+        "detail": "公式データ種別一覧に『取得するデータ種別に新レコード種別が追加されてもいいように、不明なレコード種別IDを読み飛ばす処理を考慮してください』と明記。各レコードは先頭2バイトのレコード種別ID(RA/SE/HR等)で判別する。pywin32経由ではBSTRにSJISバイトが格納されるため、cp932/latin-1での再エンコード処理が必要になる(CP1252の0x80-0x9F問題への対処も)。",
+        "source_url": "https://github.com/cariandrum22/Xanthos/blob/main/design/specs/data_types.md",
+        "confidence": "high"
+      },
+      {
+        "claim": "代替/補助ツール: EveryDB2は多DBMS対応、PC-KEIBA DatabaseはPostgreSQL専用",
+        "detail": "EveryDB2はJV-Linkで取得したデータをSQL Server/Oracle/Access/PostgreSQL/MySQL/SQLite/Excel等の好みのDBMSに構築できる。PC-KEIBA DatabaseはJRA・地方両対応でPostgreSQLのみが選択肢(AWS Aurora運用例もあり)。両者ともJV-Linkを内部で呼んでDataLabデータをローカルDB化する。OSS例のjrvltsqlはSQLite/DuckDB/PostgreSQLに対応(NL_RA,NL_SE,NL_HR,NL_O1〜O6, 時系列TS_O1/TS_O2, 速報TS_SOKUHO_O1〜O6等のテーブルに格納)。",
+        "source_url": "https://jra-van.jp/dlb/sft/lib/everydb.html",
+        "confidence": "high"
+      },
+      {
+        "claim": "TARGET frontier JVはJV-Linkにデータ取得を委譲し、自前DBを構築・CSV出力する2層構成",
+        "detail": "データ登録はTARGETがDB構築を担い、JV-Link(JRA-VANソフト)がインターネット/CD-ROMからデータを読んでTARGETに渡す分業。サービスキーをJV-Link設定に入れ、登録開始ボタンで前回登録日以降の新規データを自動DL・登録。画面イメージCSVと項目指定CSVの2形式で出力可能。",
+        "source_url": "https://jra-van.jp/target/howtotarget.html",
+        "confidence": "high"
+      },
+      {
+        "claim": "DataLab会員は月額2,090円(税込)・追加課金なし、JV-Link導入日から1か月無料体験",
+        "detail": "いくらデータを取得しても月額2,090円固定で追加料金は発生しない。JV-Linkをインストールするだけで体験機能が使え、無料体験はJV-Link導入日から1か月。入会で利用キー(サービスキー)が発行され、2台まで利用可(キーは2つ発行)。Windows PC専用でスマホ不可。",
+        "source_url": "https://support.jra-van.jp/jravan/detail?site=SVKNEGBV&id=24&hot_list=true",
+        "confidence": "high"
+      },
+      {
+        "claim": "過去データはセットアップで1986年以降を一括取得可能(約40年分)",
+        "detail": "セットアップモードでは1986年以降の全データを一括取込できる。JRA-VANが保有・提供する過去データは1986年からの中央競馬データが基盤(賭式・データ種別により実提供開始年は前述の通り異なる)。蓄積データ取得には『セットアップ』『通常』『今週』の3モードがある。",
+        "source_url": "https://jra-van.jp/dlb/feature.html",
+        "confidence": "medium"
+      }
+    ],
+    "pitfalls": [
+      "64bit Pythonで JVDTLab.JVLink をDispatchすると REGDB_E_CLASSNOTREG で失敗する。32bit Python環境(または32bitのpywin32)を用意するのが最も確実。64bitで使うならDllSurrogate設定が必要。",
+      "JVSetServiceKey APIが -100 を返して機能しないケースがある。実運用ではDataLabアプリ側でサービスキーを設定するか、レジストリ(HKLM\\SOFTWARE\\JRA-VAN\\JV-Link の ServiceKey)に直接書き込む回避策が使われる。",
+      "JVOpen('RACE')でoptionを誤ると期待したレコード種別(HR払戻やO5等)が返らず、JG/H1だけが返る等の混乱が起きる。optionとdataspecの公式対応表(option=1/2/3,4で使えるdataspecが違う)を厳守する。",
+      "JVReadはShift-JIS(CP932)バイト列を返す。pywin32ではBSTR経由で文字化けしやすく、cp932/latin-1の再エンコードやCP1252(0x80-0x9F)対策が必要。",
+      "1ファイル/1 dataspec内に複数レコード種別が混在し、将来新レコード種別が追加されうる。先頭2バイトのレコード種別IDで分岐し、未知IDは必ず読み飛ばす設計にしないとデータ取得が破綻する。",
+      "セットアップ(1986年以降全件)は数十万〜数百万レコードでダウンロードに長時間かかる。JVStatusでDL進捗を監視し、途中再開のためにlastfiletimestampを保存する運用が必要。",
+      "賭式ごとに提供開始年が違う(三連単O6/H6は2004年8月以降、ワイドO3は1999年10月以降等)。古い年のデータに新しい賭式オッズを期待するとNULLになる。"
+    ],
+    "recommendations": [
+      "開発・本番ともに32bit Python(+ 32bit pywin32)を基準にし、win32com.client.Dispatch('JVDTLab.JVLink')でJV-Linkを叩く構成にする。64bit統合が必須ならDllSurrogate化を別途検証する。",
+      "取得フローは JVInit→(サービスキーはDataLabアプリ/レジストリで事前設定)→JVOpen(dataspec,fromtime,option)→JVStatusでDL完了待ち→JVReadループ(戻り値0/-1/負を判定)→JVClose を定型ラッパー化する。jrvltsql/Xanthosの実装が良い参照。",
+      "初回は option=3 or 4 のセットアップで1986年以降を一括取込し、以後は option=1(差分)で前回のlastfiletimestampをfromtimeに渡す差分運用にする。今週の出馬表系は option=2 を併用する。",
+      "当日の最新オッズ・馬体重・直前変更はJVRTOpenの速報系(0B11/0B14/0B16/0B30〜0B36/0B41/0B42)を使い、確定後はJVOpenの蓄積系(RACE→RA/SE/HR/O1〜O6/H1/H6)で整合させる二段構えにする。",
+      "DBはまずSQLite/DuckDBで動かし、本格運用でPostgreSQLへ。OSSのjrvltsqlやEveryDB2のテーブル設計(NL_RA,NL_SE,NL_HR,NL_O1〜O6,TS_O1/O2,TS_SOKUHO_O*)を雛形にすると速い。自前実装が重ければEveryDB2(多DB対応)/PC-KEIBA(PostgreSQL)を採用する。",
+      "公式 JV-Data4901(またはSDK同梱の JV-Data仕様書・データ種別一覧.xlsx)を一次資料として手元に置き、レコード種別ごとのフィールド定義・コード表を厳密にパーサに反映する。",
+      "レコードパーサは先頭2バイトのレコード種別IDでディスパッチし、未知IDは黙ってスキップ。バージョンアップでのレコード追加に耐える設計にする。"
+    ],
+    "open_questions": [
+      "JVGets使用時のメモリ解放(呼び出し側でのbytearray管理)の具体的なpywin32実装と、JVReadとの性能差の定量データ。",
+      "DataLab以外(地方競馬DATA / UmaConn など)のJV-Link互換APIとの差分、および将来的な64bit公式対応・.NET版提供の有無。",
+      "年額プランや法人/商用利用ライセンスの正確な金額(今回は月額2,090円税込のみ一次確認、年額・商用条件は未確認)。",
+      "JVOpenのreadcount/downloadcountの厳密な意味(レコード件数かファイル件数か)と、巨大セットアップ時の正確な進捗計算式。",
+      "速報系JVRTOpenのkeyフォーマット(YYYYMMDDJJRR / YYYYMMDDJJKKHHRR / YYYYMMDD)の各賭式・各dataspecごとの必須/任意の組み合わせ詳細。"
+    ]
+  },
+  {
+    "dimension": "競馬(単勝/複勝/連系)の着順・勝率予測のモデリング手法",
+    "summary": "競馬の着順・勝率予測は、(A) GBDT(LightGBM/XGBoost)による2値分類+確率較正、(B) Learning-to-Rank(LambdaMART/LGBMRanker)、(C) 条件付きロジット/Plackett-Luce(レース内ソフトマックス)の3系統が主流で、いずれも「同一レース内で出走馬を相対化する」ことが本質的に重要です。学術的な源流はBolton-Chapman(1986)の多項ロジットとBenter(1994)の二段階モデル(ファンダメンタルモデルの確率と公衆オッズ由来の市場確率を第2のロジットで合成)で、市場確率は極めて強力な特徴量であり「別軸でブレンドする」のが定石です。勝率較正はPlatt/Isotonicでlog-lossを最適化し、期待値=較正済み勝率×オッズで馬券選択します。複勝・馬連・三連複はHarville等の式で単勝確率から展開します。JRAの控除率は単複20%、馬連系22.5%、三連複/馬単25%、三連単27.5%、WIN5は30%で、この控除率がそのまま「超えるべき壁」です。ネット上の「回収率100%超」報告の多くは確定オッズ前提のバックテストやリーク・過剰適合・締切オッズずれを含み、実運用での再現は容易ではない点に最大の注意が必要です。",
+    "key_facts": [
+      {
+        "claim": "学術的源流はBolton-Chapman(1986)の多項ロジットモデルで、レースを1つの単位として出走馬間の相対強度(within-race competition)をモデル化し、各レース内で確率が合計1になる",
+        "detail": "Bolton & Chapman 'Searching for Positive Returns at the Track: A Multinomial Logit Model for Handicapping Horse Races'(Management Science, 1986)。200レースのDBで馬・騎手・レース特徴量を用い、多項(条件付き)ロジットで勝率を推定。各馬を独立に扱う通常のロジスティック回帰と異なり、同一レース内の競合関係を保持する点が核心。長距離側のロングショット(大穴)を除く side constraint を入れた控えめな賭け方で正の期待リターンの可能性を示した。",
+        "source_url": "https://gwern.net/doc/statistics/decision/1986-bolton.pdf",
+        "confidence": "high"
+      },
+      {
+        "claim": "Benter(1994)は二段階モデルを採用し、ファンダメンタルモデルの確率と『公衆オッズから逆算した市場確率』を第2の条件付きロジットで合成(market blend)した",
+        "detail": "Benter 'Computer Based Horse Race Handicapping and Wagering Systems: A Report'(1994)。第1段階で条件付きロジットにより馬の『強さ』を推定、第2段階でその強さと公衆オッズの予測確率を独立変数とする第2のロジットを推定して合成。改善度の評価にはMcFaddenの擬似R2(公衆オッズ単独 vs 公衆オッズ+ファンダメンタルモデル)の差を用いた。市場確率は単独で非常に強力で、自前モデルはそれに上乗せできるかが勝負、という思想。5年間の実運用で有意な正リターンを報告。",
+        "source_url": "https://gwern.net/doc/statistics/decision/1994-benter.pdf",
+        "confidence": "high"
+      },
+      {
+        "claim": "現代の日本の競馬MLの主流は LightGBM(GBDT) による2値分類で、勝ち/負け(または3着内/外)を予測し予測確率を出力する",
+        "detail": "LightGBMは勾配ブースティング決定木の実装で、XGBoost/CatBoostと並ぶ。目的変数を『1着か否か』『3着以内か否か』等の2値にして binary objective で学習し、予測確率を期待値計算に使う構成が広く採られる。PC-KEIBA等が二値分類の実装手順を公開。",
+        "source_url": "https://pc-keiba.com/wp/binary/",
+        "confidence": "high"
+      },
+      {
+        "claim": "Learning-to-Rank(LambdaRank/LambdaMART)はレースをquery(group)単位として着順を直接ランキング学習でき、2値分類より相対順位の学習に適する",
+        "detail": "LightGBMの objective='lambdarank'、metric='ndcg' を用い、各レースを group/query として与え、eval_at=[1,2,3] 等で上位的中を評価。LGBMRankerクラスでgroupパラメータにレースごとの出走頭数を渡す。2値分類が各馬を独立評価するのに対し、ランク学習はレース内の相対順位関係を直接最適化する点が長所。エニグモ開発ブログ等が実装と『必勝本に勝てるか』の検証を公開。",
+        "source_url": "https://pc-keiba.com/wp/lambdarank/",
+        "confidence": "high"
+      },
+      {
+        "claim": "韓国(ソウル競馬)の学術研究(2024)では、pairwise学習(LambdaMART: XGBoost/LightGBM/CatBoost Ranker, RankNet)がpointwise(線形回帰/RF)より一般に予測力が高く、CatBoost Rankerが最良だった",
+        "detail": "'Horse race rank prediction using learning-to-rank approaches'(The Korean Journal of Applied Statistics, 2024)。前処理でレース距離に応じてレース記録を標準化しデータ不均衡に対処、レース情報・騎手・馬・調教師情報を併用。pairwiseがランキング関係を学習できるため優位、CatBoost Rankerが最良。関連研究ではListwise LambdaRankでNDCG/MAP/MRRを評価し、CatBoostがランク品質最良(NDCG=0.8895, MAP=0.4204)、LightGBM/XGBoostが実賭けシナリオで精度良好と報告。",
+        "source_url": "https://koreascience.kr/article/JAKO202414143309228.page",
+        "confidence": "high"
+      },
+      {
+        "claim": "同一レース内での相対化(レース内z-score正規化・距離別標準化・ランク特徴)は精度向上に本質的に重要",
+        "detail": "競馬は『同じレースの中で誰が速いか』という相対競争のため、馬ごとの絶対値より相対値が効く。韓国論文ではレース距離別にレース記録を標準化。日本の実務記事でも距離・年齢等の連続量を標準化/正規化し、人気やタイムを過去レースから相対化(ローリング特徴量)する工夫が共有されている。LightGBMは値が大きい特徴を重要視する性質があるため、レース内偏差値/順位特徴を入れる設計が推奨される。",
+        "source_url": "https://agusblog.net/keiba-ai-feature-value-engineering/",
+        "confidence": "medium"
+      },
+      {
+        "claim": "勝率の確率較正(calibration)はPlatt scaling(シグモイド)とIsotonic Regression(単調増加制約の非パラメトリック較正)が標準で、AUC向上ではなく予測確率の質(=期待値計算の正確さ)とROIの安定化が目的",
+        "detail": "Isotonic Regressionは単調増加のみを仮定しデータ駆動で予測確率を実勝率に近づける。スタッキング+Isotonicは『AUCを上げる技術ではなく確率の質を上げる技術』で、結果として期待値計算の精度が上がりROIのブレが減る、という整理が共有されている。較正の良し悪しはキャリブレーション・プロット(信頼度曲線)で確認し、予測確率帯ごとに実勝率と一致するかを見て賭ける帯を選ぶ。",
+        "source_url": "https://zenn.dev/keiba_ai_rui/articles/0bd6771159a6eb",
+        "confidence": "high"
+      },
+      {
+        "claim": "条件付きロジット/Plackett-Luce(レース内ソフトマックス)は構造上レース内で確率合計が1になり較正が自然で、Plackett-Lucesはlistwise損失としてLTRでも使われる",
+        "detail": "ソフトマックスは複数値を0-1の確率に変換し出力合計が常に1。レース内ソフトマックス(=多項/条件付きロジット)はこの性質で各レース内勝率を直接出す。Plackett-Luceモデルは元来競馬の着順予測のために提案され、候補集合から逐次的に1着→2着…を勝率分布に従って選ぶ生成過程を表す。これはlistwiseのランキング損失(PL loss)としてLearning-to-Rankでも用いられる。",
+        "source_url": "https://www.researchgate.net/publication/335854849_Plackett-Luce_model_for_learning-to-rank_task",
+        "confidence": "high"
+      },
+      {
+        "claim": "市場確率(公衆オッズ)は最強クラスの予測子で、モデルに混ぜる/ブレンドするのが定石。近年の分析でも単勝オッズ由来の勝率は実勝率とほぼ一致する",
+        "detail": "単勝オッズから逆算した勝率(市場の総意)は実際の勝率にほぼ一致するため、ベンチマーク兼強力な特徴量になる。Benter流に市場確率を別軸で扱い第2段階で合成する(market blend)か、特徴量として入れる。注意点として、オッズには控除率分のバイアス(過剰ラウンド)が含まれるので、市場確率は正規化(合計1へスケール)してから用いる。",
+        "source_url": "https://qiita.com/architectJapan/items/1f7cfb2b156038c65f99",
+        "confidence": "medium"
+      },
+      {
+        "claim": "複勝・馬連・馬単・三連複/三連単などの連系は、単勝確率からHarville(1973)型の逐次条件付き確率で展開できる",
+        "detail": "Harvilleモデル: m着になる確率=1..m-1着が確定した残りの中で勝つ確率。馬単(exacta)はAB=pA*(pB/(1-pA))。三連単(trifecta)はp1*p2*p3/((1-p1)*(1-p1-p2))。これで単勝勝率pから2着・3着・各連系の的中確率を導出し期待値計算できる。ただしHarvilleは上位人気を過大評価する既知のバイアスがあり、discounted Harville等の補正が提案されている。",
+        "source_url": "https://arxiv.org/pdf/1503.06535",
+        "confidence": "high"
+      },
+      {
+        "claim": "JRAの控除率(=超えるべき壁)は券種で異なる: 単勝・複勝20%(払戻率80%)、枠連・馬連・ワイド22.5%、馬単・三連複25%、三連単27.5%、WIN5は30%",
+        "detail": "JRA公式の払戻率は単勝/複勝80%、枠連/馬連/ワイド77.5%、馬単/3連複75%、3連単72.5%、WIN5 70%。競馬法は払戻率を70-80%の範囲で主催者が券種ごとに設定可と規定(2014年6月7日改定)。控除率が低い単複が回収率の壁が最も低く、三連単・WIN5ほど壁が高い。",
+        "source_url": "https://www.jra.go.jp/news/other/20140303.html",
+        "confidence": "high"
+      },
+      {
+        "claim": "ネット上の『回収率100%超』報告は確定オッズ前提のバックテスト・買い目フィルタ・後知恵が多く、実運用では締切オッズずれ等で再現が難しい",
+        "detail": "複数の開発者が単勝回収率120-168%等を報告するが、共通の知見は『予測より買い方が効く』『勝率は回収率に直結しない』。シミュレーションで確定オッズを使うと100%超でも、実際にはそのオッズで買えない(締切後にオッズ確定)ため期待値を購入時に正確に出すのは原理的に不可能。さらにリーク監査・過剰適合の罠がある。控除率という構造的ハンデを継続的に超えるのは容易でないと理解すべき。",
+        "source_url": "https://qiita.com/yurelu/items/f244d035cca070013b34",
+        "confidence": "high"
+      },
+      {
+        "claim": "データ源はJRA-VAN Data Lab.のJV-Link(API)経由でJV-Data(RA=レース詳細, SE=馬毎レース情報, HR=払戻, O1-O6=オッズ等)を取得する公式SDKが提供される",
+        "detail": "JRA-VAN Data Lab.はJRA公式データ配信。JV-LinkがインターフェースモジュールでSDKにはJV-Data構造体(C#/C++/Delphi/VB)・サンプル・仕様書が含まれる。蓄積系(過去データ一括)と速報系(リアルタイム)があり、リアルタイムオッズ(O1等)も取得可能。RA/SE/HR等のレコード種別でレース・馬・払戻を扱う。",
+        "source_url": "https://developer.jra-van.jp/t/topic/49",
+        "confidence": "medium"
+      },
+      {
+        "claim": "日本で代表的な学習リソース/コード例として dijzpeb『競馬予想で始める機械学習』(Zenn)があり、LightGBM+scikit-learn+optunaでスクレイピング→特徴量→相対評価の目的変数設定→期待値ベース馬券までを扱う",
+        "detail": "Zenn書籍シリーズ(最先端ver/教科書ver/完全版)。LightGBM, BeautifulSoup, scikit-learn, pandas, optunaを使用。目的変数を相対評価で設定、predict関数を単勝オッズの期待値計算に改修して馬券判断、という実装パターン。GitHub上にも nosuke55/Horse-racing 等のLightGBM競馬予測リポジトリが存在。",
+        "source_url": "https://zenn.dev/dijzpeb/books/951e0f755229125bb79c",
+        "confidence": "high"
+      },
+      {
+        "claim": "現代のGBDT系統と古典的条件付きロジットは目的が異なり、用途で使い分ける: GBDTは非線形特徴量を強力に拾い較正で確率化、条件付きロジット/PLはレース内整合的な確率を構造的に保証",
+        "detail": "GBDT二値分類: 長所=非線形・交互作用を自動学習、特徴量重要度/SHAPで解釈、欠損に強い。短所=出力確率がレース内で合計1にならず較正必須、各馬独立で相対性が弱い。LambdaMART(LTR): 長所=レース内相対順位を直接最適化。短所=出力が順位スコアで確率較正が別途必要。条件付きロジット/PL: 長所=レース内で確率合計1・市場確率合成と相性良・解釈容易。短所=線形仮定で表現力が低くGBDTより精度が出にくいことが多い。実務では『GBDTで強いスコア→レース内ソフトマックス/較正で確率化→市場確率とブレンド』が有力な組み合わせ。",
+        "source_url": "https://gwern.net/doc/statistics/decision/1994-benter.pdf",
+        "confidence": "medium"
+      }
+    ],
+    "pitfalls": [
+      "データリーク: 確定後の情報(確定オッズ、結果由来の集計、未来のローリング統計)を学習に混入させると、バックテストでは高精度でも実運用で崩壊する。時系列で厳密に学習/検証を分割し、各レースの締切時点で入手可能な情報のみ使う。",
+      "確定オッズ前提のバックテストの嘘: シミュレーションで確定(最終)オッズを使うと、そのオッズでは買えない(締切後に確定する)。自分の賭けや人気変動でオッズが下がり、購入時の期待値は確定オッズより低くなる。締切直前オッズや保守的なオッズ低下マージンで評価すべき。",
+      "較正不足での期待値計算: GBDT2値分類の生確率はレース内合計が1にならず過信/過小がある。Platt/Isotonicで較正し、レース内で正規化(合計1)してから期待値=勝率×オッズを計算しないと、誤った買い目を量産する。",
+      "控除率の構造的ハンデの軽視: 単複でも20%の控除率があり、ランダムや市場追従では長期回収率は必ず80%前後に収束する。控除率を継続的に超えるには市場が誤って付けたオッズ(=市場確率と自モデル較正確率の乖離)を狙う必要がある。",
+      "三連単/WIN5など高控除券種への安易な傾倒: 的中時の配当は大きいが控除率27.5-30%と壁が高く分散も大。Harville展開の確率誤差も連系で増幅されるため、まずは控除率の低い単複/ワイドで較正と期待値の正しさを検証するのが定石。",
+      "Harville式のバイアス: 単純Harvilleは上位人気の連対/複勝確率を過大評価する。discounted Harvilleや実データでの補正、もしくは2着・3着を直接学習するモデルで補正する必要がある。",
+      "市場確率の未正規化: オッズ由来の暗黙確率は控除率分だけ合計が1を超える(オーバーラウンド)。合計1に正規化してから市場確率として扱わないとブレンドや期待値計算がずれる。",
+      "過剰適合とハイパラ過最適化: optuna等で検証期間に過剰最適化すると、本番の別期間で回収率が崩れる。ウォークフォワード検証と十分な期間・頭数での評価が必要。"
+    ],
+    "recommendations": [
+      "ベースモデルはLightGBM(GBDT)で『3着内/外』や『1着/否』の2値分類、あるいはobjective=lambdarankのLTRから始める。各レースをgroup/queryとして与え、レース内相対性を学習に組み込む。",
+      "特徴量はレース内相対化を必ず入れる: 同一レース内z-score/偏差値、レース内順位特徴、距離別標準化したタイム、過去走のローリング集計(締切時点で確定済みのもののみ)。",
+      "出力確率は必ず較正する: 検証セットでIsotonic(データ量が多い場合)またはPlatt(少ない場合)を適用し、log-lossとキャリブレーション・プロットで質を確認。較正後にレース内で正規化(合計1)する。",
+      "市場確率(単勝オッズ由来)はBenter流に別軸で扱う: 強力なベンチマーク兼特徴量とし、最終確率は『自モデル較正確率』と『正規化した市場確率』をブレンド(第2段ロジット or 重み付き幾何平均)。改善度はMcFadden擬似R2やlog-loss差で評価。",
+      "馬券は期待値=較正済み勝率×購入時オッズで選択し、期待値>1かつ較正が信頼できる確率帯のみ賭ける。資金配分はフラクショナルKelly(満額Kellyの1/4程度)で分散を抑える。",
+      "連系は単勝確率からHarville(必要ならdiscounted Harville)で展開しつつ、可能なら2着/3着・ワイドを直接学習するモデルで補正する。まず控除率の低い単複・ワイドで検証する。",
+      "評価はウォークフォワード(時系列分割)で行い、確定オッズではなく締切直前オッズ+オッズ低下マージンを用いた保守的バックテストで回収率を測る。リーク監査をチェックリスト化する。",
+      "データ取得はJRA-VAN Data Lab.のJV-Link経由でRA/SE/HR/O1等を蓄積系で一括取得しSQLite等に格納、速報系でリアルタイムオッズを取り、確定前オッズでの期待値運用に備える。"
+    ],
+    "open_questions": [
+      "JRA-VAN Data Lab.速報系でのリアルタイムオッズ(O1)の更新頻度と、締切何分前まで取得できるか(締切オッズずれ対策の実効性)を一次情報で確認する必要がある。",
+      "日本のJRA市場での『市場確率と較正確率の乖離を突く』戦略が、Benter(香港)や韓国(ソウル)と同様に控除率を超えて機能するかの公開された実証データが乏しい。",
+      "LightGBMのlambdarank/rank_xendcg出力を確率として較正する最良手法(レース内ソフトマックス温度パラメータの推定法)についての定量比較が不足している。",
+      "Harville展開 vs 2着/3着直接学習モデルの、複勝・三連複的中精度の定量比較(日本データでの)を示す公開研究が見当たらない。",
+      "ネット記事の『回収率100%超』の多くは検証条件(オッズ取得時点・期間・リーク有無)が不透明で、再現性のある厳密な公開ベンチマークが存在しない。"
+    ]
+  },
+  {
+    "dimension": "特徴量エンジニアリングとデータリーク防止(point-in-time)",
+    "summary": "JRA-VANデータ(JV-Data)を使う競馬予想システムでは、特徴量は大きく「過去走由来の馬の能力指標」「出走条件(コース/距離/馬場/枠)適性」「人(騎手・厩舎)・血統(種牡馬)の集計成績」「斤量・馬体重・ローテ等の当日情報」「オッズ時系列」に分類できる。最大の落とし穴はデータリークで、特にレース確定後にしか存在しない情報(着順・走破タイム・上がり3F・通過順・確定オッズ・払戻)を当該レースの特徴に混入させること、および騎手勝率や種牡馬成績などの集計を「未来の走を含めて」算出してしまうことが典型例である。防止の肝は、各特徴を「予測時点(発走前)で実際に取得可能だったか」で判定する point-in-time 設計と、集計を対象レースの race_date より前のデータだけに厳密に絞ること(JOIN先テーブルにも時間フィルタを入れる)、そして時系列順を守る walk-forward 検証である。リークを正しく潰すとバックテストの異常な高ROIは現実的な水準(構造ROI 80%前後)まで低下する。JRA-VANでは馬体重やオッズは速報系(JVRTOpen系のWH/O1〜O6)として発走直前に、着順・払戻・上がり等は確定後(蓄積系SE/HR)に提供されるため、提供タイミングを根拠にリークを物理的に遮断する実装が推奨される。",
+    "key_facts": [
+      {
+        "claim": "JV-Dataには蓄積系(JVOpen)と速報系(JVRTOpen)の2系統があり、レコード種別ごとに提供タイミングが異なる(RA/SE/HR/O1〜O6/WH等、計40種類以上)",
+        "detail": "蓄積系データ(過去のレース結果RA/SE/HR等)はJVOpenで、速報系データ(当日のオッズO1〜O6、馬体重WH、払戻HR等)はJVRTOpenで取得する。SE=馬毎レース情報(着順・走破タイム・上がり3F・通過順・馬体重等)、HR=払戻、O1=単勝複勝枠連オッズ、WH=馬体重。リーク防止は『その特徴がどのレコードで、レース前か後か』で判断するのが基本。",
+        "source_url": "https://jra-van.jp/dlb/sft/lib/JvlinktoImporter.html",
+        "confidence": "high"
+      },
+      {
+        "claim": "JV-Dataの公式詳細仕様(レコードフォーマット・データ種別一覧・コード表)はJRA-VANが配布するExcel仕様書で確認できる",
+        "detail": "データ種別一覧(JV-Data4512.xlsx)とコード表(JV-Data2311.xls)が公式に提供されており、SEレコードに馬体重・馬体重増減・上がり3Fタイム・確定着順等のフィールド定義がある。馬体重増減は前走時馬体重との差として記録される。設計時は必ずこの一次仕様書でフィールドのレース前/後の別を確認すべき。",
+        "source_url": "https://jra-van.jp/dlb/sdv/sdk/JV-Data4512.xlsx",
+        "confidence": "high"
+      },
+      {
+        "claim": "含水率・クッション値は開催前日(金曜)昼過ぎと開催当日9時30分頃に発表され、当日発表分は発走前に利用可能=特徴量に使える",
+        "detail": "JRA公式によれば含水率測定は金曜午前・開催日早朝、発表は前日昼過ぎと当日概ね9時30分頃。クッション値も同様。したがって馬場状態(含水率/クッション値)は発走前に確定公表されており、point-in-timeでも特徴量として安全に使える(着順等の確定後情報とは扱いが異なる)。",
+        "source_url": "https://www.jra.go.jp/keiba/baba/kaisetsu/",
+        "confidence": "high"
+      },
+      {
+        "claim": "クッション値は芝表面に重りを落とした反発力(芝+路盤両方の状態)、含水率は路盤の水分のみを表す",
+        "detail": "クッション値は芝の生育状況も反映し芝と路盤両方の状態、含水率は芝馬場路盤のみの水分状態。両者は別物として馬場適性の特徴量に使い分ける。JRA公式が基礎知識を解説している。",
+        "source_url": "https://www.jra.go.jp/keiba/baba/moist/",
+        "confidence": "high"
+      },
+      {
+        "claim": "データリーク防止の中核は『時点固定(Point-in-Time: PiT)特徴量生成』で、レース後にしか確定しないカラムを強制的にNaN化して物理的に遮断する",
+        "detail": "予測対象年について、着順・タイム・確定オッズ・馬場状態(結果系)・上がり3F等のレース後確定カラムを動的にマスク(NaN化)する『LeakageProtector』的な実装。バックテストの異常な高ROIはこのリークが原因であることが多く、PiT適用で物理的に遮断する。",
+        "source_url": "https://zenn.dev/ricotiler/articles/keiba-ai-15-pit-generation-leak-prevention",
+        "confidence": "high"
+      },
+      {
+        "claim": "集計特徴(騎手勝率・種牡馬成績等)は対象レースのrace_dateより『過去』のデータだけで算出しなければならず、時間フィルタはJOIN先にも必要",
+        "detail": "レース日付より過去のデータに絞って成績を集計する必要がある。past_races側もrace_date<対象日の条件をJOINクエリに入れないと、JOIN先が未来の走を含みリークする。フィルタは集計対象・JOIN条件など複数箇所に独立して必要(『race_dateフィルタを4箇所に入れて気づいた』)。産駒成績を未来込みで集計するのは不適切。",
+        "source_url": "https://qiita.com/umascore/items/de0b9f40212d3446fb13",
+        "confidence": "high"
+      },
+      {
+        "claim": "リークを正しく除去すると、モデル単体で控除率を安定に超えるのは難しく、構造ROIは80%程度まで低下するのが現実",
+        "detail": "リークを消すと回収率が大きく下がる。市場(確定オッズ)に含まれる集合知をどうモデルと合成するかが鍵という指摘。異常に高いバックテストROIはリークを疑うべき強いシグナル。",
+        "source_url": "https://qiita.com/architectJapan/items/1f7cfb2b156038c65f99",
+        "confidence": "medium"
+      },
+      {
+        "claim": "評価は時系列順を守るwalk-forward(ウォークフォワード)が必須で、ランダムなk-fold分割はリークを生む",
+        "detail": "過去データを単純分割せず『予測対象年の前年末までのデータで学習』を年度単位で繰り返すウォークフォワード・シミュレーション。TimeSeriesSplitは時系列ソート前提で過去→未来の順序を守る。汎用ML文献でも、未来観測で過去/現在を予測するのは典型的リーク源とされる。",
+        "source_url": "https://zenn.dev/ricotiler/articles/keiba-ai-15-pit-generation-leak-prevention",
+        "confidence": "high"
+      },
+      {
+        "claim": "スピード指数(西田式)は基準タイムからの走破タイム差を距離・馬場・斤量で補正した能力指標で、有力な過去走特徴量",
+        "detail": "西田式: 指数=(基準タイム−走破タイム)×距離指数+馬場指数+(斤量−55)×2+80。距離・馬場・開催場所別の平均タイムからの偏差として能力を数値化。ただし走破タイム自体はレース後確定なので、当該レースのスピード指数は特徴に使えず、過去走のスピード指数のみ使う(point-in-time)。",
+        "source_url": "https://www.keibasite.com/speed-nishida/",
+        "confidence": "high"
+      },
+      {
+        "claim": "PCI(ペースチェンジ指数)は上がり3F地点までのタイムと上がり3Fタイムの比で、脚質(差し/先行)を数値化した特徴量",
+        "detail": "PCIは脚質が後ろの馬ほど高く、前の馬ほど低い。上がり指数=瞬発力、ペース指数=持久力。通過順・脚質・PCIは過去走から作る展開系特徴量だが、いずれも当該レース分はレース後確定なので過去走分のみ使用する。",
+        "source_url": "https://keibasys.seesaa.net/article/482086231.html",
+        "confidence": "medium"
+      },
+      {
+        "claim": "実運用の競馬AIは過去成績・騎手・血統などから480個近い特徴量を作り、過去走指標・騎手厩舎・種牡馬・斤量・馬体重・枠順・ローテ間隔・ペース等を統合する",
+        "detail": "特徴量は機械学習モデルが参照する情報。代表例: スピード指数、テンの時計、上がりの時計、過去4走、斤量、馬体重・増減、父/母父/父系(血統)。出走馬発表後(前日等)に過去成績テーブルと血統テーブルを更新して特徴を組む運用が推奨される。",
+        "source_url": "https://note.com/dijzpeb/n/n235be224ec2f",
+        "confidence": "medium"
+      },
+      {
+        "claim": "枠順/馬番バイアスは頭数で内外の意味が変わるため、出走頭数で正規化し、コース・距離別にz値等で統計的有意性を評価して特徴化する",
+        "detail": "8番は18頭立てなら内枠、8頭立てなら大外。各枠の複勝率がコース平均からどれだけ偏るかをz値で評価し、z≧2.0で有意なプラスバイアスとみなす。コース形状(例: 中山外回りは3角まで約250mで内枠有利)で傾向が変わる。トラックバイアスは開催時期・天候・馬場整備で変動する点に注意。",
+        "source_url": "https://saratoga.jp/gate-in/",
+        "confidence": "medium"
+      },
+      {
+        "claim": "オッズは『中間オッズ(発売中)→最終オッズ(締切直後)→確定オッズ(払戻確定後)』と段階があり、確定オッズや払戻はレース後情報なのでリークになる",
+        "detail": "締切前は中間オッズ、締切直後が最終オッズ、払戻確定後が確定オッズ。多くのサイトが配布するオッズはレース後の確定値で購入時点と異なる。特徴量に使えるのは発走前の時系列オッズ(直前オッズ)までで、確定オッズ・払戻を入れると典型的リークになる。",
+        "source_url": "https://keibahukuhuku.com/ozzuriron/keiba-ozzu-itsukara",
+        "confidence": "high"
+      },
+      {
+        "claim": "発走直前まで変動する直前オッズ(全馬券種)はJRA-VAN速報系で取得でき、購入判断・特徴量化の対象になる",
+        "detail": "オッズはレース直前まで刻々と変化し発走直前オッズが購入判断に重要。JRA-VAN DataLabの時系列オッズ(O1〜O6等)/速報系で直前まで取得可能。時系列オッズの変化(支持率の動き、異常投票)を特徴化する手法がある。",
+        "source_url": "https://note.com/dijzpeb/n/n9c011276e1f2",
+        "confidence": "medium"
+      },
+      {
+        "claim": "新馬・初出走馬は過去走が存在しないため過去走系特徴が欠損(NaN)になり、特別扱いが必要。LightGBMはNaNを分岐で扱える",
+        "detail": "未勝利戦で初出走となる馬は勝率は低いが回収率が高い傾向という分析もあり、過去走なし(NaN)というシグナル自体に情報がある。LightGBM等の勾配ブースティングはNaNをそのまま欠損として分割に使えるため、安易な0埋め/平均埋めより欠損フラグ+生NaNが好ましいことが多い。",
+        "source_url": "https://horse-racing-ai-navi.com/archives/2397",
+        "confidence": "medium"
+      },
+      {
+        "claim": "カテゴリ変数(コース・騎手ID・種牡馬)はtarget encoding等を使う場合、out-of-fold/過去のみで符号化しないとリークする",
+        "detail": "汎用ML文献では、特徴量エンジニアリング(エンコーディング含む)に未来データを混ぜるとリークになり、騎手勝率等は予測時点より前に完了したレースのみで算出すべきとされる。target encodingは目的変数を使うため、時系列を跨いだ全体平均で符号化すると未来情報が漏れる。LightGBMのネイティブカテゴリ機能か、過去window限定の集計が安全。",
+        "source_url": "https://www.ibm.com/think/topics/data-leakage-machine-learning",
+        "confidence": "medium"
+      },
+      {
+        "claim": "同一馬の過去走紐付けは血統登録番号(馬ID)をキーにSE(馬毎レース情報)を時系列に並べ、対象レース日より前の走だけを引く",
+        "detail": "出走馬が発表されたら馬の過去成績テーブルと血統テーブルを(前日等に)更新して紐付ける。馬IDで過去SEを集め、race_date<対象日でフィルタした上で『前走・過去N走平均・前走からの間隔(ローテ)』等を構成する。JOIN時の時間フィルタ漏れが代表的リーク。",
+        "source_url": "https://zenn.dev/kami/articles/66e400c8a43cd08a5d7f",
+        "confidence": "medium"
+      }
+    ],
+    "pitfalls": [
+      "当該レースの着順・走破タイム・上がり3F・通過順・確定オッズ・払戻を特徴量に入れる(最も典型的なリーク。これらはSE/HRの確定後情報)",
+      "騎手勝率・厩舎成績・種牡馬(産駒)成績・コース別成績などの集計を、対象レースのrace_dateより未来の走まで含めて算出する(point-in-time違反)",
+      "JOIN先テーブル(past_races等)に時間フィルタ race_date<対象日 を入れ忘れ、集計元は絞ったのにJOINで未来走が混入する(『4箇所にフィルタ』問題)",
+      "target encoding等のカテゴリ符号化を、時系列を跨いだデータ全体(=未来込み)で計算してしまう",
+      "ランダムなk-fold交差検証を使い、未来のレースで過去を予測してしまう(walk-forward/TimeSeriesSplitを使わない)",
+      "確定オッズ・最終人気・払戻をオッズ特徴として使う(確定オッズはレース後。使えるのは発走前の中間/直前オッズまで)",
+      "馬体重を過去走の確定値から取ってきて当該レースの当日馬体重と取り違える、または当日馬体重の公表(発走前WH速報)前提を崩す",
+      "異常に高いバックテストROIをそのまま信用する(リークの強いサイン。リーク除去で構造ROIは80%前後まで落ちるのが現実)",
+      "新馬・初出走の過去走NaNを平均値や0で安易に埋め、『過去走なし』という情報を消してしまう/学習・推論で埋め方が食い違う",
+      "スピード指数・PCI・上がり指数など『過去走から作る指標』の計算に、誤って当該レースの結果を混ぜる"
+    ],
+    "recommendations": [
+      "各特徴量に『取得可能時刻(発走前/レース後)』のメタ情報を付与し、JV-Dataの速報系(JVRTOpen: WH馬体重・O1〜O6オッズ)と蓄積系(SE着順/HR払戻)の別を根拠にレース後カラムを推論時NaN化する(PiTマスク=LeakageProtector方式)",
+      "全集計・全JOINに race_date < 対象レース日 のフィルタを一貫適用し、集計関数側だけでなくJOIN条件側にも独立して入れる。フィルタ箇所をテストで網羅検証する",
+      "評価はwalk-forward(年度/2週間単位など)で行い、ランダム分割を禁止。TimeSeriesSplitで過去→未来の順序を保証し、検証区間に学習区間の未来が漏れないようにする",
+      "同一馬の過去走は血統登録番号(馬ID)をキーにSEを時系列整列し、対象日より前の走のみから『前走/過去N走平均スピード指数・上がり・通過順・前走間隔(ローテ)・クラス推移』を構成する",
+      "馬場(含水率・クッション値)は当日9:30頃公表で発走前に確定するため特徴に使ってよいが、着順由来の結果系(後計算の馬場差等)とは区別する",
+      "オッズは発走前の時系列/直前オッズのみ特徴化し、確定オッズ・払戻は厳禁。市場の集合知はモデルとの後段合成(オッズとの差で期待値を取る)で活用する",
+      "枠順/馬番は出走頭数で正規化し、コース・距離別のz値バイアスを過去データ(point-in-time)から推定して特徴化する",
+      "カテゴリ変数(コース/騎手ID/種牡馬)はLightGBMのネイティブカテゴリ扱い、またはout-of-fold/過去window限定のtarget encodingを用い、未来込み全体平均での符号化を避ける",
+      "新馬・初出走の欠損はGBDTのネイティブNaN処理に任せつつ『過去走なしフラグ』を別特徴として追加し、学習・推論で欠損処理を完全一致させる",
+      "公式一次仕様(JV-Data4512.xlsx データ種別一覧 / JV-Data2311.xls コード表)で各フィールドのレース前後区分を逐一確認し、特徴定義書に出典を残す"
+    ],
+    "open_questions": [
+      "JRA-VAN速報系の馬体重(WH)と各馬券種オッズ(O1〜O6)の正確な配信時刻・更新頻度(発走何分前から取得可能か)は一次仕様書(配布Excel)で要確認。WebFetchが403で本文を取得できず、配信タイミングの厳密値は未確定",
+      "クッション値・含水率は当日9:30頃発表だが、レース直前(発走数分前)の馬場差・トラックバイアスをどう point-in-time で扱うか(発走前公表分のみか、結果から逆算する馬場差は禁止)の運用境界は要設計",
+      "time-series odds(JRA-VAN時系列オッズ)で『どの時点スナップショットまでを学習特徴に使うか』(例: 発走5分前固定など)の標準的な締切設計に関する一次情報が不足",
+      "target encoding/カテゴリ符号化のリーク対策として、競馬ドメインでout-of-fold以外にどの手法(ベイズ平滑化+過去windowなど)が実務標準かは追加調査が必要",
+      "新馬・初出走馬の血統(種牡馬・母父)由来の事前能力推定をどの程度特徴化するか、リーク(産駒成績の未来混入)を避けつつ精度を出す手法の定量比較が未調査",
+      "Zenn/Qiita/note等の一次技術記事はWebFetch(403)で全文取得できず、検索要約に依拠した箇所がある。実装コード(NaN化対象カラムの完全リスト等)は原文・GitHubで再確認することを推奨"
+    ]
+  },
+  {
+    "dimension": "評価指標とベッティング戦略(回収率で勝つ設計)",
+    "summary": "JRA-VANデータを使う本格的な競馬予想システムでは、的中率やaccuracy単体は最適化対象として誤りで、最終目的関数は「控除率込みの回収率(ROI)」であるべきです。途中指標としてlog-loss/Brier・AUC・キャリブレーション(ECE/信頼性曲線)・ランキング指標(NDCG)を併用し、賭けシミュレーションのバンクロール推移・最大ドローダウンで実戦性を評価します。購入は期待値EV=予測確率×オッズが1+α(実務では1.1以上)を超える馬券に限定し、賭け金は分数ケリー(1/2ケリー以下)で配分するのが定石です。日本のパリミュチュエル(JRA控除率20〜30%)では市場が極めて効率的で、最終オッズが締切後まで未確定な「オッズ滑り」、人気薄での回収率低下(favorite-longshot bias)、自分の投票がオッズを動かす問題が回収率を直撃します。正しい検証は時系列walk-forward+データリーク監査+控除率/オッズ滑り込みの現実的ROIで行い、バックテスト118%がフォワードで崩れる構造的劣化(survivorship/look-ahead/regime shift/市場効率)を前提に設計する必要があります。",
+    "key_facts": [
+      {
+        "claim": "JRAの払戻率は券種ごとに固定で、単勝・複勝80%(控除率20%)、馬連・ワイド・枠連77.5%、馬単・3連複75%、3連単72.5%、WIN5 70%。2014年6月7日以降70〜80%の範囲で券種別に設定されている",
+        "detail": "これが回収率の出発点。何も予想能力がなければ期待回収率は払戻率(=1-控除率)に収束する。三連単のような高控除券種で勝つには券種別に大きなエッジが必要。JRA公式の払戻率変更告知に明記。",
+        "source_url": "https://www.jra.go.jp/news/other/20140303.html",
+        "confidence": "high"
+      },
+      {
+        "claim": "回収率(%) = 払戻金額 ÷ 購入金額 × 100。100%が損益分岐で、的中しても払戻が購入額を下回る『トリガミ』があるため的中率だけでは勝てない",
+        "detail": "JRA-VAN公式が解説。18頭に等額で全単勝を買えば的中率100%でもオッズ18倍未満ならトリガミ=確実に損。的中率を最適化目標にする誤りの典型例。",
+        "source_url": "https://jra-van.jp/fun/baken/index7.html",
+        "confidence": "high"
+      },
+      {
+        "claim": "期待値の基本式はEV=予測勝率×オッズ。控除があるため市場平均EVは0.75前後で、継続的に勝つには『EVが1.1以上』の馬券だけを買う必要がある",
+        "detail": "安全マージンα(例:1.1)を1超に上乗せする理由は、予測確率の推定誤差・オッズ滑り・控除を吸収するため。EV>1.1のみで30レース予想し回収率115%前後を維持した検証例が報告されている。",
+        "source_url": "https://www.aolplatforms.jp/column/keiba-expectation/",
+        "confidence": "medium"
+      },
+      {
+        "claim": "購入時点では最終オッズが不明(締切後に確定)なため、EV計算には『勝率』と『最終オッズの予測』の両方が必要。中間オッズで計算すると下振れ(オッズ滑り)で実際のEVが低下する",
+        "detail": "オッズ滑りは購入時より確定オッズが下がる現象。例として購入時50倍超→確定37倍の事例。締切直前の大量投票でオッズが急変するため、中間オッズベースのバックテストは楽観バイアスを持つ。",
+        "source_url": "https://note.com/_manchi_/n/nad13f8659093",
+        "confidence": "high"
+      },
+      {
+        "claim": "オッズは下げる方が上げるより容易(数十万円で下げられるが上げるには億単位が必要、差は約250倍)。自分の購入額が大きいとオッズを自分で動かしてEVを毀損する",
+        "detail": "パリミュチュエル特有の問題。少額なら無視できるが、エッジのある穴(薄いプール)に大きく賭けるほど自己インパクトでオッズが下がりEVが消える。賭け金上限の制約根拠。",
+        "source_url": "https://www.syndrome.jp/what-happens-if-irregular-odds/",
+        "confidence": "medium"
+      },
+      {
+        "claim": "ケリー基準のベット比率は f =(的中率×オッズ-1)÷(オッズ-1)。例:勝率20%・オッズ6倍なら資金の4%。実務では破産確率/分散低減のため分数ケリー(1/2ケリー等)を使う",
+        "detail": "フルケリーは推定勝率の過大評価時に破産・大ドローダウンを招くため、Benter・Thorpら実践者も保守的な分数ケリーを採用。複数頭が走る競馬は2択より分散が大きく一層保守的運用が必要。",
+        "source_url": "https://baku-chi.com/article/kelly-criterion",
+        "confidence": "high"
+      },
+      {
+        "claim": "Bill Benter(1994)は条件付きロジット(conditional logit)で各馬のstrengthを推定し、公衆の暗黙確率(オッズ)をモデルに第2段で組み込み、保守的な分数ケリーで正/負期待値プールにベットして5年間実利益を上げた",
+        "detail": "複勝(place/show)を除く正期待値の全プール(単勝・エキゾチック)にベット。DB構築+モデル開発に約5人年、高収益化に追加5人年。pari-mutuel市場の非効率の実証例として引用される業界の古典。",
+        "source_url": "https://gwern.net/doc/statistics/decision/1994-benter.pdf",
+        "confidence": "high"
+      },
+      {
+        "claim": "favorite-longshot bias:極端な人気薄(単勝オッズ100倍以上)の単勝回収率は約47%まで低下する。穴の馬券は実力以上に売れて過大評価され期待値が低い",
+        "detail": "プロスペクト理論(微小確率の過大評価)で説明される。神戸大の学術サーベイや日本の実証分析でも扱われるが、日本の単勝市場ではバイアスの強さはレース・条件依存。",
+        "source_url": "https://da.lib.kobe-u.ac.jp/da/kernel/81006950/",
+        "confidence": "medium"
+      },
+      {
+        "claim": "日本(中央)の単勝市場では人気馬の単勝回収率もほぼ80%前後でフラット。1番人気を買い続けても約80%、多くのオッズ帯が70〜80%で、高オッズ・低オッズ双方で利益化が難しい",
+        "detail": "教科書的な英米のfavorite-longshot biasと異なり、日本では1番人気が大きく過小評価されてはおらず、回収率は控除率近辺に張り付く。市場効率の高さを示す。10〜14.9倍帯のみ約86%とやや高い例外あり。",
+        "source_url": "https://www.humantransport.org/4711/",
+        "confidence": "medium"
+      },
+      {
+        "claim": "中央競馬の単勝市場は極めて効率的で、最終オッズには公開構造化データ(馬体重増減など)がほぼ織り込まれている。控除後の超過リターンには非常に小さい市場非効率を継続的に見つける必要がある",
+        "detail": "UmaScoreのablation検証:未使用の構造化特徴量を加えてもオッズ帯横断でほぼフラットで一貫した妙味なし→効率的市場仮説をほぼ支持。容易な特徴量での超過収益は困難という重要な警告。",
+        "source_url": "https://qiita.com/umascore/items/158e93974ad781d4a302",
+        "confidence": "medium"
+      },
+      {
+        "claim": "バックテスト回収率118.4%(2025/1〜2026/4・16ヶ月・4,409レース・61,036出走)がフォワードで崩れる劣化は『survivorship bias / look-ahead bias / regime shift / 市場効率性』の4構造に分解される",
+        "detail": "バグでなく時系列ML/金融MLで構造的に起こる『想定内の劣化』。バックテストの高ROIはまずリークを疑い、オッズ滑り(購入時vs確定オッズの散布図)も検証対象にすべき、という実践的教訓。",
+        "source_url": "https://qiita.com/umascore/items/2eb5854b5bd12f45e0f6",
+        "confidence": "high"
+      },
+      {
+        "claim": "時系列MLで最も危険なリークは『学習時に未来情報(対象レース当日含む過去走集合)を参照』。検証はwalk-forwardテスト・Nested CV・Out-of-time(OOT)ホールドアウトで行う",
+        "detail": "競馬では各馬に過去走の集合がぶら下がり、race_dateフィルタを集計の各段に入れないと当日結果が紛れ込む。race_dateフィルタを4箇所に入れて潰した実例あり。リーク=非現実的高ROIの主因。",
+        "source_url": "https://qiita.com/umascore/items/de0b9f40212d3446fb13",
+        "confidence": "high"
+      },
+      {
+        "claim": "分類器の出力確率は実確率と一致する保証がなく、ベット判断(EV計算)に使う前にキャリブレーションが必要。信頼性曲線(reliability diagram)・ECE・Brierスコアで評価し、temperature scaling/Platt/Isotonic/CalibratedClassifierCVで補正する",
+        "detail": "EV=確率×オッズの『確率』が歪んでいるとEV閾値判定が全て狂う。較正は回収率設計の前提。競馬MLの評価指標群にBrierスコア/log loss/較正曲線/最大ドローダウン/年次ROIを並べる実践例がある。",
+        "source_url": "https://qiita.com/architectJapan/items/1f7cfb2b156038c65f99",
+        "confidence": "high"
+      },
+      {
+        "claim": "複数券種のEVは券種ごとに計算する。複勝はモデルの複勝率×複勝オッズ、ワイド/馬連は概ね(軸の複勝率×相手の複勝率)×当該オッズで近似。三連単/三連複はPlackett-Luceで単勝strengthを正規化し全通りの順列確率を計算して期待値上位N点に賭ける",
+        "detail": "18頭立てで複勝3/18・ワイド3/153・馬連1/153・三連複1/816と組合せ確率が異なる。エキゾチックはオッズが高くプールが薄いので自己インパクト/オッズ滑りの影響が大きい点に注意。LightGBM出力を再正規化して三連単確率を算出する実例。",
+        "source_url": "https://qiita.com/KuboTech/items/afc5bd8d82a16a20bf19",
+        "confidence": "medium"
+      },
+      {
+        "claim": "スポーツベッティングのMLは『正式な投資戦略(現代ポートフォリオ理論+ケリー)+リスク制御』が収益性を有意に高め、適応的な分数ケリーが競馬・バスケ・サッカーで特に有効と体系的レビューで報告",
+        "detail": "単純なフラットベットよりリスク制御込みのケリー系が優位。評価はROI/利益と破産回避を両立させる必要があり、accuracy単体は不適切という主張を裏付ける。arXivの系統的レビュー(2024)。",
+        "source_url": "https://arxiv.org/html/2410.21484v1",
+        "confidence": "medium"
+      },
+      {
+        "claim": "着順予測はランキング学習(learning-to-rank)として定式化でき、LambdaMART等がNDCGを直接最適化する。レース内の相対順位の正しさをNDCGで評価できる",
+        "detail": "勝ち負けの二値だけでなくレース内順位の質をランキング指標で測る。Benterの条件付きロジット(レース=群でのソフトマックス)も本質的にレース内相対strength学習でランキング的。回収率の前段の予測品質指標として有用。",
+        "source_url": "https://xgboost.readthedocs.io/en/stable/tutorials/learning_to_rank.html",
+        "confidence": "medium"
+      },
+      {
+        "claim": "JRA-VAN DataLab.には『オッズ期待値アナライザー』があり、最新オッズと期待値で自動投票するプロシージャも提供されている",
+        "detail": "JRA-VANデータを使う設計では、公式が期待値ベースのツール/API的機能を提供している点が利用可能。最新オッズ取得→期待値計算→投票の実務パイプラインの参考になる。",
+        "source_url": "https://jra-van.jp/dlb/sft/lib/oddskitaichi.html",
+        "confidence": "medium"
+      }
+    ],
+    "pitfalls": [
+      "的中率・accuracyを最適化目標にする:トリガミで的中率100%でも損になりうる。最終目的関数は控除率込みROIにし、的中率は副次指標に留める。",
+      "中間オッズ(購入時オッズ)でEV/回収率をバックテストする:オッズ滑りで確定オッズは下がりがちなので実戦ROIを過大評価する。可能なら確定オッズ、無理なら下方補正したオッズで検証する。",
+      "モデル出力確率を較正せずにEV=確率×オッズへ直接投入する:LightGBM/XGBの生確率は歪んでおりEV閾値判定が全て狂う。Isotonic/Platt/temperature scaling+ECE/Brierで較正してから使う。",
+      "データリーク(対象レース当日・未来の過去走集計の混入)による非現実的高ROI:集計の各段にrace_dateフィルタを入れ、walk-forward/OOTで検証する。高すぎるバックテストROIはまずリークを疑う。",
+      "フルケリーで賭ける:推定勝率の過大評価時に破産・巨大ドローダウン。1/2ケリー以下の分数ケリーにし、1点あたり・1日あたりの上限も併設する。",
+      "自己インパクトの無視:薄いプール(穴・エキゾチック)に大きく賭けると自分の投票でオッズが下がりEVが消える。賭け金をプール規模に対して制限する。",
+      "日本市場に英米のfavorite-longshot biasをそのまま当てはめる:日本の単勝は人気馬も回収率80%前後でフラットなため、『人気馬は過小評価=買い』は成立しにくい。実データで自市場のバイアスを確認する。",
+      "控除率の高い券種(三連単27.5%等)で安易にエッジを期待する:必要なエッジが大きく、効率的市場では超過収益が出にくい。券種別にEVと現実的ROIを別々に検証する。",
+      "ランダムシャッフルのcross-validation(時系列を無視):未来→過去の情報漏れで楽観的。必ず時系列walk-forward/OOTを使う。",
+      "少数パラメータの過剰最適化(カーブフィッティング):in-sampleのROIを上げる調整に最適化を使うとフォワードで崩れる。最適化はout-of-sampleで機能するパラメータ探索に限定する。"
+    ],
+    "recommendations": [
+      "目的関数を多層化する:学習段では較正済みlog-loss/Brierとレース内ランキング(NDCG/条件付きロジット尤度)で予測品質を見て、選定段ではEV>1+α(α≈0.1〜)で購入フィルタ、評価段では控除率・オッズ滑り込みの回収率(ROI)・的中率・バンクロール推移・最大ドローダウン・破産確率をダッシュボード化する。",
+      "確率の較正を必須工程にする:学習データとは別期間でIsotonic/Platt/temperature scalingを当て、信頼性曲線とECEで検証してからEV計算に渡す。較正前後でROIがどう変わるかを必ず比較する。",
+      "Benter型の二段構成を採る:第1段でファンダメンタル特徴量から条件付きロジット/LightGBMで馬のstrength→レース内ソフトマックスで勝率を出し、第2段で市場の暗黙確率(オッズ)を特徴量/事後ブレンドとして組み込む。市場はほぼ効率的なので、オッズに織り込まれていない小さな残差を狙う。",
+      "賭け金は分数ケリー(1/2以下)で配分し、1点・1レース・1日の上限と、推定勝率の不確実性(下側信頼区間)を使った保守化を入れる。破産確率とドローダウン分布をモンテカルロで事前に把握する。",
+      "オッズ滑りを定量化する:購入時オッズと確定オッズの散布図・分布を蓄積し、EV計算のオッズを下方補正(例:確定オッズ予測モデルや係数掛け)してから閾値判定する。薄いプールほど補正を強める。",
+      "券種別にEVモデルを分ける:単勝/複勝はモデル確率を直接、ワイド/馬連/三連複はPlackett-Luce等で順位・組合せ確率を導出し、各券種で控除率・プール規模・自己インパクトを織り込んだ現実的ROIを別々に評価する。",
+      "検証は時系列walk-forward+OOTホールドアウトで行い、リーク監査(race_dateフィルタを集計の各段に挿入)を制度化する。バックテストROIが高すぎる時はまずリークと中間オッズ使用を疑う。",
+      "フォワードテスト(実際の確定オッズ・実投票)を本番判断の最終ゲートにする。バックテスト118%級でもフォワードで崩れるのが通常と捉え、survivorship/look-ahead/regime shift/市場効率の4劣化要因を継続監視する。",
+      "JRA-VAN DataLab.のオッズ期待値アナライザーや自動投票プロシージャを参照し、最新オッズ取得→較正済み確率→EV判定→分数ケリー→投票の実務パイプラインを構築する。"
+    ],
+    "open_questions": [
+      "JRA-VANデータで取得可能なオッズは『中間オッズ』か『確定オッズ』か、また締切何分前まで・何秒間隔で取得できるか(オッズ滑り補正の精度を左右する)。developer.jra-van.jpの仕様確認が必要。",
+      "日本の中央競馬における favorite-longshot bias の最新かつ大標本での実証値(人気別・券種別の単複回収率テーブル)。複数の独立した一次データで検証したい。",
+      "分数ケリーの最適な分数(1/2か1/4か)と、複数頭・複数券種・複数レース同時ベット時のポートフォリオとしての破産確率/ドローダウンの定量関係(競馬特有の高分散下での数値)。",
+      "Plackett-Luce等で算出した三連複/三連単の組合せ確率の較正は実務でどの程度可能か。単勝strengthからの順列確率がエキゾチック・オッズと整合するかの検証事例。",
+      "自己インパクト(自分の投票によるオッズ低下)を定量化する一般式・モデル。プール規模に対する賭け金比率と確定オッズ低下量の実測関係。",
+      "控除率込み・オッズ滑り込みで現実的に到達可能な持続的ROIの上限(中央競馬・単勝/エキゾチック別)。効率的市場仮説をどの程度上回れるかの一次的エビデンス。"
+    ]
+  },
+  {
+    "dimension": "既存OSS・先行事例・実運用の知見(JRA-VANデータを使う競馬予想システム設計のためのリサーチ)",
+    "summary": "JRA-VANの公式データ取得APIであるJV-LinkはWindows専用の32bit COMコンポーネントで、公式SDKはVB/VC++/VC#/Delphi向け。Pythonからはpywin32でCOM呼び出しする方式が確立しており、64bit Pythonからは32bit COMをDllSurrogate(dllhost.exe)経由で叩く、データはShift_JIS固定長でパースする、という共通の落とし穴がある。OSSはスター数こそ二桁台が中心だが、JV-Linkデータを各種DB(SQLite/DuckDB/PostgreSQL)へ取り込む土台(miyamamoto/jrvltsql, urasandesu/JVLinkToSQLite, EveryDB2)と、netkeibaをスクレイプして特徴量化する系(stockedge/netkeiba-scraper 117★, new-village/nkparser)に二分される。実装パターンとしてはJV-Link/スクレイプ→DB→特徴量→LightGBM学習→確率キャリブレーション→期待値フィルタ→当日直前オッズ取得→Selenium/Playwrightで即PAT自動投票、というパイプラインがZenn有料書籍やnote/agusblogで体系化されている。回収率は人気・オッズを特徴量から外して期待値ベースで賭けると100%超の報告がある一方、多くは70〜90%台で控除率を超えられない事例が大半。法務面はJRA-VAN DataLab(月額2,090円)が個人利用前提で再配布に制限があり、netkeibaは規約で運営妨害となるスクレイピングを禁止し過剰アクセスに通信制限(実測で約24時間)をかける点が要注意。",
+    "key_facts": [
+      {
+        "claim": "miyamamoto/jrvltsqlはJV-LinkデータをSQLite/DuckDB/PostgreSQLへリアルタイム取り込みするPythonツール(19★, Python97%)。確定オッズ・公式時系列オッズ・速報オッズ取得と日次同期に対応、2026年6月にv1.6.0",
+        "detail": "JV-Linkデータ基盤をPythonで作る最新かつ最も実用的なOSS。同作者はjvlink-mcp-server(13★, DBを自然言語分析するMCPサーバ)も公開しエコシステム化している",
+        "source_url": "https://github.com/miyamamoto/jrvltsql",
+        "confidence": "high"
+      },
+      {
+        "claim": "urasandesu/JVLinkToSQLiteはJRA-VAN DataLabデータをSQLiteへ変換するC#製OSS(15★)。kmycode/kmy-keiba(C#/WPF, jvlink/sqlite3トピック)など.NET系の取り込み実装も存在",
+        "detail": "Pythonに依存せずJV-Linkを安定運用したい場合の選択肢。jrvltsqlのMCPサーバはこのDB形式を分析対象にしている",
+        "source_url": "https://github.com/urasandesu/JVLinkToSQLite",
+        "confidence": "high"
+      },
+      {
+        "claim": "stockedge/netkeiba-scraperはnetkeibaをスクレイプし機械学習の素性を作る代表例で117★(Scala86%/R11%, 65フォーク)。URL収集→HTML取得→抽出→特徴量生成の4コマンド構成",
+        "detail": "JRA-VAN系を除けば当該領域で最もスターの多いOSS。ただし2021年で更新停止しておりサイト構造変更に追随していない点に注意",
+        "source_url": "https://github.com/stockedge/netkeiba-scraper",
+        "confidence": "high"
+      },
+      {
+        "claim": "new-village/KeibaScraper(nkparser)はnetkeiba.com用のシンプルなPythonスクレイピングライブラリ(18★, 2026年5月更新)。KHTTakuya/KeibaPrediction(競馬予想プログラム, Python14★)も先行事例",
+        "detail": "Python前提でnetkeibaを扱う場合の軽量ライブラリ。ryutoro-galois/keiba-predictor(17★)は毎週末に予測レポートを自動生成するパイプライン例として参考になる",
+        "source_url": "https://github.com/new-village/KeibaScraper",
+        "confidence": "high"
+      },
+      {
+        "claim": "JV-Linkは公式にはVB/VC#/VC++/Delphi向けでWindows専用32bit COM。PythonはpyWin32でCOM呼び出しし、取得フローはJVInit→JVOpen→JVRead→JVClose、リアルタイムはJVRTOpen",
+        "detail": "言語選定とアーキテクチャの根幹。Linux/Macでは動かないためデータ取得層はWindows(VM/常駐機)に固定する必要がある",
+        "source_url": "https://jra-van.jp/dlb/sdv/sdk.html",
+        "confidence": "high"
+      },
+      {
+        "claim": "64bit PythonからJV-Link(32bit COM)を使うにはDllSurrogate(dllhost.exeをアウトプロセスCOMサーバ化するレジストリ追加)が定石。HRAPS氏のQiita/Zenn/noteに手順が集約",
+        "detail": "最頻出の実装トラップ。これを知らないと64bit環境でCOM生成に失敗する。回避策として32bit Pythonを使う選択もある",
+        "source_url": "https://qiita.com/hraps/items/594936369b5f0c856a8f",
+        "confidence": "high"
+      },
+      {
+        "claim": "JVGets/JVReadは文字列でなくShift_JISのバイト配列を返し、JV-Data仕様の固定長フォーマットでパースする必要がある",
+        "detail": "パース層設計の必須知識。UTF-8前提で読むと文字化け・桁ズレを起こす。固定長定義はJV-Data仕様書(レコード種別ID単位)に従う",
+        "source_url": "https://note.com/hraps/n/ne756e8a041b3",
+        "confidence": "high"
+      },
+      {
+        "claim": "EveryDB2はJV-Linkを使いSQL Server/Oracle/SQLite等へJRA-VAN全データを構築する定番ソフト。全データ初回構築は約1日、更新は5カテゴリに分割、自動更新間隔と速報・時系列オッズの取得可否を設定できる",
+        "detail": "自前でJV-Linkラッパーを書かずにDB基盤を作る最短ルート。速報データと時系列オッズを取り込めるため当日運用にも使える",
+        "source_url": "https://jra-van.jp/dlb/sft/lib/everydb.html",
+        "confidence": "high"
+      },
+      {
+        "claim": "JV-Linkのオッズは蓄積系(JVOpen)と速報/リアルタイム系(JVRTOpen)があり、現在オッズは速報系で取得。時系列オッズは発売開始〜締切までの推移(単勝・複勝・枠連・馬連等)を含む",
+        "detail": "当日直前オッズ取得の公式手段。スクレイピングに頼らずJV-Link速報系で取れるため、netkeiba規約リスクを回避しやすい",
+        "source_url": "https://developer.jra-van.jp/t/topic/613",
+        "confidence": "high"
+      },
+      {
+        "claim": "典型パイプラインはデータ収集→DB→特徴量エンジニアリング→LightGBM学習→確率キャリブレーション→的中率/回収率シミュレーション→直前オッズ取得→iPAT自動投票→Streamlitダッシュボード",
+        "detail": "当日運用まで含む完成形の構成例。CATAやポケットモンタロウのnoteが収集から自動投票までを一気通貫で解説している",
+        "source_url": "https://note.com/gaisenmontaro/n/nde9b4d0a03b2",
+        "confidence": "high"
+      },
+      {
+        "claim": "Zenn有料書籍『競馬予想で始める機械学習(完全版)』(dijzpeb/データサイエンス研究所)がスクレイピング・前処理・特徴量・目的変数設定・評価・運用テストまで網羅。著者は東大院卒のデータサイエンティスト",
+        "detail": "日本語で最も体系的な実装教材。買い切りで更新が反映される。同シリーズに最先端ver/教科書verがある",
+        "source_url": "https://zenn.dev/dijzpeb/books/848d4d8e47001193f3fb",
+        "confidence": "high"
+      },
+      {
+        "claim": "回収率の実例は分散が大きい。LightGBMで35年分検証では勝率7.45%→15.62%だが単勝回収率73.7%、別事例は単勝81.4%/複勝88.5%、独学例は2021年119%・2022年104%・2023年121%・2024年88%と年で変動",
+        "detail": "期待値で勝てる年もあるが控除率(単勝約20%)を継続的に超えるのは難しいという現実。ROI評価は複数年・out-of-timeで見るべき",
+        "source_url": "https://zenn.dev/keita2399/articles/keiba-ai-lgbm-verification",
+        "confidence": "high"
+      },
+      {
+        "claim": "回収率向上の定石は人気・オッズを特徴量から除外し人気順への引きずられを防ぎ、予測確率と期待値(例: 確率0.8以上かつ期待値100以上)でフィルタして賭け対象を絞ること",
+        "detail": "単純な着順予測ではなく期待値ベースのベット選択が回収率の鍵。特徴量リークとしての確定オッズ混入にも注意",
+        "source_url": "https://note.com/cata_keiba_ai/n/nca5f41dddb5c",
+        "confidence": "medium"
+      },
+      {
+        "claim": "当日の自動投票はJRAが公式APIを開放していないためSelenium/PlaywrightでiPAT(即PAT)にログイン→入金→投票→確認をスクリプト化する事例が多数。発走n分前にスケジュール実行する構成",
+        "detail": "自動投票はHTML構造依存で壊れやすい点が最大リスク。team-naveのような商用IPAT投票APIサービスも存在する",
+        "source_url": "https://zenn.dev/_lambda314/articles/e4ceaa81b045c5",
+        "confidence": "high"
+      },
+      {
+        "claim": "直前オッズはnetkeibaの開催ページからレースIDと発走時刻を取得し、JRA公式サイトをスクレイプして発走数分前に自動取得する実装例がある(JV-Link速報系を使わない場合)",
+        "detail": "当日運用の中核。JV-Link速報オッズで代替可能だが、無料・軽量に済ませたい層はJRA公式/netkeibaスクレイプを選ぶ",
+        "source_url": "https://note.com/dijzpeb/n/n4dc467834532",
+        "confidence": "medium"
+      },
+      {
+        "claim": "netkeibaは会員規約の禁止行為でサービス運営を妨げるスクレイピングを禁止し、多数リクエストを検知すると予告なく通信制限をかける。解除依頼には応じない(実測では約24時間で自動解除, 2024年12月時点)",
+        "detail": "スクレイピング前提設計の最大の法務・運用リスク。アクセス間隔の制御とJV-Link/公式データへの切替えが安全策",
+        "source_url": "https://support.keiba.netkeiba.com/hc/ja/articles/18841959592857",
+        "confidence": "high"
+      },
+      {
+        "claim": "JRA-VAN DataLabは月額2,090円(税込, 初月無料)で取得量に関わらず定額。利用は個人利用が前提で、開発者コミュニティでも個人利用目的である旨が回答されている",
+        "detail": "公式データ利用のコストと制約。商用・再配布は規約確認が必須で、取得データの第三者提供には制限がある",
+        "source_url": "https://jra-van.jp/dlb/feature.html",
+        "confidence": "high"
+      }
+    ],
+    "pitfalls": [
+      "JV-LinkはWindows専用32bit COMのため、Linux/Mac中心の機械学習環境とは分離が必要。データ取得層をWindows VM/常駐機に隔離し、DBやモデル学習は別環境にするアーキテクチャが現実的",
+      "64bit PythonからJV-Linkを呼ぶとDllSurrogate設定(レジストリ追加)をしないとCOM生成に失敗する。32bit Pythonにするか手順を踏むか事前に決める必要がある",
+      "JV-DataはShift_JIS固定長。UTF-8前提でパースすると文字化け・桁ズレが起きる。レコード種別ID単位のJV-Data仕様書に厳密に従う必要がある",
+      "netkeibaスクレイピングは規約違反となりうる上、過剰アクセスで通信制限(約24時間)がかかり当日運用が止まる。可能ならJV-Link速報/時系列オッズへ移行すべき",
+      "確定オッズや人気を学習特徴量に入れるとリーク・人気順への引きずられで実運用の回収率が崩れる。期待値ベースのベット選択を前提に特徴量設計する",
+      "回収率は年・期間で大きく変動し、単年プラスでも控除率(単勝約20%)を継続的に超えるのは難しい。out-of-time検証と複数年バックテストが必須",
+      "自動投票はJRA公式APIが無くSelenium/PlaywrightでのiPAT操作に依存するため、HTML構造変更で容易に壊れる。多重投票・残高管理のバグは金銭損失に直結する",
+      "代表的OSS(stockedge/netkeiba-scraper等)は更新停止しているものが多く、サイト構造変更に追随していない。そのまま使えず保守前提で参照する",
+      "JRA-VAN DataLabは個人利用前提で再配布制限があり、取得データの公開・商用利用は規約確認が必要"
+    ],
+    "recommendations": [
+      "データ取得層はWindows常駐機でJV-Linkを使い、miyamamoto/jrvltsql(Python)またはEveryDB2/urasandesu/JVLinkToSQLite(C#)でSQLite/DuckDB/PostgreSQLに集約する構成を基盤にする。netkeibaスクレイピング依存は規約・通信制限リスクが高いので補助に留める",
+      "Python64bit環境ではDllSurrogate設定を最初に通し、Shift_JIS固定長パースをJV-Data仕様書ベースで実装。HRAPS氏のQiita/Zenn記事を手順書として参照する",
+      "特徴量は人気・確定オッズを除外して構築し、LightGBMの予測確率を確率キャリブレーション後に期待値フィルタ(確率閾値×期待値閾値)へ通すベット選択ロジックにする",
+      "ROI評価は単年でなく複数年・out-of-time(時系列分割)で行い、控除率を超える持続性を検証してから実運用に進む",
+      "当日運用はJV-Link速報オッズ/時系列オッズ(JVRTOpen)で直前オッズを取得し、発走n分前のスケジュール実行で予測→期待値判定→投票指示を出すパイプラインを組む",
+      "自動投票はSelenium/Playwrightで即PATを叩く構成は壊れやすいので、まずは投票指示のみ出力する半自動から始め、残高・重複投票のガードと失敗時アラートを必ず入れる。team-nave等の商用IPAT APIも検討",
+      "学習・前処理の体系化はZenn有料書籍『競馬予想で始める機械学習』とagusblog/PC-KEIBAのパイプライン記事を教材に、自前実装の設計レビューに使う",
+      "法務面はJRA-VAN DataLab規約(個人利用・再配布制限)とnetkeiba会員規約を事前確認し、商用化・データ公開を想定するなら公式データ利用に統一する"
+    ],
+    "open_questions": [
+      "JRA-VAN DataLab規約上、取得データを使った予測結果やモデルの公開・商用提供がどこまで許容されるか(再配布の具体的線引き)は公式規約原文の精読が必要",
+      "JV-Link速報/時系列オッズの提供開始時刻と更新頻度が、発走直前ベットに十分間に合う粒度かは実機検証が必要(developer.jra-van.jpの該当トピックで要確認)",
+      "netkeibaの現行robots.txtのDisallow範囲と、許容されるアクセス間隔のしきい値は非公開で、実測ベースの運用設計が必要",
+      "自動投票(iPATをSelenium等で操作)がJRAネット投票の利用規約上問題ないかは明文の可否が確認できておらず、規約原文の確認が必要",
+      "代表OSSの多くが更新停止している中で、2026年時点でサイト構造変更に追随している現役のnetkeibaスクレイパ(nkparser等)の保守状況の継続性"
+    ]
+  }
+]
