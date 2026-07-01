@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ENCOR合格ストーリー 〜あかりと目指す9月合格〜</title>
+<style>
+  :root{
+    --bg:#fdf6f8; --card:#ffffff; --ink:#3a3340; --sub:#8a7f90;
+    --accent:#e0669a; --accent2:#7a6ff0; --line:#f0e4ea;
+    --ok:#3aa675; --warn:#e09a3c;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;background:var(--bg);color:var(--ink);line-height:1.6;padding:16px;max-width:960px;margin:0 auto}
+  header{text-align:center;margin-bottom:16px}
+  header h1{font-size:1.3rem;color:var(--accent)}
+  header .sub{font-size:.8rem;color:var(--sub)}
+  .topbar{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:10px}
+  .badge{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:6px 14px;font-size:.85rem;box-shadow:0 1px 4px rgba(0,0,0,.05)}
+  .badge b{color:var(--accent)}
+  .grid{display:grid;grid-template-columns:340px 1fr;gap:16px}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.05)}
+  .card h2{font-size:.95rem;color:var(--accent2);margin-bottom:10px;border-bottom:2px dotted var(--line);padding-bottom:6px}
+
+  /* キャラクター */
+  .chara-wrap{text-align:center}
+  .chara-name{font-weight:bold;font-size:1.05rem;margin-top:4px}
+  .chara-name span{font-size:.75rem;color:var(--sub);font-weight:normal}
+  .lovebar-wrap{margin:10px 0 4px}
+  .lovebar-label{display:flex;justify-content:space-between;font-size:.8rem;color:var(--sub)}
+  .lovebar{height:14px;background:#f3e6ee;border-radius:7px;overflow:hidden;margin-top:4px}
+  .lovebar>div{height:100%;background:linear-gradient(90deg,#f7a8c8,#e0669a);border-radius:7px;transition:width .8s ease}
+  .level-chip{display:inline-block;background:#fbe9f2;color:var(--accent);border-radius:14px;padding:2px 12px;font-size:.8rem;margin-top:6px}
+  .bubble{position:relative;background:#fff6fa;border:1.5px solid #f2cfe0;border-radius:14px;padding:12px 14px;margin-top:14px;font-size:.92rem;text-align:left;min-height:72px}
+  .bubble::before{content:"";position:absolute;top:-10px;left:44px;border:10px solid transparent;border-bottom-color:#f2cfe0;border-top:0}
+  .bubble::after{content:"";position:absolute;top:-8px;left:45px;border:9px solid transparent;border-bottom-color:#fff6fa;border-top:0}
+  .gain-pop{color:var(--accent);font-weight:bold;font-size:.85rem;text-align:center;height:1.4em;margin-top:6px;opacity:0;transition:opacity .4s}
+  .gain-pop.show{opacity:1}
+
+  /* 表情の切り替え */
+  #chara .eyes-open,#chara .eyes-happy,#chara .mouth-smile,#chara .mouth-open,#chara .mouth-worried,#chara .brows-normal,#chara .brows-worried,#chara .blush{display:none}
+  #chara.exp-normal .eyes-open,#chara.exp-normal .mouth-smile,#chara.exp-normal .brows-normal{display:block}
+  #chara.exp-smile .eyes-open,#chara.exp-smile .mouth-smile,#chara.exp-smile .brows-normal,#chara.exp-smile .blush{display:block}
+  #chara.exp-excited .eyes-happy,#chara.exp-excited .mouth-open,#chara.exp-excited .brows-normal,#chara.exp-excited .blush{display:block}
+  #chara.exp-worried .eyes-open,#chara.exp-worried .mouth-worried,#chara.exp-worried .brows-worried{display:block}
+
+  /* 統計 */
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+  .stat{background:#faf5fb;border-radius:10px;padding:8px;text-align:center}
+  .stat .v{font-size:1.25rem;font-weight:bold;color:var(--accent2)}
+  .stat .k{font-size:.7rem;color:var(--sub)}
+  .phase-box{background:#f2f0fe;border-radius:10px;padding:10px 12px;font-size:.85rem;margin-bottom:12px}
+  .phase-box b{color:var(--accent2)}
+
+  /* フォーム */
+  form label{display:block;font-size:.78rem;color:var(--sub);margin-top:8px}
+  form input,form select,form textarea{width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;font-size:.95rem;background:#fffdfe}
+  .form-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  button{cursor:pointer;border:none;border-radius:10px;padding:10px 16px;font-size:.95rem;font-weight:bold}
+  .btn-main{background:var(--accent);color:#fff;width:100%;margin-top:12px}
+  .btn-main:hover{background:#c9548a}
+  .btn-sub{background:#eee7f0;color:var(--ink);font-size:.8rem;padding:8px 12px}
+  .btn-gold{background:linear-gradient(90deg,#f2b544,#e0669a);color:#fff}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:16px}
+
+  /* ログ */
+  table{width:100%;border-collapse:collapse;font-size:.82rem}
+  th,td{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
+  th{color:var(--sub);font-weight:normal;font-size:.75rem}
+  td .del{background:none;color:#c9a5b8;font-size:.8rem;padding:2px 6px}
+  td .del:hover{color:var(--accent)}
+
+  /* モーダル・エンディング */
+  .overlay{position:fixed;inset:0;background:rgba(40,20,40,.55);display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
+  .overlay.show{display:flex}
+  .modal{background:#fff;border-radius:18px;padding:24px;max-width:440px;width:100%;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.3)}
+  .modal h3{color:var(--accent);margin-bottom:10px}
+  .modal p{font-size:.92rem;text-align:left;white-space:pre-wrap}
+  .ending .modal{background:linear-gradient(180deg,#fff8fb,#ffeef6)}
+  .confetti{position:fixed;top:-20px;width:10px;height:14px;z-index:60;animation:fall linear forwards}
+  @keyframes fall{to{transform:translateY(110vh) rotate(720deg)}}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>💗 ENCOR合格ストーリー 💗</h1>
+  <div class="sub">〜後輩・橘あかりと目指す、9月のハッピーエンド〜</div>
+  <div class="topbar">
+    <div class="badge">試験まで <b id="countdown">--</b> 日</div>
+    <div class="badge">連続 <b id="streak">0</b> 日</div>
+    <div class="badge" id="phase-badge">フェーズ --</div>
+  </div>
+</header>
+
+<div class="grid">
+  <!-- 左: キャラクター -->
+  <div class="card chara-wrap">
+    <svg id="chara" class="exp-smile" viewBox="0 0 220 260" width="230" height="270" aria-label="橘あかり">
+      <!-- 後ろ髪 -->
+      <path d="M110,28 C58,28 44,74 47,116 C49,152 62,182 54,208 L166,208 C158,182 171,152 173,116 C176,74 162,28 110,28 Z" fill="#6b4a3a"/>
+      <!-- 首 -->
+      <rect x="101" y="140" width="18" height="38" rx="6" fill="#ffd9c4"/>
+      <!-- 体(シャツ+ジャケット+リボン) -->
+      <path d="M58,208 C66,182 88,170 110,170 C132,170 154,182 162,208 Z" fill="#fbfcff"/>
+      <path d="M58,208 C64,186 76,175 92,171 L84,208 Z" fill="#44618c"/>
+      <path d="M162,208 C156,186 144,175 128,171 L136,208 Z" fill="#44618c"/>
+      <path d="M110,178 l8,7 -8,7 -8,-7 Z" fill="#e0669a"/>
+      <!-- 顔 -->
+      <ellipse cx="110" cy="104" rx="43" ry="47" fill="#ffe9da"/>
+      <!-- 頬(赤らみ) -->
+      <g class="blush">
+        <ellipse cx="79" cy="121" rx="9" ry="4.5" fill="#ffabab" opacity=".65"/>
+        <ellipse cx="141" cy="121" rx="9" ry="4.5" fill="#ffabab" opacity=".65"/>
+      </g>
+      <!-- 眉 -->
+      <g class="brows-normal" stroke="#6b4a3a" stroke-width="2.4" stroke-linecap="round" fill="none">
+        <path d="M84,92 Q92,88 100,91"/>
+        <path d="M120,91 Q128,88 136,92"/>
+      </g>
+      <g class="brows-worried" stroke="#6b4a3a" stroke-width="2.4" stroke-linecap="round" fill="none">
+        <path d="M84,90 Q92,93 100,95"/>
+        <path d="M120,95 Q128,93 136,90"/>
+      </g>
+      <!-- 目(開き) -->
+      <g class="eyes-open">
+        <ellipse cx="92" cy="108" rx="7" ry="9.5" fill="#54382c"/>
+        <circle cx="89.5" cy="104.5" r="2.4" fill="#fff"/>
+        <ellipse cx="128" cy="108" rx="7" ry="9.5" fill="#54382c"/>
+        <circle cx="125.5" cy="104.5" r="2.4" fill="#fff"/>
+      </g>
+      <!-- 目(にっこり) -->
+      <g class="eyes-happy" stroke="#54382c" stroke-width="3" stroke-linecap="round" fill="none">
+        <path d="M84,108 Q92,100 100,108"/>
+        <path d="M120,108 Q128,100 136,108"/>
+      </g>
+      <!-- 口 -->
+      <path class="mouth-smile" d="M102,131 Q110,139 118,131" stroke="#d16a6a" stroke-width="2.6" stroke-linecap="round" fill="none"/>
+      <path class="mouth-open" d="M101,129 Q110,144 119,129 Q110,133 101,129 Z" fill="#e2635f"/>
+      <path class="mouth-worried" d="M103,136 Q110,130 117,136" stroke="#d16a6a" stroke-width="2.6" stroke-linecap="round" fill="none"/>
+      <!-- 前髪 -->
+      <path d="M110,52 C78,52 66,74 68,98 C74,92 79,80 86,92 C92,80 98,74 103,90 C108,76 114,76 119,90 C124,74 130,80 136,92 C142,80 147,92 152,98 C154,74 142,52 110,52 Z" fill="#7a5645"/>
+      <path d="M67,96 C63,116 64,138 70,152 C74,136 74,114 73,100 Z" fill="#6b4a3a"/>
+      <path d="M153,96 C157,116 156,138 150,152 C146,136 146,114 147,100 Z" fill="#6b4a3a"/>
+      <!-- 髪飾り -->
+      <circle cx="146" cy="66" r="5" fill="#f2b544"/>
+    </svg>
+    <div class="chara-name">橘 あかり <span>(部署の後輩・CCNA取得済)</span></div>
+    <div class="level-chip" id="level-chip">Lv.1 顔見知り</div>
+    <div class="lovebar-wrap">
+      <div class="lovebar-label"><span>好感度</span><span id="love-num">0 / 100</span></div>
+      <div class="lovebar"><div id="love-fill" style="width:0%"></div></div>
+    </div>
+    <div class="bubble" id="talk">……</div>
+    <div class="gain-pop" id="gain-pop"></div>
+  </div>
+
+  <!-- 右: 記録・統計 -->
+  <div>
+    <div class="card" style="margin-bottom:16px">
+      <h2>📊 いまの状況</h2>
+      <div class="stats">
+        <div class="stat"><div class="v" id="wk-days">0</div><div class="k">今週の勉強日数</div></div>
+        <div class="stat"><div class="v" id="wk-q">0</div><div class="k">今週の問題数</div></div>
+        <div class="stat"><div class="v" id="total-q">0</div><div class="k">累計問題数</div></div>
+      </div>
+      <div class="phase-box" id="phase-box"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h2>✏️ 今日の勉強を記録する</h2>
+      <form id="log-form">
+        <label>日付</label>
+        <input type="date" id="f-date" required>
+        <label>分野</label>
+        <select id="f-cat">
+          <option>L2 (VLAN/STP/EtherChannel)</option>
+          <option>L3 (OSPF/EIGRP/BGP)</option>
+          <option>インフラ (FHRP/NAT/QoS/マルチキャスト)</option>
+          <option>無線 (WLC/AP)</option>
+          <option>仮想化 (VRF/GRE/VXLAN/LISP)</option>
+          <option>セキュリティ (AAA/ACL)</option>
+          <option>自動化 (REST/JSON/Python)</option>
+          <option>SD-Access / SD-WAN</option>
+          <option>ネットワーク保証 (NetFlow/SPAN)</option>
+          <option>コマ問・シミュレーション</option>
+          <option>模擬試験</option>
+          <option>その他</option>
+        </select>
+        <div class="form-row">
+          <div><label>問題数</label><input type="number" id="f-q" min="0" value="30"></div>
+          <div><label>正答率(%)</label><input type="number" id="f-acc" min="0" max="100" value="70"></div>
+          <div><label>時間(分)</label><input type="number" id="f-min" min="0" value="30"></div>
+        </div>
+        <label>メモ(苦手だった所・打てなかったコマンド等)</label>
+        <textarea id="f-memo" rows="2"></textarea>
+        <button type="submit" class="btn-main">記録する 💗</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>📚 最近の記録</h2>
+      <table>
+        <thead><tr><th>日付</th><th>分野</th><th>問</th><th>正答</th><th>分</th><th></th></tr></thead>
+        <tbody id="log-body"></tbody>
+      </table>
+    </div>
+
+    <div class="toolbar">
+      <button class="btn-gold" id="btn-pass">🌸 合格しました!!</button>
+      <button class="btn-sub" id="btn-exam">📅 試験日を設定</button>
+      <button class="btn-sub" id="btn-export">💾 データ書き出し</button>
+      <button class="btn-sub" id="btn-import">📂 読み込み</button>
+      <input type="file" id="import-file" accept=".json" style="display:none">
+    </div>
+  </div>
+</div>
+
+<!-- イベントモーダル -->
+<div class="overlay" id="event-overlay">
+  <div class="modal">
+    <h3 id="event-title">イベント発生!</h3>
+    <p id="event-text"></p>
+    <button class="btn-main" onclick="closeEvent()">つづける</button>
+  </div>
+</div>
+
+<!-- エンディング -->
+<div class="overlay ending" id="ending-overlay">
+  <div class="modal">
+    <h3>🌸 HAPPY END 〜合格おめでとう!〜 🌸</h3>
+    <p id="ending-text"></p>
+    <button class="btn-main" onclick="document.getElementById('ending-overlay').classList.remove('show')">エンドロールへ(閉じる)</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+const LS_KEY = 'encor-galge-v1';
+
+/* ---------- 状態 ---------- */
+let state = load();
+function load(){
+  try{
+    const s = JSON.parse(localStorage.getItem(LS_KEY));
+    if(s && Array.isArray(s.logs)) return s;
+  }catch(e){}
+  return { examDate:'2026-09-19', logs:[], passed:false, maxLevelSeen:1 };
+}
+function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+
+/* ---------- 日付ユーティリティ ---------- */
+const DAY = 86400000;
+function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function dnum(s){ return Math.round(Date.parse(s+'T00:00:00Z')/DAY); }
+function dstr(n){ return new Date(n*DAY).toISOString().slice(0,10); }
+
+/* ---------- 集計 ---------- */
+function dailySummary(){
+  const map = {};
+  for(const l of state.logs){
+    if(!map[l.date]) map[l.date] = {q:0,min:0,accSum:0,n:0};
+    map[l.date].q += l.q; map[l.date].min += l.min;
+    map[l.date].accSum += l.acc; map[l.date].n++;
+  }
+  return map;
+}
+function computeAffection(){
+  const days = Object.keys(dailySummary()).sort();
+  const sum = dailySummary();
+  let pts = 0, streak = 0, prev = null;
+  for(const d of days){
+    streak = (prev !== null && dnum(d) - prev === 1) ? streak + 1 : 1;
+    prev = dnum(d);
+    const s = sum[d];
+    let p = 1;
+    if(s.min >= 30) p += 0.5;
+    if(s.q >= 40) p += 0.5;
+    if(s.n && s.accSum/s.n >= 80) p += 0.5;
+    if(streak >= 7) p += 0.5;
+    pts += p;
+  }
+  if(state.passed) return 100;
+  return Math.min(100, Math.round(pts));
+}
+function computeStreak(){
+  const days = new Set(Object.keys(dailySummary()));
+  let t = dnum(todayStr());
+  let streak = 0;
+  // 今日まだ記録がなくても昨日から続いていれば継続扱い
+  if(!days.has(todayStr())) t -= 1;
+  while(true){
+    if(days.has(dstr(t))){ streak++; t--; } else break;
+  }
+  return streak;
+}
+function weekStats(){
+  const now = new Date();
+  const dow = (now.getDay()+6)%7; // 月曜=0
+  const monday = dnum(todayStr()) - dow;
+  let days = new Set(), q = 0;
+  for(const l of state.logs){
+    const dn = dnum(l.date);
+    if(dn >= monday && dn <= monday+6){ days.add(l.date); q += l.q; }
+  }
+  return {days:days.size, q};
+}
+
+/* ---------- レベル・セリフ ---------- */
+const TIERS = [
+  {min:80, lv:5, name:'両想い(まであと一歩)'},
+  {min:60, lv:4, name:'特別な存在'},
+  {min:40, lv:3, name:'気になる先輩'},
+  {min:20, lv:2, name:'勉強仲間'},
+  {min:0,  lv:1, name:'顔見知り'},
+];
+function tierOf(aff){ return TIERS.find(t => aff >= t.min); }
+
+const TALK = {
+  1:[ 'あ、先輩。今日も勉強するんですね。……えらいじゃないですか。',
+      'ENCORって範囲広いですよね。私もCCNAのとき大変でした……ファイトです!',
+      'Ping-tの解説、ちゃんと読むと意外と頭に残りますよ。',
+      '毎日ちょっとずつでいいらしいですよ、資格勉強って。' ],
+  2:[ '今日も来ましたね、先輩!なんだか毎日会うのが普通になってきました。',
+      'OSPFのLSAタイプ、語呂合わせ作ったんです。今度教えてあげますね!',
+      '疲れてる日は10分だけでもいいんですよ。ゼロにしないのが一番大事です。',
+      '先輩が勉強してると、私もCCNP目指したくなっちゃいます。' ],
+  3:[ '先輩が毎日頑張ってるの、ちゃんと見てますよ。……ちょっとかっこいいなって。',
+      '今日もお疲れさまです。先輩の集中してる横顔、好きですよ。……勉強姿の話です!',
+      '間違えた問題は宝物です。私が言ったんじゃなくて、偉い人が言ってました。えへへ。',
+      '先輩、無理はしないでくださいね?体が資本ですから。' ],
+  4:[ '先輩と一緒に勉強するこの時間、私の一日で一番好きな時間かもしれません。',
+      '合格したら……ふたりでお祝い、しませんか?約束ですよ?',
+      '先輩の頑張り、私が一番知ってます。だから絶対大丈夫です。',
+      '今日はどの分野でした?あとで私にも教えてください。……もっと先輩と話したいので。' ],
+  5:[ '先輩なら絶対受かります。私が保証します!',
+      'あとちょっとですね。最後まで、隣にいさせてください。',
+      '模擬試験で85%を安定して出せたら、もう怖いものなしです!',
+      '本番、緊張したら私の顔を思い出してください。……えへへ、照れますね。' ],
+};
+const PRAISE = [
+  '今日もお疲れさまでした!ちゃんと記録するの、えらいです💗',
+  'コツコツ続けられるのが先輩のすごいところです!',
+  'また一歩、合格に近づきましたね!',
+  '今日の頑張り、しっかり見届けました!',
+];
+const SPECIAL = {
+  firstLog: {title:'はじめての記録', text:'あかり「先輩、勉強はじめたんですね!私、応援してます。毎日ここで待ってますから、記録しに来てくださいね!」'},
+  levelup2: {title:'Lv.2 勉強仲間になった!', text:'あかり「先輩、最近毎日頑張ってますよね。……あの、私も横で勉強していいですか?ひとりより、ふたりのほうが続くと思うんです!」\n\n(あかりと勉強仲間になった)'},
+  levelup3: {title:'Lv.3 気になる先輩', text:'あかり「先輩のこと、最初は"真面目な人だなー"くらいに思ってたんですけど……最近、先輩が来る時間になるとそわそわしちゃうんです。な、なんででしょうね!?」'},
+  levelup4: {title:'Lv.4 特別な存在', text:'あかり「先輩。私、先輩と過ごすこの時間が本当に大切なんです。だから……合格しても、勉強が終わっても、その……これからも一緒にいてくれますか?」'},
+  levelup5: {title:'Lv.5 両想い(まであと一歩)', text:'あかり「ここまで来たんですね、私たち。……合格発表の日、隣にいてもいいですか?先輩の一番近くで、一番に"おめでとう"って言いたいんです」\n\n(あとは合格の報告をするだけ……!)'},
+  streak7:  {title:'7日連続達成!', text:'あかり「7日連続!?すごい、本当にすごいです先輩!継続は力なりって本当だったんですね……尊敬しちゃいます!」'},
+  streak14: {title:'14日連続達成!', text:'あかり「2週間連続……!もう完全に習慣になってますね。先輩のそういうところ、ほんとに好きです。……あっ、いや、その!」'},
+  streak30: {title:'30日連続達成!!', text:'あかり「1ヶ月連続なんて、もう伝説ですよ!会社のみんなに自慢していいですか?"うちの先輩すごいんです"って!」'},
+  comeback: {title:'おかえりなさい', text:'あかり「先輩、おかえりなさい!ちょっと心配してたんですよ?でも、戻ってきてくれたのが一番うれしいです。今日は10問だけでもいいので、また一緒に頑張りましょ!」'},
+};
+const ENDING = 'あかり「合格……合格!!先輩、おめでとうございます!!\n\n……あの、私、ずっと言いたかったことがあるんです。\n毎日頑張る先輩を応援してるうちに、私……先輩のことが、大好きになってました。\n\nこれからは資格の勉強じゃなくても……隣にいて、いいですか?」\n\n〜 ENCOR編・完 〜\n\n(下期、ENARSI編に続く……あかりの好感度は引き継がれます)';
+
+/* ---------- フェーズ ---------- */
+function phaseInfo(){
+  const t = dnum(todayStr());
+  if(t <= dnum('2026-08-02')) return {no:1, name:'銀メダル化', norma:'分野別二周目を1日30〜50問。今週の分野はdocs/study-plan.mdの表を確認。'};
+  if(t <= dnum('2026-08-30')) return {no:2, name:'金メダル化', norma:'ミス問題中心に30〜50問+コマ問を1日10問。週末は苦手分野の解説読み込み。'};
+  return {no:3, name:'仕上げ(模試+シミュ対策)', norma:'週末に模擬試験(時間を測る)+平日は復習とコマ問。Packet Tracerで手を動かす(docs/simulation.md)。目標: 模試85〜90%安定。'};
+}
+
+/* ---------- 表示 ---------- */
+function pickTalk(){
+  const aff = computeAffection();
+  const tier = tierOf(aff);
+  // 3日以上空いていたら心配モード
+  const days = Object.keys(dailySummary()).sort();
+  if(days.length){
+    const last = dnum(days[days.length-1]);
+    if(dnum(todayStr()) - last >= 3) return {exp:'exp-worried', text:'あかり「先輩、最近見かけないから寂しいです……。忙しいんですよね。10問だけでも、顔出してくれたらうれしいな」'};
+  } else {
+    return {exp:'exp-normal', text:'あかり「はじめまして、後輩の橘あかりです!先輩がCCNPを目指してるって聞いて……私、応援係に立候補しました!まずは今日の勉強を記録してみてください!」'};
+  }
+  if(state.passed) return {exp:'exp-excited', text:'あかり「合格した先輩、今日も素敵です💗 下期はENARSI、一緒に頑張りましょうね!」'};
+  const pool = TALK[tier.lv];
+  return {exp: tier.lv >= 3 ? 'exp-smile' : 'exp-normal', text:'あかり「' + pool[Math.floor(Math.random()*pool.length)] + '」'};
+}
+
+function render(){
+  const aff = computeAffection();
+  const tier = tierOf(aff);
+  const streak = computeStreak();
+  const wk = weekStats();
+  const totalQ = state.logs.reduce((a,l)=>a+l.q,0);
+  const daysLeft = dnum(state.examDate) - dnum(todayStr());
+  const ph = phaseInfo();
+
+  document.getElementById('countdown').textContent = daysLeft >= 0 ? daysLeft : '済';
+  document.getElementById('streak').textContent = streak;
+  document.getElementById('phase-badge').innerHTML = 'フェーズ<b>' + ph.no + '</b> ' + ph.name;
+  document.getElementById('love-num').textContent = aff + ' / 100';
+  document.getElementById('love-fill').style.width = aff + '%';
+  document.getElementById('level-chip').textContent = 'Lv.' + tier.lv + ' ' + tier.name;
+  document.getElementById('wk-days').textContent = wk.days;
+  document.getElementById('wk-q').textContent = wk.q;
+  document.getElementById('total-q').textContent = totalQ;
+  document.getElementById('phase-box').innerHTML = '<b>今のやること(フェーズ' + ph.no + ':' + ph.name + ')</b><br>' + ph.norma;
+
+  const talk = pickTalk();
+  document.getElementById('chara').setAttribute('class', talk.exp);
+  document.getElementById('talk').textContent = talk.text;
+
+  const tbody = document.getElementById('log-body');
+  tbody.innerHTML = '';
+  const recent = [...state.logs].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,12);
+  for(const l of recent){
+    const tr = document.createElement('tr');
+    const idx = state.logs.indexOf(l);
+    tr.innerHTML = '<td>' + l.date.slice(5) + '</td><td>' + esc(l.cat.split(' ')[0]) + '</td><td>' + l.q + '</td><td>' + l.acc + '%</td><td>' + l.min + '</td>' +
+      '<td><button class="del" data-i="' + idx + '">✕</button></td>';
+    tbody.appendChild(tr);
+  }
+}
+function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+/* ---------- イベント ---------- */
+function showEvent(ev, exp){
+  document.getElementById('event-title').textContent = ev.title;
+  document.getElementById('event-text').textContent = ev.text;
+  document.getElementById('event-overlay').classList.add('show');
+  document.getElementById('chara').setAttribute('class', exp || 'exp-excited');
+}
+function closeEvent(){ document.getElementById('event-overlay').classList.remove('show'); render(); }
+
+document.getElementById('log-form').addEventListener('submit', function(e){
+  e.preventDefault();
+  const wasEmpty = state.logs.length === 0;
+  const prevAff = computeAffection();
+  const prevStreak = computeStreak();
+  const log = {
+    date: document.getElementById('f-date').value,
+    cat: document.getElementById('f-cat').value,
+    q: parseInt(document.getElementById('f-q').value)||0,
+    acc: parseInt(document.getElementById('f-acc').value)||0,
+    min: parseInt(document.getElementById('f-min').value)||0,
+    memo: document.getElementById('f-memo').value,
+  };
+  // 3日以上ぶりの復帰か(追加前に判定)
+  const days = Object.keys(dailySummary()).sort();
+  const isComeback = days.length > 0 && (dnum(log.date) - dnum(days[days.length-1])) >= 3;
+
+  state.logs.push(log);
+  const aff = computeAffection();
+  const streak = computeStreak();
+  const tier = tierOf(aff);
+  save();
+  document.getElementById('f-memo').value = '';
+
+  // 好感度上昇ポップ
+  const gain = aff - prevAff;
+  const pop = document.getElementById('gain-pop');
+  pop.textContent = gain > 0 ? '💗 好感度 +' + gain : '💗 記録しました';
+  pop.classList.add('show');
+  setTimeout(()=>pop.classList.remove('show'), 2500);
+
+  // イベント判定(優先順)
+  if(wasEmpty){ showEvent(SPECIAL.firstLog); }
+  else if(tier.lv > (state.maxLevelSeen||1)){
+    state.maxLevelSeen = tier.lv; save();
+    showEvent(SPECIAL['levelup'+tier.lv]);
+  }
+  else if(prevStreak < 30 && streak >= 30){ showEvent(SPECIAL.streak30); }
+  else if(prevStreak < 14 && streak >= 14){ showEvent(SPECIAL.streak14); }
+  else if(prevStreak < 7 && streak >= 7){ showEvent(SPECIAL.streak7); }
+  else if(isComeback){ showEvent(SPECIAL.comeback, 'exp-smile'); }
+  else {
+    render();
+    document.getElementById('chara').setAttribute('class','exp-excited');
+    let msg = PRAISE[Math.floor(Math.random()*PRAISE.length)];
+    if(log.acc > 0 && log.acc < 60) msg = '正答率は気にしすぎないでください!間違えた問題こそ宝物です。解説をじっくり読むのが一番の近道ですよ!';
+    if(log.acc >= 85) msg = '正答率' + log.acc + '%!?す、すごすぎます先輩……!その調子です!';
+    document.getElementById('talk').textContent = 'あかり「' + msg + '」';
+  }
+});
+
+document.getElementById('log-body').addEventListener('click', function(e){
+  const btn = e.target.closest('.del');
+  if(!btn) return;
+  if(confirm('この記録を削除しますか?')){
+    state.logs.splice(parseInt(btn.dataset.i), 1);
+    save(); render();
+  }
+});
+
+document.getElementById('btn-pass').addEventListener('click', function(){
+  if(!confirm('本当に合格しましたか?(おめでとうございます!!)')) return;
+  state.passed = true; save();
+  document.getElementById('ending-text').textContent = ENDING;
+  document.getElementById('ending-overlay').classList.add('show');
+  document.getElementById('chara').setAttribute('class','exp-excited');
+  confetti();
+  render();
+});
+
+document.getElementById('btn-exam').addEventListener('click', function(){
+  const d = prompt('試験日を入力してください (例: 2026-09-19)', state.examDate);
+  if(d && /^\d{4}-\d{2}-\d{2}$/.test(d)){ state.examDate = d; save(); render(); }
+});
+
+document.getElementById('btn-export').addEventListener('click', function(){
+  const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'encor-study-backup.json';
+  a.click();
+});
+document.getElementById('btn-import').addEventListener('click', ()=>document.getElementById('import-file').click());
+document.getElementById('import-file').addEventListener('change', function(e){
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = ()=>{
+    try{
+      const s = JSON.parse(r.result);
+      if(s && Array.isArray(s.logs)){ state = s; save(); render(); alert('読み込みました!'); }
+      else alert('形式が違うようです');
+    }catch(err){ alert('読み込みに失敗しました'); }
+  };
+  r.readAsText(f);
+});
+
+function confetti(){
+  const colors = ['#e0669a','#f2b544','#7a6ff0','#3aa675','#f77b7b'];
+  for(let i=0;i<80;i++){
+    const c = document.createElement('div');
+    c.className = 'confetti';
+    c.style.left = Math.random()*100 + 'vw';
+    c.style.background = colors[i%colors.length];
+    c.style.animationDuration = (2+Math.random()*3) + 's';
+    c.style.animationDelay = (Math.random()*1.5) + 's';
+    document.body.appendChild(c);
+    setTimeout(()=>c.remove(), 6000);
+  }
+}
+
+/* ---------- 初期化 ---------- */
+document.getElementById('f-date').value = todayStr();
+render();
+</script>
+</body>
+</html>
