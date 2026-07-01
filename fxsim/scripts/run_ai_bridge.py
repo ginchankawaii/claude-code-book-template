@@ -7,7 +7,9 @@ release) as a RISK-FIRST GATE: when the trend says long, Opus can confirm and
 size the conviction, or VETO it (stand aside) — it never shorts and never opens
 a long the trend filter doesn't already justify. With no API key the trend edge
 runs on its own (Opus simply can't veto). Sizing = conviction x hard max-risk x
-the 5x leverage cap, scaled down on drawdown.
+a conviction-scaled leverage cap (<=5x: full when price is well above the SMA,
+eased toward the floor near it — app/sizing.py, docs/RESEARCH.md), scaled down
+on drawdown.
 
   python -m scripts.run_ai_bridge --once --dry   # one decision, no order written
   python -m scripts.run_ai_bridge --once          # one decision now (writes signal)
@@ -36,6 +38,7 @@ from app.config import Settings, pip_size
 from app.events import get_calendar
 from app.indicators import candles_to_df, enrich
 from app.providers.csv import load_csv_file
+from app.sizing import conviction_leverage
 
 
 def _ongoing_run(start_balance: float, model: str, max_risk: float,
@@ -132,10 +135,18 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
     eq_hist = [e["equity"] for e in db.load_equity(run_id)] or [equity]
     brake, _, _ = AdaptiveController(AdaptiveConfig(base_risk=1.0, min_risk=0.2)).evaluate(eq_hist, [])
 
+    # Conviction-scaled leverage: within the same hard 5x cap, pull exposure down
+    # toward the floor when price is near the SMA (whipsaw zone), full cap when the
+    # trend is well established. Matches the backtest engine (docs/RESEARCH.md).
+    atr_now = ctx["technical"]["atr"]
+    eff_leverage = cfg.max_leverage
+    if action == "LONG" and getattr(cfg, "dyn_leverage", False):
+        eff_leverage = conviction_leverage(price, ma, atr_now, cfg.max_leverage,
+                                           cfg.dyn_lev_atr_mult, cfg.dyn_lev_floor)
     pip = pip_size(instrument)
     lots = size_lots("long" if action == "LONG" else "flat", conviction, balance,
-                     ctx["technical"]["atr"], pip, max_risk, max_lots, brake,
-                     price=price, max_leverage=cfg.max_leverage)
+                     atr_now, pip, max_risk, max_lots, brake,
+                     price=price, max_leverage=eff_leverage)
     if lots <= 0:
         action = "FLAT"
     direction = 1 if action == "LONG" else 0   # long-or-flat; never short
@@ -146,10 +157,11 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
                      conviction * direction, reason,
                      {"action": action, "conviction": conviction, "trend_up": trend_up,
                       "risk_used": risk_used, "brake": round(brake, 3),
+                      "eff_leverage": round(eff_leverage, 2),
                       "target_lots": lots, "position_lots": status.get("position_lots", 0.0),
                       "factors": factors, "plan": plan, "trigger": trigger})
     print(f"[ai] decision: {action} {lots:.2f} lots | conviction {conviction:.2f} "
-          f"risk {risk_used:.3f} (brake {brake:.2f}) | {reason}", flush=True)
+          f"risk {risk_used:.3f} (brake {brake:.2f}) lev {eff_leverage:.1f}x | {reason}", flush=True)
     for f in factors:
         print(f"      - {f}", flush=True)
     if plan:

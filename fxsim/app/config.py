@@ -74,6 +74,20 @@ class Settings:
     # absurd leverage. Set 0 to disable. docs/RESEARCH.md has the return/DD
     # trade-off across leverage levels.
     max_leverage: float = field(default_factory=lambda: _get_float("FXSIM_MAX_LEVERAGE", 5.0))
+    # Conviction-scaled leverage: within the SAME hard max_leverage cap, pull
+    # exposure down toward dyn_lev_floor when price drifts back toward the trend
+    # SMA (the whipsaw zone), full cap when the trend is well established. Cuts
+    # max drawdown ~34%->26% at equal-or-higher CAGR, robust OOS (docs/RESEARCH.md,
+    # app/sizing.conviction_leverage). ON by default; set FXSIM_DYN_LEVERAGE=0 for
+    # the old flat-cap behaviour. Never raises leverage above max_leverage.
+    dyn_leverage: bool = field(
+        default_factory=lambda: os.getenv("FXSIM_DYN_LEVERAGE", "1") not in ("0", "false", "")
+    )
+    # Ramp width: full cap once price is this many ATRs above the SMA (1.5 = the
+    # robust central pick from the parameter sweep).
+    dyn_lev_atr_mult: float = field(default_factory=lambda: _get_float("FXSIM_DYN_LEV_ATR", 1.5))
+    # Floor leverage when price sits right at the SMA (1x = conservative but held).
+    dyn_lev_floor: float = field(default_factory=lambda: _get_float("FXSIM_DYN_LEV_FLOOR", 1.0))
     # cost model
     spread_pips: float = field(default_factory=lambda: _get_float("FXSIM_SPREAD_PIPS", 0.8))
     commission_per_million: float = field(

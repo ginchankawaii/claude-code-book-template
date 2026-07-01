@@ -21,6 +21,7 @@ from . import db
 from .config import Settings, pip_size, settings as default_settings
 from .indicators import enrich
 from .models import Candle, Position, Signal, TradeResult
+from .sizing import conviction_leverage
 from .strategies.base import Strategy
 
 
@@ -51,6 +52,9 @@ class PaperTradingEngine:
         self.state: Optional[_OpenState] = None
         self.closed_trades: list[TradeResult] = []
         self.equity_curve: list[tuple[datetime, float, float, float]] = []
+        # effective leverage cap for the next _open (conviction-scaled per bar);
+        # None -> use the flat cfg.max_leverage.
+        self._eff_leverage: Optional[float] = None
 
     # ------------------------------------------------------------------ #
     # sizing & costs
@@ -61,6 +65,23 @@ class PaperTradingEngine:
     def _commission(self, units: int) -> float:
         return abs(units) / 1_000_000.0 * self.cfg.commission_per_million
 
+    def _dyn_leverage(self, df: pd.DataFrame, price: float, atr: float) -> float:
+        """Conviction-scaled leverage cap for this bar (<= cfg.max_leverage).
+
+        Full cap when price is well above the trend SMA; ramps toward
+        dyn_lev_floor as price falls back toward the SMA. See app/sizing.py.
+        """
+        cap = self.cfg.max_leverage
+        if not self.cfg.dyn_leverage or cap <= 0:
+            return cap
+        n = self.cfg.trend_sma
+        close = df["close"]
+        if n <= 0 or len(close) < n:
+            return cap
+        sma = float(close.iloc[-n:].mean())
+        return conviction_leverage(price, sma, atr, cap,
+                                   self.cfg.dyn_lev_atr_mult, self.cfg.dyn_lev_floor)
+
     def _size(self, atr: float, price: float) -> int:
         stop_distance = max(atr * 1.5, self.pip * 5)
         risk_cash = self.balance * self.cfg.risk_per_trade
@@ -69,8 +90,11 @@ class PaperTradingEngine:
         # Hard leverage ceiling: notional (units * price) <= max_leverage * equity.
         # Balance and price are both in the quote currency, so units * price is the
         # notional in quote terms and balance is the equity in quote terms.
-        if self.cfg.max_leverage > 0 and price > 0:
-            units = min(units, int(self.cfg.max_leverage * self.balance / price))
+        # _eff_leverage (set per bar in step) applies the conviction scaling but
+        # never exceeds cfg.max_leverage.
+        lev = self._eff_leverage if self._eff_leverage is not None else self.cfg.max_leverage
+        if lev > 0 and price > 0:
+            units = min(units, int(lev * self.balance / price))
         return max(0, units)
 
     # ------------------------------------------------------------------ #
@@ -169,6 +193,8 @@ class PaperTradingEngine:
         )
         price = candle.close
         atr = last["atr"] if not math.isnan(last["atr"]) else self.pip * 10
+        # conviction-scaled leverage cap for any _open triggered this bar
+        self._eff_leverage = self._dyn_leverage(df, price, atr)
 
         # 1) intrabar stop/target first
         self._check_stops(candle)
