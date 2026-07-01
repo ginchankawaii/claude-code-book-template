@@ -39,6 +39,20 @@ def test_degrades_to_cap_on_bad_inputs():
     assert conviction_leverage(100.0, 100.0, 1.0, 0.0) == 0.0        # cap off
 
 
+def test_convex_power_stays_below_linear_mid_ramp():
+    # p=2 loads up late: below the linear ramp everywhere strictly inside (0,1),
+    # equal at the endpoints, never above the cap.
+    for d in (0.25, 0.75, 1.0):
+        lin = conviction_leverage(100 + d, 100.0, 1.0, 5.0, atr_mult=1.0, power=1.0)
+        cvx = conviction_leverage(100 + d, 100.0, 1.0, 5.0, atr_mult=1.0, power=2.0)
+        assert cvx <= lin <= 5.0
+    # endpoints identical
+    assert conviction_leverage(100.0, 100.0, 1.0, 5.0, power=2.0) == 1.0
+    assert conviction_leverage(200.0, 100.0, 1.0, 5.0, power=2.0) == 5.0
+    # mid-ramp: s=0.5 -> 1 + 4*0.25 = 2.0
+    assert conviction_leverage(100.5, 100.0, 1.0, 5.0, atr_mult=1.0, power=2.0) == 2.0
+
+
 # --- engine wiring -----------------------------------------------------------
 def _rising_df(n=60, start=100.0, step=0.2):
     # steadily rising closes so price sits above its own SMA; atr well-defined

@@ -80,7 +80,8 @@ class PaperTradingEngine:
             return cap
         sma = float(close.iloc[-n:].mean())
         return conviction_leverage(price, sma, atr, cap,
-                                   self.cfg.dyn_lev_atr_mult, self.cfg.dyn_lev_floor)
+                                   self.cfg.dyn_lev_atr_mult, self.cfg.dyn_lev_floor,
+                                   getattr(self.cfg, "dyn_lev_pow", 1.0))
 
     def _size(self, atr: float, price: float) -> int:
         stop_distance = max(atr * 1.5, self.pip * 5)

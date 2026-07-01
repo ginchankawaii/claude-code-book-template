@@ -88,6 +88,11 @@ class Settings:
     dyn_lev_atr_mult: float = field(default_factory=lambda: _get_float("FXSIM_DYN_LEV_ATR", 1.5))
     # Floor leverage when price sits right at the SMA (1x = conservative but held).
     dyn_lev_floor: float = field(default_factory=lambda: _get_float("FXSIM_DYN_LEV_FLOOR", 1.0))
+    # Ramp shape exponent on strength (2.0 = convex: stay near the floor until the
+    # trend is well established, load up late — round-2 winner, docs/RESEARCH.md:
+    # Sharpe 0.83->0.89, maxDD 26.7->24.6 at equal CAGR, robust across p 1.3-3.0
+    # and 3x costs). 1.0 = the round-1 linear ramp.
+    dyn_lev_pow: float = field(default_factory=lambda: _get_float("FXSIM_DYN_LEV_POW", 2.0))
     # cost model
     spread_pips: float = field(default_factory=lambda: _get_float("FXSIM_SPREAD_PIPS", 0.8))
     commission_per_million: float = field(

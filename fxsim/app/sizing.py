@@ -13,7 +13,13 @@ exposure down toward the floor. It NEVER exceeds the hard cap: this is not "more
 leverage", it is "less leverage exactly where it hurts".
 
     strength = clip((price - sma) / (atr_mult * atr), 0, 1)   # 0 at SMA .. 1 far above
-    leverage = floor + (cap - floor) * strength               # floor .. cap
+    leverage = floor + (cap - floor) * strength**power        # floor .. cap
+
+The convex ramp (power=2, the round-2 finding in docs/RESEARCH.md) stays near
+the floor until the trend is well established and loads up late: it beat the
+linear ramp on every metric (15.5/24.6/0.89 vs 15.3/26.7/0.83), the whole
+exponent neighborhood p in 1.3..3.0 beats linear, and the edge survives 3x
+costs. power=1 recovers the round-1 linear ramp.
 
 Both the backtest engine (app/engine._size) and the live bridge
 (scripts/run_ai_bridge -> app/ai_trader.size_lots) call this one function so the
@@ -23,7 +29,8 @@ from __future__ import annotations
 
 
 def conviction_leverage(price: float, sma: float, atr: float, cap: float,
-                        atr_mult: float = 1.5, floor: float = 1.0) -> float:
+                        atr_mult: float = 1.5, floor: float = 1.0,
+                        power: float = 1.0) -> float:
     """Effective leverage in [floor, cap] from distance-above-SMA in ATR units.
 
     Returns ``cap`` unchanged when the inputs can't be trusted (non-positive
@@ -39,4 +46,6 @@ def conviction_leverage(price: float, sma: float, atr: float, cap: float,
         return cap
     strength = (price - sma) / (atr_mult * atr)
     strength = 0.0 if strength < 0 else (1.0 if strength > 1 else strength)
+    if power > 0 and power != 1.0:
+        strength = strength ** power
     return lo + (cap - lo) * strength
