@@ -321,6 +321,20 @@ def main() -> None:
                         bridge.write_signal("FLAT", 0.0)
                         print(f"[ai] STOP hit: last {price:.3f} <= stop {stop_price:.3f} "
                               f"-> FLAT (gate may re-enter if trend holds)", flush=True)
+                        # Record the exit so the dashboard/PDCA monitor sees the
+                        # book match the last decision (else: false drift alarm).
+                        try:
+                            status = bridge.read_status()
+                            if status and (status.get("balance") or 0) > 0:
+                                run_id = _ongoing_run(status["balance"], trader.model,
+                                                      args.max_risk, args.granularity)
+                                db.record_signal(
+                                    run_id, now, args.instrument, "combined", 0, 0.0,
+                                    f"stop-loss: last {price:.3f} <= stop {stop_price:.3f}",
+                                    {"action": "FLAT", "trigger": "stop",
+                                     "stop_price": stop_price, "position_lots": pos})
+                        except Exception as exc:
+                            print(f"[ai] stop-exit DB record failed: {exc}", flush=True)
                     stop_price = None
                     last_gate = _time.time()          # brief pause before re-entry
                     stopped_this_tick = True
