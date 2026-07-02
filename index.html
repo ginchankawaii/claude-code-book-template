@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>ENCOR合格ストーリー 〜タキと目指す9月合格〜</title>
+<meta name="theme-color" content="#c43d55">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="ENCOR">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>
+  :root{
+    --bg:#fbf4f0; --card:#ffffff; --ink:#3c322e; --sub:#93817a;
+    --accent:#c43d55; --accent2:#8a5a2e; --line:#f0e2dc;
+    --ok:#3aa675; --warn:#e09a3c;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
+  body{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;background:var(--bg);color:var(--ink);line-height:1.6;
+       padding:calc(12px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
+       max-width:960px;margin:0 auto}
+  header{text-align:center;margin-bottom:14px}
+  header h1{font-size:1.25rem;color:var(--accent)}
+  header .sub{font-size:.78rem;color:var(--sub)}
+  .topbar{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px}
+  .badge{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:5px 13px;font-size:.83rem;box-shadow:0 1px 4px rgba(0,0,0,.05)}
+  .badge b{color:var(--accent)}
+  .grid{display:grid;grid-template-columns:350px 1fr;gap:16px}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.05)}
+  .card h2{font-size:.95rem;color:var(--accent2);margin-bottom:10px;border-bottom:2px dotted var(--line);padding-bottom:6px}
+
+  /* キャラクター */
+  .chara-wrap{text-align:center}
+  #chara{filter:drop-shadow(0 4px 10px rgba(120,60,40,.15));max-width:100%;height:auto}
+  .chara-name{font-weight:bold;font-size:1.05rem;margin-top:2px}
+  .chara-name span{font-size:.72rem;color:var(--sub);font-weight:normal}
+  .lovebar-wrap{margin:10px 0 4px}
+  .lovebar-label{display:flex;justify-content:space-between;font-size:.8rem;color:var(--sub)}
+  .lovebar{height:14px;background:#f5e4e0;border-radius:7px;overflow:hidden;margin-top:4px}
+  .lovebar>div{height:100%;background:linear-gradient(90deg,#e88b74,#c43d55);border-radius:7px;transition:width .8s ease}
+  .level-chip{display:inline-block;background:#f9e8e4;color:var(--accent);border-radius:14px;padding:2px 12px;font-size:.8rem;margin-top:6px}
+  .bubble{position:relative;background:#fdf7f2;border:1.5px solid #ecd3c8;border-radius:14px;padding:12px 14px;margin-top:14px;font-size:.92rem;text-align:left;min-height:76px}
+  .bubble::before{content:"";position:absolute;top:-10px;left:44px;border:10px solid transparent;border-bottom-color:#ecd3c8;border-top:0}
+  .bubble::after{content:"";position:absolute;top:-8px;left:45px;border:9px solid transparent;border-bottom-color:#fdf7f2;border-top:0}
+  .gain-pop{color:var(--accent);font-weight:bold;font-size:.85rem;text-align:center;height:1.4em;margin-top:6px;opacity:0;transition:opacity .4s}
+  .gain-pop.show{opacity:1}
+
+  /* キャラ表示(ドット絵 or カスタム画像) */
+  #chara{image-rendering:pixelated;image-rendering:crisp-edges}
+  #chara-img{display:none;max-width:230px;max-height:270px;border-radius:14px;object-fit:cover}
+
+  /* 統計 */
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+  .stat{background:#fbf4ee;border-radius:10px;padding:8px;text-align:center}
+  .stat .v{font-size:1.25rem;font-weight:bold;color:var(--accent2)}
+  .stat .k{font-size:.68rem;color:var(--sub)}
+  .phase-box{background:#f6efe4;border-radius:10px;padding:10px 12px;font-size:.85rem;margin-bottom:0}
+  .phase-box b{color:var(--accent2)}
+
+  /* フォーム */
+  form label{display:block;font-size:.78rem;color:var(--sub);margin-top:8px}
+  form input,form select,form textarea{width:100%;padding:9px;border:1px solid var(--line);border-radius:8px;font-size:16px;background:#fffdfc}
+  .form-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  button{cursor:pointer;border:none;border-radius:10px;padding:11px 16px;font-size:.95rem;font-weight:bold}
+  .btn-main{background:var(--accent);color:#fff;width:100%;margin-top:12px}
+  .btn-main:active{background:#a12f44}
+  .btn-sub{background:#efe6e0;color:var(--ink);font-size:.8rem;padding:9px 12px}
+  .btn-gold{background:linear-gradient(90deg,#e0a13c,#c43d55);color:#fff}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:16px}
+
+  /* ログ */
+  table{width:100%;border-collapse:collapse;font-size:.82rem}
+  th,td{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
+  th{color:var(--sub);font-weight:normal;font-size:.75rem}
+  td .del{background:none;color:#cbb0a4;font-size:.8rem;padding:2px 6px}
+  td .del:active{color:var(--accent)}
+
+  /* モーダル・エンディング */
+  .overlay{position:fixed;inset:0;background:rgba(45,25,20,.55);display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
+  .overlay.show{display:flex}
+  .modal{background:#fff;border-radius:18px;padding:24px;max-width:440px;width:100%;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.3);max-height:85vh;overflow-y:auto}
+  .modal h3{color:var(--accent);margin-bottom:10px}
+  .modal p{font-size:.92rem;text-align:left;white-space:pre-wrap}
+  .ending .modal{background:linear-gradient(180deg,#fffaf5,#fdeee6)}
+  .confetti{position:fixed;top:-20px;width:10px;height:14px;z-index:60;animation:fall linear forwards}
+  @keyframes fall{to{transform:translateY(110vh) rotate(720deg)}}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🧪 ENCOR合格ストーリー 🧪</h1>
+  <div class="sub">〜検証ラボの同期・早瀬タキと目指す、9月のハッピーエンド〜</div>
+  <div class="topbar">
+    <div class="badge">試験まで <b id="countdown">--</b> 日</div>
+    <div class="badge">連続 <b id="streak">0</b> 日</div>
+    <div class="badge" id="phase-badge">フェーズ --</div>
+  </div>
+</header>
+
+<div class="grid">
+  <!-- 左: キャラクター -->
+  <div class="card chara-wrap">
+    <canvas id="chara" width="224" height="224" aria-label="早瀬タキ"></canvas>
+    <img id="chara-img" alt="カスタムキャラ画像">
+    <div class="chara-name">早瀬 タキ <span>(検証ラボの同期・自称天才)</span></div>
+    <div class="level-chip" id="level-chip">Lv.1 観察対象</div>
+    <div class="lovebar-wrap">
+      <div class="lovebar-label"><span>好感度</span><span id="love-num">0 / 100</span></div>
+      <div class="lovebar"><div id="love-fill" style="width:0%"></div></div>
+    </div>
+    <div class="bubble" id="talk">……</div>
+    <div class="gain-pop" id="gain-pop"></div>
+  </div>
+
+  <!-- 右: 記録・統計 -->
+  <div>
+    <div class="card" style="margin-bottom:16px">
+      <h2>📊 実験データ(いまの状況)</h2>
+      <div class="stats">
+        <div class="stat"><div class="v" id="wk-days">0</div><div class="k">今週の勉強日数</div></div>
+        <div class="stat"><div class="v" id="wk-q">0</div><div class="k">今週の問題数</div></div>
+        <div class="stat"><div class="v" id="total-q">0</div><div class="k">累計問題数</div></div>
+      </div>
+      <div class="phase-box" id="phase-box"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h2>✏️ 今日のデータを提出する</h2>
+      <form id="log-form">
+        <label>日付</label>
+        <input type="date" id="f-date" required>
+        <label>分野</label>
+        <select id="f-cat">
+          <option>L2 (VLAN/STP/EtherChannel)</option>
+          <option>L3 (OSPF/EIGRP/BGP)</option>
+          <option>インフラ (FHRP/NAT/QoS/マルチキャスト)</option>
+          <option>無線 (WLC/AP)</option>
+          <option>仮想化 (VRF/GRE/VXLAN/LISP)</option>
+          <option>セキュリティ (AAA/ACL)</option>
+          <option>自動化 (REST/JSON/Python)</option>
+          <option>SD-Access / SD-WAN</option>
+          <option>ネットワーク保証 (NetFlow/SPAN)</option>
+          <option>コマ問・シミュレーション</option>
+          <option>模擬試験</option>
+          <option>その他</option>
+        </select>
+        <div class="form-row">
+          <div><label>問題数</label><input type="number" id="f-q" min="0" value="30"></div>
+          <div><label>正答率(%)</label><input type="number" id="f-acc" min="0" max="100" value="70"></div>
+          <div><label>時間(分)</label><input type="number" id="f-min" min="0" value="30"></div>
+        </div>
+        <label>メモ(苦手だった所・打てなかったコマンド等)</label>
+        <textarea id="f-memo" rows="2"></textarea>
+        <button type="submit" class="btn-main">記録する 🧪</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>📚 最近の記録</h2>
+      <table>
+        <thead><tr><th>日付</th><th>分野</th><th>問</th><th>正答</th><th>分</th><th></th></tr></thead>
+        <tbody id="log-body"></tbody>
+      </table>
+    </div>
+
+    <div class="toolbar">
+      <button class="btn-gold" id="btn-pass">🌸 合格しました!!</button>
+      <button class="btn-sub" id="btn-exam">📅 試験日を設定</button>
+      <button class="btn-sub" id="btn-export">💾 データ書き出し</button>
+      <button class="btn-sub" id="btn-import">📂 読み込み</button>
+      <button class="btn-sub" id="btn-img">🖼 キャラ画像に差し替え</button>
+      <button class="btn-sub" id="btn-img-reset" style="display:none">👾 ドット絵に戻す</button>
+      <input type="file" id="import-file" accept=".json" style="display:none">
+      <input type="file" id="img-file" accept="image/*" style="display:none">
+    </div>
+  </div>
+</div>
+
+<!-- イベントモーダル -->
+<div class="overlay" id="event-overlay">
+  <div class="modal">
+    <h3 id="event-title">イベント発生!</h3>
+    <p id="event-text"></p>
+    <button class="btn-main" onclick="closeEvent()">つづける</button>
+  </div>
+</div>
+
+<!-- エンディング -->
+<div class="overlay ending" id="ending-overlay">
+  <div class="modal">
+    <h3>🌸 HAPPY END 〜合格おめでとう!〜 🌸</h3>
+    <p id="ending-text"></p>
+    <button class="btn-main" onclick="document.getElementById('ending-overlay').classList.remove('show')">エンドロールへ(閉じる)</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+const LS_KEY = 'encor-galge-v1';
+
+/* ---------- 状態 ---------- */
+let state = load();
+function load(){
+  try{
+    const s = JSON.parse(localStorage.getItem(LS_KEY));
+    if(s && Array.isArray(s.logs)) return s;
+  }catch(e){}
+  return { examDate:'2026-09-19', logs:[], passed:false, maxLevelSeen:1 };
+}
+function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+
+/* ---------- 日付ユーティリティ ---------- */
+const DAY = 86400000;
+function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function dnum(s){ return Math.round(Date.parse(s+'T00:00:00Z')/DAY); }
+function dstr(n){ return new Date(n*DAY).toISOString().slice(0,10); }
+
+/* ---------- 集計 ---------- */
+function dailySummary(){
+  const map = {};
+  for(const l of state.logs){
+    if(!map[l.date]) map[l.date] = {q:0,min:0,accSum:0,n:0};
+    map[l.date].q += l.q; map[l.date].min += l.min;
+    map[l.date].accSum += l.acc; map[l.date].n++;
+  }
+  return map;
+}
+function computeAffection(){
+  const sum = dailySummary();
+  const days = Object.keys(sum).sort();
+  let pts = 0, streak = 0, prev = null;
+  for(const d of days){
+    streak = (prev !== null && dnum(d) - prev === 1) ? streak + 1 : 1;
+    prev = dnum(d);
+    const s = sum[d];
+    let p = 1;
+    if(s.min >= 30) p += 0.5;
+    if(s.q >= 40) p += 0.5;
+    if(s.n && s.accSum/s.n >= 80) p += 0.5;
+    if(streak >= 7) p += 0.5;
+    pts += p;
+  }
+  if(state.passed) return 100;
+  return Math.min(100, Math.round(pts));
+}
+function computeStreak(){
+  const days = new Set(Object.keys(dailySummary()));
+  let t = dnum(todayStr());
+  let streak = 0;
+  // 今日まだ記録がなくても昨日から続いていれば継続扱い
+  if(!days.has(todayStr())) t -= 1;
+  while(true){
+    if(days.has(dstr(t))){ streak++; t--; } else break;
+  }
+  return streak;
+}
+function weekStats(){
+  const now = new Date();
+  const dow = (now.getDay()+6)%7; // 月曜=0
+  const monday = dnum(todayStr()) - dow;
+  let days = new Set(), q = 0;
+  for(const l of state.logs){
+    const dn = dnum(l.date);
+    if(dn >= monday && dn <= monday+6){ days.add(l.date); q += l.q; }
+  }
+  return {days:days.size, q};
+}
+
+/* ---------- レベル・セリフ(ツンデレ研究者・早瀬タキ) ---------- */
+const TIERS = [
+  {min:80, lv:5, name:'運命共同体(たぶん)'},
+  {min:60, lv:4, name:'かけがえのない相棒'},
+  {min:40, lv:3, name:'興味深いキミ'},
+  {min:20, lv:2, name:'共同研究者'},
+  {min:0,  lv:1, name:'観察対象'},
+];
+function tierOf(aff){ return TIERS.find(t => aff >= t.min); }
+
+const TALK = {
+  1:[ 'キミが噂の受験者か。フフ、いい目をしてるじゃないか。……べ、別にキミに興味があるわけじゃない。データが欲しいだけさ。',
+      'ENCOR?ああ、あの試験ね。私なら3日で受かるけど……キミは私の言う通りにやれば9月に間に合うよ。感謝したまえ。',
+      'Ping-tの解説は全部読むこと。知識は反復でシナプスに定着する。実験で証明済みさ。',
+      'ふぁ……徹夜明けでね。キミの勉強データでも眺めて目を覚まそうかな。' ],
+  2:[ '今日も来たのか。フーン……ま、継続できるのは一種の才能だよ。ほんの少しだけ、認めてあげる。',
+      'OSPFのLSAタイプ?いい質問だ。私の研究ノートを貸して……あ、あとでちゃんと返してよね!',
+      '疲れた日は10問でいい。ゼロと1の差は無限大。これは数学的事実だよ。',
+      'キミの正答率の推移、なかなか面白い曲線を描いてる。……何?見せないよ、私の研究データだから。' ],
+  3:[ 'キミのデータを分析するのが、その、日課になりつつある。……研究として!あくまで研究としてだからね!',
+      'べ、別にキミが来るのを待ってたわけじゃない。実験の合間に、たまたま時間があっただけさ。',
+      '間違えた問題は宝だよ。エラーこそ最高の教材……って、なんで私がキミにこんな親身に教えてるんだ。',
+      '今日はどの分野をやったんだい?ほら、報告。……き、キミの声が聞きたいわけじゃなくて、記録のためだよ!' ],
+  4:[ 'キミと一緒だと実験がはかどる……もとい、勉強がはかどるだろう?フフ、私のおかげだね。感謝したまえ。',
+      '合格したら……その、お祝いくらい、してあげなくもない。よ、予定は空けておくように!命令だからね!',
+      'キミの成長曲線、綺麗すぎて見惚れてしまうよ。……グ、グラフの話だからね!?変な勘違いはしないように!',
+      '最近、キミが来ないとラボが静かすぎて調子が出ない。……装置のノイズの問題だよ。たぶん。' ],
+  5:[ 'ここまで来たら合格は時間の問題だね。私の見立てに狂いはない。……キミ、本当によく頑張ったよ。',
+      '本番で緊張したら、私の顔を思い出したまえ。……わ、笑うなよ!実験によると効果があるんだ!',
+      '模試85%超えの安定再現……素晴らしいデータだ。キミはもう、私の自慢の……な、なんでもない!',
+      'あと少しだね。最後まで観察させてもらうよ。キミの一番近くの特等席でね。……深い意味はない!' ],
+};
+const PRAISE = [
+  'ふむ、今日のデータも良好。……べ、別に褒めてないから!事実を述べただけ!',
+  '継続日数が伸びてるね。フフ、いい傾向だ。実験は極めて順調だよ。',
+  'お疲れさま……あっ、いや、今のは実験的な発話であって、労いではない。',
+  '記録を確認した。キミのシナプス、今日もよく発火していたようだね。',
+];
+const SPECIAL = {
+  firstLog: {title:'実験開始', text:'タキ『ようこそ、私のラボへ。キミの"CCNP合格プロジェクト"、本日より正式に開始だ。毎日ここにデータを提出するように。サボったら……フフ、どうなるかは自分で確かめてみるかい?』'},
+  levelup2: {title:'Lv.2 共同研究者に昇格', text:'タキ『キミ、毎日ちゃんと来るじゃないか。……いいだろう、今日から観察対象じゃなくて"共同研究者"に昇格だ。こ、光栄に思いたまえよ!別に嬉しくなんかないけど、その、悪くない気分だ』'},
+  levelup3: {title:'Lv.3 興味深いキミ', text:'タキ『認めよう。キミは……興味深い。最初はただのサンプルだと思ってたのに、気づいたらキミの来る時間ばかり気にしてる。……この現象に、まだ名前をつけられずにいるんだ。私としたことが』'},
+  levelup4: {title:'Lv.4 かけがえのない相棒', text:'タキ『キミ。私は天才だから、大抵のことはひとりでできる。でも……キミと一緒にいるときの方が、いいデータが出る。つまり、その……キミは私の、かけがえのない相棒ってことだ。は、反論は認めない!』'},
+  levelup5: {title:'Lv.5 運命共同体(たぶん)', text:'タキ『好感度80超え……もはや誤差でも偶然でもない。有意差アリだ。……合格発表の日、私を隣に置くように。キミの"おめでとう"の第一発見者になる権利は、私のものだからね』\n\n(あとは合格の報告をするだけ……!)'},
+  streak7:  {title:'7日連続達成!', text:'タキ『7日連続!?ほ、ほう……やるじゃないか。習慣化の第一関門突破だ。ご褒美に私の秘蔵のコーヒー豆を……や、やっぱりなし!調子に乗るなよ!でも、すごいよ。ほんとに』'},
+  streak14: {title:'14日連続達成!', text:'タキ『2週間連続。もう完全に習慣として定着してるね。フフ、私の被験者……じゃなくて相棒は優秀で困るよ。……なに笑ってるんだ!早く今日の分をやりたまえ!』'},
+  streak30: {title:'30日連続達成!!', text:'タキ『30日連続だって!?……こ、これは学会に報告すべき事例だよ!キミ、自分がどれだけすごいことをしてるか分かってるのかい?……私は、分かってる。ずっと見てたからね』'},
+  comeback: {title:'おかえり', text:'タキ『3日ぶりの検体……じゃなくて、キミか!サボるとはいい度胸だね?……べ、別に心配なんかしてない!ただ、その、データに欠損があると困るだけで……。…………おかえり。今日は10問でいいから、また始めよう』'},
+};
+const ENDING = 'タキ『合格……合格!?……フ、フフ、当然の結果だよ。なにせ私の指導だからね!\n\n……なんて、強がるのはもうやめだ。キミ、本当におめでとう。よく頑張った。\n\n実はね、キミが毎日ラボに来るのが、私の一番の楽しみだった。キミを観察してるはずが、いつの間にか私の心拍数の方が異常値を叩き出すようになってしまって……これはもう、認めるしかない。\n\n私は、キミのことが……す、好きだ!言わせるな!!\n\n合格のご褒美に、これからも私の隣にいることを許可する。……い、嫌とは言わせないからね!』\n\n〜 ENCOR編・完 〜\n\n(下期、ENARSI編に続く……タキの好感度は引き継がれる)';
+
+/* ---------- ドット絵キャラ描画 ---------- */
+const PAL = {
+  h:'#a9663d', l:'#cf9059', d:'#7c4526', s:'#f3c8a8', S:'#ffe4cf',
+  B:'#3a241e', E:'#d13a55', e:'#7c1428', W:'#ffffff',
+  C:'#f7f4ec', c:'#ddd5c2', T:'#4a382e', R:'#c43d55', P:'#ff9fae',
+  g:'#bfe8f2', G:'#7fd98f',
+};
+/* 28x28ベース(目・口・頬は空欄=あとで表情を重ねる) */
+const BASE = [
+  '.............hh.............',
+  '............h..h............',
+  '.........hhhhhhhhhh.........',
+  '.......hhhhhhhhhhhhhh.......',
+  '......hhhhhllllllhhhhh......',
+  '.....hhhhllllllllllhhhh.....',
+  '....hhhhhhhhhhhhhhhhhhhh....',
+  '....hhhhhhhhhhhhhhhhhhhh....',
+  '...hhhhSShhSShhSShhSShhhh...',
+  '...hhSSSSSSSSSSSSSSSSSShh...',
+  '...hhSSSSSSSSSSSSSSSSSShh...',
+  '...hhSSSSSSSSSSSSSSSSSShh...',
+  '...hhSSSSSSSSSSSSSSSSSShh...',
+  '...hhSSSSSSSSSSSSSSSSSShh...',
+  '...hhSSSSSSSSSSSSSSSSSShh...',
+  '...hhSSSSSSSSSSSSSSSSSShh...',
+  '...hhSSSSSSSSSSSSSSSSSShh...',
+  '....hhsSSSSSSSSSSSSSSshh....',
+  '...hh.....sSSSSs.......hh...',
+  '..hh..CCCCCTTTTTTCCCCC..hh..',
+  '..hh.CCCCCCTTRRTTCCCCCC.hh..',
+  '..hh.CCCCCCCTRRTCCCgCCC.hh..',
+  '..hh.CCCCCCCTRRTCCCgCCC.hh..',
+  '..hh.CCCCCCCCRRCCCCGCCC.hh..',
+  '..hh.CCCCCCCCRRCCCCGCCC.hh..',
+  '..hh.CCCCCCCCCCCCCCCCCC.hh..',
+  '..hh.CCCCCCCCCCCCCCCCCC.hh..',
+  '..dd.cccccccccccccccccc.dd..',
+];
+/* 表情パーツ: [行, 列, 色文字] のリスト */
+function px(list){ return list; }
+const L_EYE = 7, R_EYE = 17; // 目の左端列
+function eyesOpen(){
+  const p = [];
+  for(const x of [L_EYE, R_EYE]){
+    p.push([10,x,'B'],[10,x+1,'B'],[10,x+2,'B'],[10,x+3,'B']);
+    p.push([11,x,'E'],[11,x+1,'W'],[11,x+2,'E'],[11,x+3,'e']);
+    p.push([12,x,'e'],[12,x+1,'E'],[12,x+2,'e'],[12,x+3,'e']);
+  }
+  return p;
+}
+function eyesSmug(){
+  const p = [];
+  for(const x of [L_EYE, R_EYE]){
+    p.push([11,x,'B'],[11,x+1,'B'],[11,x+2,'B'],[11,x+3,'B']);
+    p.push([12,x,'E'],[12,x+1,'W'],[12,x+2,'e'],[12,x+3,'e']);
+  }
+  return p;
+}
+function eyesSparkle(){
+  const p = eyesOpen();
+  p.push([12,L_EYE+1,'W'],[12,R_EYE+1,'W'],[11,L_EYE+3,'W'],[11,R_EYE+3,'W']);
+  return p;
+}
+function eyesTsun(){
+  const p = eyesOpen();
+  // つり目のまゆ
+  p.push([9,L_EYE,'B'],[9,L_EYE+1,'B'],[8,L_EYE+2,'B']);
+  p.push([9,R_EYE+3,'B'],[9,R_EYE+2,'B'],[8,R_EYE+1,'B']);
+  return p;
+}
+const MOUTH = {
+  smirk: px([[14,12,'B'],[14,13,'B'],[14,14,'B'],[13,15,'B']]),
+  smile: px([[13,11,'B'],[14,12,'B'],[14,13,'B'],[14,14,'B'],[14,15,'B'],[13,16,'B']]),
+  grin:  px([[13,12,'B'],[13,13,'B'],[13,14,'B'],[13,15,'B'],[14,11,'B'],[14,12,'R'],[14,13,'R'],[14,14,'R'],[14,15,'B'],[15,12,'B'],[15,13,'B'],[15,14,'B']]),
+  pout:  px([[14,12,'B'],[14,13,'B'],[14,14,'B'],[14,15,'B'],[15,11,'B'],[15,16,'B']]),
+};
+const BLUSH = px([[13,5,'P'],[13,6,'P'],[13,21,'P'],[13,22,'P']]);
+const EXPR = {
+  'exp-smug':    {eyes:eyesSmug,    mouth:'smirk', blush:false},
+  'exp-dere':    {eyes:eyesOpen,    mouth:'smile', blush:true},
+  'exp-excited': {eyes:eyesSparkle, mouth:'grin',  blush:true},
+  'exp-tsun':    {eyes:eyesTsun,    mouth:'pout',  blush:true},
+};
+let currentExp = 'exp-smug';
+function setExpression(exp){
+  if(EXPR[exp]) currentExp = exp;
+  drawChara();
+}
+function drawChara(){
+  const cv = document.getElementById('chara');
+  const ctx = cv.getContext('2d');
+  const SC = cv.width / BASE[0].length;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const grid = BASE.map(r => r.split(''));
+  const ex = EXPR[currentExp];
+  for(const [r,c,ch] of ex.eyes()) grid[r][c] = ch;
+  for(const [r,c,ch] of MOUTH[ex.mouth]) grid[r][c] = ch;
+  if(ex.blush) for(const [r,c,ch] of BLUSH) grid[r][c] = ch;
+  for(let r=0; r<grid.length; r++){
+    for(let c=0; c<grid[r].length; c++){
+      const col = PAL[grid[r][c]];
+      if(!col) continue;
+      ctx.fillStyle = col;
+      ctx.fillRect(c*SC, r*SC, SC, SC);
+    }
+  }
+}
+/* カスタム画像(生成AIで作った推し画像などに差し替え可能) */
+function applyCharaMode(){
+  const img = document.getElementById('chara-img');
+  const cv = document.getElementById('chara');
+  const reset = document.getElementById('btn-img-reset');
+  if(state.customImg){
+    img.src = state.customImg;
+    img.style.display = 'inline-block';
+    cv.style.display = 'none';
+    reset.style.display = 'inline-block';
+  } else {
+    img.style.display = 'none';
+    cv.style.display = 'inline-block';
+    reset.style.display = 'none';
+    drawChara();
+  }
+}
+
+/* ---------- フェーズ ---------- */
+function phaseInfo(){
+  const t = dnum(todayStr());
+  if(t <= dnum('2026-08-02')) return {no:1, name:'銀メダル化', norma:'分野別二周目を1日30〜50問。今週の分野はdocs/study-plan.mdの表を確認。'};
+  if(t <= dnum('2026-08-30')) return {no:2, name:'金メダル化', norma:'ミス問題中心に30〜50問+コマ問を1日10問。週末は苦手分野の解説読み込み。'};
+  return {no:3, name:'仕上げ(模試+シミュ対策)', norma:'週末に模擬試験(時間を測る)+平日は復習とコマ問。Packet Tracerで手を動かす(docs/simulation.md)。目標: 模試85〜90%安定。'};
+}
+
+/* ---------- 表示 ---------- */
+function pickTalk(){
+  const aff = computeAffection();
+  const tier = tierOf(aff);
+  const days = Object.keys(dailySummary()).sort();
+  if(!days.length){
+    return {exp:'exp-smug', text:'タキ『やあ。キミが例の"CCNP受験者"だね?私は早瀬タキ。この検証ラボの主にして天才エンジニアだ。キミの合格、私が実験台に……いや、監修してあげるよ。まずは今日の勉強データを提出したまえ』'};
+  }
+  // 3日以上空いていたらツン(心配)モード
+  const last = dnum(days[days.length-1]);
+  if(dnum(todayStr()) - last >= 3){
+    return {exp:'exp-tsun', text:'タキ『……ふーん、やっと来たんだ。何日空いたか、言ってあげようか?べ、別に数えてたわけじゃないけど!……10問でいいから、ほら、始めるよ』'};
+  }
+  if(state.passed) return {exp:'exp-excited', text:'タキ『合格者のキミ、今日も余裕の顔だね。フフ、いいことだ。下期はENARSI……次の実験も、私と一緒にやるに決まってるよね?』'};
+  const pool = TALK[tier.lv];
+  const exp = tier.lv >= 4 ? 'exp-dere' : 'exp-smug';
+  return {exp: exp, text:'タキ『' + pool[Math.floor(Math.random()*pool.length)] + '』'};
+}
+
+function render(){
+  const aff = computeAffection();
+  const tier = tierOf(aff);
+  const streak = computeStreak();
+  const wk = weekStats();
+  const totalQ = state.logs.reduce((a,l)=>a+l.q,0);
+  const daysLeft = dnum(state.examDate) - dnum(todayStr());
+  const ph = phaseInfo();
+
+  document.getElementById('countdown').textContent = daysLeft >= 0 ? daysLeft : '済';
+  document.getElementById('streak').textContent = streak;
+  document.getElementById('phase-badge').innerHTML = 'フェーズ<b>' + ph.no + '</b> ' + ph.name;
+  document.getElementById('love-num').textContent = aff + ' / 100';
+  document.getElementById('love-fill').style.width = aff + '%';
+  document.getElementById('level-chip').textContent = 'Lv.' + tier.lv + ' ' + tier.name;
+  document.getElementById('wk-days').textContent = wk.days;
+  document.getElementById('wk-q').textContent = wk.q;
+  document.getElementById('total-q').textContent = totalQ;
+  document.getElementById('phase-box').innerHTML = '<b>今のやること(フェーズ' + ph.no + ':' + ph.name + ')</b><br>' + ph.norma;
+
+  const talk = pickTalk();
+  setExpression(talk.exp);
+  document.getElementById('talk').textContent = talk.text;
+
+  const tbody = document.getElementById('log-body');
+  tbody.innerHTML = '';
+  const recent = [...state.logs].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,12);
+  for(const l of recent){
+    const tr = document.createElement('tr');
+    const idx = state.logs.indexOf(l);
+    tr.innerHTML = '<td>' + l.date.slice(5) + '</td><td>' + esc(l.cat.split(' ')[0]) + '</td><td>' + l.q + '</td><td>' + l.acc + '%</td><td>' + l.min + '</td>' +
+      '<td><button class="del" data-i="' + idx + '">✕</button></td>';
+    tbody.appendChild(tr);
+  }
+}
+function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+/* ---------- イベント ---------- */
+function showEvent(ev, exp){
+  document.getElementById('event-title').textContent = ev.title;
+  document.getElementById('event-text').textContent = ev.text;
+  document.getElementById('event-overlay').classList.add('show');
+  setExpression(exp || 'exp-excited');
+}
+function closeEvent(){ document.getElementById('event-overlay').classList.remove('show'); render(); }
+
+document.getElementById('log-form').addEventListener('submit', function(e){
+  e.preventDefault();
+  const wasEmpty = state.logs.length === 0;
+  const prevAff = computeAffection();
+  const prevStreak = computeStreak();
+  const log = {
+    date: document.getElementById('f-date').value,
+    cat: document.getElementById('f-cat').value,
+    q: parseInt(document.getElementById('f-q').value)||0,
+    acc: parseInt(document.getElementById('f-acc').value)||0,
+    min: parseInt(document.getElementById('f-min').value)||0,
+    memo: document.getElementById('f-memo').value,
+  };
+  // 3日以上ぶりの復帰か(追加前に判定)
+  const days = Object.keys(dailySummary()).sort();
+  const isComeback = days.length > 0 && (dnum(log.date) - dnum(days[days.length-1])) >= 3;
+
+  state.logs.push(log);
+  const aff = computeAffection();
+  const streak = computeStreak();
+  const tier = tierOf(aff);
+  save();
+  document.getElementById('f-memo').value = '';
+
+  // 好感度上昇ポップ
+  const gain = aff - prevAff;
+  const pop = document.getElementById('gain-pop');
+  pop.textContent = gain > 0 ? '💗 好感度 +' + gain : '💗 記録しました';
+  pop.classList.add('show');
+  setTimeout(()=>pop.classList.remove('show'), 2500);
+
+  // イベント判定(優先順)
+  if(wasEmpty){ showEvent(SPECIAL.firstLog, 'exp-smug'); }
+  else if(tier.lv > (state.maxLevelSeen||1)){
+    state.maxLevelSeen = tier.lv; save();
+    showEvent(SPECIAL['levelup'+tier.lv], tier.lv >= 3 ? 'exp-dere' : 'exp-excited');
+  }
+  else if(prevStreak < 30 && streak >= 30){ showEvent(SPECIAL.streak30); }
+  else if(prevStreak < 14 && streak >= 14){ showEvent(SPECIAL.streak14); }
+  else if(prevStreak < 7 && streak >= 7){ showEvent(SPECIAL.streak7); }
+  else if(isComeback){ showEvent(SPECIAL.comeback, 'exp-tsun'); }
+  else {
+    render();
+    setExpression('exp-excited');
+    let msg = PRAISE[Math.floor(Math.random()*PRAISE.length)];
+    if(log.acc > 0 && log.acc < 60) msg = '正答率が低い?フフ、慌てない慌てない。エラーログは成長の栄養素だ。解説を読み込みたまえ。キミならできると、データが言ってるよ。';
+    if(log.acc >= 85) msg = 'せ、正答率' + log.acc + '%!?……ちょっとだけ、ほんのちょーっとだけ、すごいと思ってしまった……。き、今日だけだからね!';
+    document.getElementById('talk').textContent = 'タキ『' + msg + '』';
+  }
+});
+
+document.getElementById('log-body').addEventListener('click', function(e){
+  const btn = e.target.closest('.del');
+  if(!btn) return;
+  if(confirm('この記録を削除しますか?')){
+    state.logs.splice(parseInt(btn.dataset.i), 1);
+    save(); render();
+  }
+});
+
+document.getElementById('btn-pass').addEventListener('click', function(){
+  if(!confirm('本当に合格しましたか?(おめでとうございます!!)')) return;
+  state.passed = true; save();
+  document.getElementById('ending-text').textContent = ENDING;
+  document.getElementById('ending-overlay').classList.add('show');
+  setExpression('exp-excited');
+  confetti();
+  render();
+});
+
+document.getElementById('btn-exam').addEventListener('click', function(){
+  const d = prompt('試験日を入力してください (例: 2026-09-19)', state.examDate);
+  if(d && /^\d{4}-\d{2}-\d{2}$/.test(d)){ state.examDate = d; save(); render(); }
+});
+
+document.getElementById('btn-export').addEventListener('click', function(){
+  const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'encor-study-backup.json';
+  a.click();
+});
+/* キャラ画像差し替え(512px以下に縮小してlocalStorageに保存) */
+document.getElementById('btn-img').addEventListener('click', ()=>document.getElementById('img-file').click());
+document.getElementById('img-file').addEventListener('change', function(e){
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = ()=>{
+    const im = new Image();
+    im.onload = ()=>{
+      const max = 512;
+      const scale = Math.min(1, max/Math.max(im.width, im.height));
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(im.width*scale); cv.height = Math.round(im.height*scale);
+      cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height);
+      try{
+        state.customImg = cv.toDataURL('image/jpeg', 0.85);
+        save(); applyCharaMode();
+      }catch(err){ alert('画像の保存に失敗しました(サイズが大きすぎるかも)'); }
+    };
+    im.src = r.result;
+  };
+  r.readAsDataURL(f);
+  e.target.value = '';
+});
+document.getElementById('btn-img-reset').addEventListener('click', function(){
+  state.customImg = null; save(); applyCharaMode();
+});
+
+document.getElementById('btn-import').addEventListener('click', ()=>document.getElementById('import-file').click());
+document.getElementById('import-file').addEventListener('change', function(e){
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = ()=>{
+    try{
+      const s = JSON.parse(r.result);
+      if(s && Array.isArray(s.logs)){ state = s; save(); applyCharaMode(); render(); alert('読み込みました!'); }
+      else alert('形式が違うようです');
+    }catch(err){ alert('読み込みに失敗しました'); }
+  };
+  r.readAsText(f);
+});
+
+function confetti(){
+  const colors = ['#c43d55','#e0a13c','#8a5be0','#3aa675','#f77b7b'];
+  for(let i=0;i<80;i++){
+    const c = document.createElement('div');
+    c.className = 'confetti';
+    c.style.left = Math.random()*100 + 'vw';
+    c.style.background = colors[i%colors.length];
+    c.style.animationDuration = (2+Math.random()*3) + 's';
+    c.style.animationDelay = (Math.random()*1.5) + 's';
+    document.body.appendChild(c);
+    setTimeout(()=>c.remove(), 6000);
+  }
+}
+
+/* ---------- PWA ---------- */
+if('serviceWorker' in navigator && location.protocol === 'https:'){
+  navigator.serviceWorker.register('./sw.js').catch(()=>{});
+}
+
+/* ---------- 初期化 ---------- */
+document.getElementById('f-date').value = todayStr();
+applyCharaMode();
+render();
+</script>
+</body>
+</html>
