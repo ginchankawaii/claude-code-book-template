@@ -2,82 +2,94 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ENCOR合格ストーリー 〜あかりと目指す9月合格〜</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>ENCOR合格ストーリー 〜タキと目指す9月合格〜</title>
+<meta name="theme-color" content="#c43d55">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="ENCOR">
+<link rel="apple-touch-icon" href="icon-180.png">
 <style>
   :root{
-    --bg:#fdf6f8; --card:#ffffff; --ink:#3a3340; --sub:#8a7f90;
-    --accent:#e0669a; --accent2:#7a6ff0; --line:#f0e4ea;
+    --bg:#fbf4f0; --card:#ffffff; --ink:#3c322e; --sub:#93817a;
+    --accent:#c43d55; --accent2:#8a5a2e; --line:#f0e2dc;
     --ok:#3aa675; --warn:#e09a3c;
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;background:var(--bg);color:var(--ink);line-height:1.6;padding:16px;max-width:960px;margin:0 auto}
-  header{text-align:center;margin-bottom:16px}
-  header h1{font-size:1.3rem;color:var(--accent)}
-  header .sub{font-size:.8rem;color:var(--sub)}
-  .topbar{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:10px}
-  .badge{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:6px 14px;font-size:.85rem;box-shadow:0 1px 4px rgba(0,0,0,.05)}
+  html{-webkit-text-size-adjust:100%}
+  body{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;background:var(--bg);color:var(--ink);line-height:1.6;
+       padding:calc(12px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
+       max-width:960px;margin:0 auto}
+  header{text-align:center;margin-bottom:14px}
+  header h1{font-size:1.25rem;color:var(--accent)}
+  header .sub{font-size:.78rem;color:var(--sub)}
+  .topbar{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px}
+  .badge{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:5px 13px;font-size:.83rem;box-shadow:0 1px 4px rgba(0,0,0,.05)}
   .badge b{color:var(--accent)}
-  .grid{display:grid;grid-template-columns:340px 1fr;gap:16px}
+  .grid{display:grid;grid-template-columns:350px 1fr;gap:16px}
   @media(max-width:760px){.grid{grid-template-columns:1fr}}
   .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.05)}
   .card h2{font-size:.95rem;color:var(--accent2);margin-bottom:10px;border-bottom:2px dotted var(--line);padding-bottom:6px}
 
   /* キャラクター */
   .chara-wrap{text-align:center}
-  .chara-name{font-weight:bold;font-size:1.05rem;margin-top:4px}
-  .chara-name span{font-size:.75rem;color:var(--sub);font-weight:normal}
+  #chara{filter:drop-shadow(0 4px 10px rgba(120,60,40,.15));max-width:100%;height:auto}
+  .chara-name{font-weight:bold;font-size:1.05rem;margin-top:2px}
+  .chara-name span{font-size:.72rem;color:var(--sub);font-weight:normal}
   .lovebar-wrap{margin:10px 0 4px}
   .lovebar-label{display:flex;justify-content:space-between;font-size:.8rem;color:var(--sub)}
-  .lovebar{height:14px;background:#f3e6ee;border-radius:7px;overflow:hidden;margin-top:4px}
-  .lovebar>div{height:100%;background:linear-gradient(90deg,#f7a8c8,#e0669a);border-radius:7px;transition:width .8s ease}
-  .level-chip{display:inline-block;background:#fbe9f2;color:var(--accent);border-radius:14px;padding:2px 12px;font-size:.8rem;margin-top:6px}
-  .bubble{position:relative;background:#fff6fa;border:1.5px solid #f2cfe0;border-radius:14px;padding:12px 14px;margin-top:14px;font-size:.92rem;text-align:left;min-height:72px}
-  .bubble::before{content:"";position:absolute;top:-10px;left:44px;border:10px solid transparent;border-bottom-color:#f2cfe0;border-top:0}
-  .bubble::after{content:"";position:absolute;top:-8px;left:45px;border:9px solid transparent;border-bottom-color:#fff6fa;border-top:0}
+  .lovebar{height:14px;background:#f5e4e0;border-radius:7px;overflow:hidden;margin-top:4px}
+  .lovebar>div{height:100%;background:linear-gradient(90deg,#e88b74,#c43d55);border-radius:7px;transition:width .8s ease}
+  .level-chip{display:inline-block;background:#f9e8e4;color:var(--accent);border-radius:14px;padding:2px 12px;font-size:.8rem;margin-top:6px}
+  .bubble{position:relative;background:#fdf7f2;border:1.5px solid #ecd3c8;border-radius:14px;padding:12px 14px;margin-top:14px;font-size:.92rem;text-align:left;min-height:76px}
+  .bubble::before{content:"";position:absolute;top:-10px;left:44px;border:10px solid transparent;border-bottom-color:#ecd3c8;border-top:0}
+  .bubble::after{content:"";position:absolute;top:-8px;left:45px;border:9px solid transparent;border-bottom-color:#fdf7f2;border-top:0}
   .gain-pop{color:var(--accent);font-weight:bold;font-size:.85rem;text-align:center;height:1.4em;margin-top:6px;opacity:0;transition:opacity .4s}
   .gain-pop.show{opacity:1}
 
   /* 表情の切り替え */
-  #chara .eyes-open,#chara .eyes-happy,#chara .mouth-smile,#chara .mouth-open,#chara .mouth-worried,#chara .brows-normal,#chara .brows-worried,#chara .blush{display:none}
-  #chara.exp-normal .eyes-open,#chara.exp-normal .mouth-smile,#chara.exp-normal .brows-normal{display:block}
-  #chara.exp-smile .eyes-open,#chara.exp-smile .mouth-smile,#chara.exp-smile .brows-normal,#chara.exp-smile .blush{display:block}
-  #chara.exp-excited .eyes-happy,#chara.exp-excited .mouth-open,#chara.exp-excited .brows-normal,#chara.exp-excited .blush{display:block}
-  #chara.exp-worried .eyes-open,#chara.exp-worried .mouth-worried,#chara.exp-worried .brows-worried{display:block}
+  #chara .eyes-open,#chara .eyes-smug,#chara .sparkles,
+  #chara .mouth-smirk,#chara .mouth-smile,#chara .mouth-grin,#chara .mouth-pout,
+  #chara .brows-normal,#chara .brows-tsun,#chara .blush{display:none}
+  #chara.exp-smug .eyes-smug,#chara.exp-smug .mouth-smirk,#chara.exp-smug .brows-normal{display:block}
+  #chara.exp-dere .eyes-open,#chara.exp-dere .mouth-smile,#chara.exp-dere .brows-normal,#chara.exp-dere .blush{display:block}
+  #chara.exp-excited .eyes-open,#chara.exp-excited .sparkles,#chara.exp-excited .mouth-grin,#chara.exp-excited .brows-normal,#chara.exp-excited .blush{display:block}
+  #chara.exp-tsun .eyes-open,#chara.exp-tsun .mouth-pout,#chara.exp-tsun .brows-tsun,#chara.exp-tsun .blush{display:block}
 
   /* 統計 */
   .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
-  .stat{background:#faf5fb;border-radius:10px;padding:8px;text-align:center}
+  .stat{background:#fbf4ee;border-radius:10px;padding:8px;text-align:center}
   .stat .v{font-size:1.25rem;font-weight:bold;color:var(--accent2)}
-  .stat .k{font-size:.7rem;color:var(--sub)}
-  .phase-box{background:#f2f0fe;border-radius:10px;padding:10px 12px;font-size:.85rem;margin-bottom:12px}
+  .stat .k{font-size:.68rem;color:var(--sub)}
+  .phase-box{background:#f6efe4;border-radius:10px;padding:10px 12px;font-size:.85rem;margin-bottom:0}
   .phase-box b{color:var(--accent2)}
 
   /* フォーム */
   form label{display:block;font-size:.78rem;color:var(--sub);margin-top:8px}
-  form input,form select,form textarea{width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;font-size:.95rem;background:#fffdfe}
+  form input,form select,form textarea{width:100%;padding:9px;border:1px solid var(--line);border-radius:8px;font-size:16px;background:#fffdfc}
   .form-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-  button{cursor:pointer;border:none;border-radius:10px;padding:10px 16px;font-size:.95rem;font-weight:bold}
+  button{cursor:pointer;border:none;border-radius:10px;padding:11px 16px;font-size:.95rem;font-weight:bold}
   .btn-main{background:var(--accent);color:#fff;width:100%;margin-top:12px}
-  .btn-main:hover{background:#c9548a}
-  .btn-sub{background:#eee7f0;color:var(--ink);font-size:.8rem;padding:8px 12px}
-  .btn-gold{background:linear-gradient(90deg,#f2b544,#e0669a);color:#fff}
+  .btn-main:active{background:#a12f44}
+  .btn-sub{background:#efe6e0;color:var(--ink);font-size:.8rem;padding:9px 12px}
+  .btn-gold{background:linear-gradient(90deg,#e0a13c,#c43d55);color:#fff}
   .toolbar{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:16px}
 
   /* ログ */
   table{width:100%;border-collapse:collapse;font-size:.82rem}
   th,td{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
   th{color:var(--sub);font-weight:normal;font-size:.75rem}
-  td .del{background:none;color:#c9a5b8;font-size:.8rem;padding:2px 6px}
-  td .del:hover{color:var(--accent)}
+  td .del{background:none;color:#cbb0a4;font-size:.8rem;padding:2px 6px}
+  td .del:active{color:var(--accent)}
 
   /* モーダル・エンディング */
-  .overlay{position:fixed;inset:0;background:rgba(40,20,40,.55);display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
+  .overlay{position:fixed;inset:0;background:rgba(45,25,20,.55);display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
   .overlay.show{display:flex}
-  .modal{background:#fff;border-radius:18px;padding:24px;max-width:440px;width:100%;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.3)}
+  .modal{background:#fff;border-radius:18px;padding:24px;max-width:440px;width:100%;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.3);max-height:85vh;overflow-y:auto}
   .modal h3{color:var(--accent);margin-bottom:10px}
   .modal p{font-size:.92rem;text-align:left;white-space:pre-wrap}
-  .ending .modal{background:linear-gradient(180deg,#fff8fb,#ffeef6)}
+  .ending .modal{background:linear-gradient(180deg,#fffaf5,#fdeee6)}
   .confetti{position:fixed;top:-20px;width:10px;height:14px;z-index:60;animation:fall linear forwards}
   @keyframes fall{to{transform:translateY(110vh) rotate(720deg)}}
 </style>
@@ -85,8 +97,8 @@
 <body>
 
 <header>
-  <h1>💗 ENCOR合格ストーリー 💗</h1>
-  <div class="sub">〜後輩・橘あかりと目指す、9月のハッピーエンド〜</div>
+  <h1>🧪 ENCOR合格ストーリー 🧪</h1>
+  <div class="sub">〜検証ラボの同期・早瀬タキと目指す、9月のハッピーエンド〜</div>
   <div class="topbar">
     <div class="badge">試験まで <b id="countdown">--</b> 日</div>
     <div class="badge">連続 <b id="streak">0</b> 日</div>
@@ -97,57 +109,123 @@
 <div class="grid">
   <!-- 左: キャラクター -->
   <div class="card chara-wrap">
-    <svg id="chara" class="exp-smile" viewBox="0 0 220 260" width="230" height="270" aria-label="橘あかり">
-      <!-- 後ろ髪 -->
-      <path d="M110,28 C58,28 44,74 47,116 C49,152 62,182 54,208 L166,208 C158,182 171,152 173,116 C176,74 162,28 110,28 Z" fill="#6b4a3a"/>
+    <svg id="chara" class="exp-smug" viewBox="0 0 240 280" width="250" height="292" aria-label="早瀬タキ">
+      <defs>
+        <linearGradient id="irisGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#e8596e"/>
+          <stop offset="55%" stop-color="#c22e46"/>
+          <stop offset="100%" stop-color="#7c1428"/>
+        </linearGradient>
+        <linearGradient id="hairGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#b26a41"/>
+          <stop offset="100%" stop-color="#8a4c2c"/>
+        </linearGradient>
+      </defs>
+
+      <!-- 後ろ髪(長くて少しボサボサ) -->
+      <path d="M120,26 C58,26 40,78 44,128 C46,168 38,215 26,252 C44,258 58,246 64,226
+               C64,242 60,256 56,266 C74,272 88,258 92,240 C94,254 94,266 92,276
+               L148,276 C146,266 146,254 148,240 C152,258 166,272 184,266
+               C180,256 176,242 176,226 C182,246 196,258 214,252
+               C202,215 194,168 196,128 C200,78 182,26 120,26 Z" fill="url(#hairGrad)"/>
+      <!-- アホ毛 -->
+      <path d="M118,34 C102,16 124,-2 134,12 C122,8 112,20 126,32 Z" fill="#b26a41"/>
+
       <!-- 首 -->
-      <rect x="101" y="140" width="18" height="38" rx="6" fill="#ffd9c4"/>
-      <!-- 体(シャツ+ジャケット+リボン) -->
-      <path d="M58,208 C66,182 88,170 110,170 C132,170 154,182 162,208 Z" fill="#fbfcff"/>
-      <path d="M58,208 C64,186 76,175 92,171 L84,208 Z" fill="#44618c"/>
-      <path d="M162,208 C156,186 144,175 128,171 L136,208 Z" fill="#44618c"/>
-      <path d="M110,178 l8,7 -8,7 -8,-7 Z" fill="#e0669a"/>
+      <rect x="110" y="148" width="20" height="36" rx="7" fill="#f7d3b8"/>
+
+      <!-- 白衣+シャツ+ネクタイ -->
+      <path d="M54,226 C60,192 86,172 120,172 C154,172 180,192 186,226 Z" fill="#fcfbf7"/>
+      <path d="M98,175 L120,214 L142,175 C133,171 107,171 98,175 Z" fill="#4a382e"/>
+      <path d="M120,182 l8,7 -8,24 -8,-24 Z" fill="#c43d55"/>
+      <path d="M98,175 L120,214 L103,224 C94,206 93,189 98,175 Z" fill="#efeade"/>
+      <path d="M142,175 L120,214 L137,224 C146,206 147,189 142,175 Z" fill="#efeade"/>
+      <!-- 胸ポケットと試験管 -->
+      <rect x="152" y="200" width="22" height="17" rx="3" fill="#f2ecdd"/>
+      <rect x="158" y="186" width="7" height="26" rx="3.5" fill="#cfeef5" opacity=".9"/>
+      <rect x="158" y="199" width="7" height="13" rx="3.5" fill="#8be09a"/>
+
       <!-- 顔 -->
-      <ellipse cx="110" cy="104" rx="43" ry="47" fill="#ffe9da"/>
-      <!-- 頬(赤らみ) -->
+      <ellipse cx="120" cy="104" rx="45" ry="49" fill="#ffeee0"/>
+
+      <!-- 頬の赤らみ -->
       <g class="blush">
-        <ellipse cx="79" cy="121" rx="9" ry="4.5" fill="#ffabab" opacity=".65"/>
-        <ellipse cx="141" cy="121" rx="9" ry="4.5" fill="#ffabab" opacity=".65"/>
+        <ellipse cx="86" cy="127" rx="10" ry="5" fill="#ff9aa8" opacity=".55"/>
+        <ellipse cx="154" cy="127" rx="10" ry="5" fill="#ff9aa8" opacity=".55"/>
+        <g stroke="#f2808f" stroke-width="1.3" opacity=".7">
+          <path d="M81,124 l5,6 M87,123 l5,6"/>
+          <path d="M149,124 l5,6 M155,123 l5,6"/>
+        </g>
       </g>
+
       <!-- 眉 -->
-      <g class="brows-normal" stroke="#6b4a3a" stroke-width="2.4" stroke-linecap="round" fill="none">
-        <path d="M84,92 Q92,88 100,91"/>
-        <path d="M120,91 Q128,88 136,92"/>
+      <g class="brows-normal" stroke="#8a4c2c" stroke-width="3" stroke-linecap="round" fill="none">
+        <path d="M85,93 Q96,88 107,92"/>
+        <path d="M133,92 Q144,88 155,93"/>
       </g>
-      <g class="brows-worried" stroke="#6b4a3a" stroke-width="2.4" stroke-linecap="round" fill="none">
-        <path d="M84,90 Q92,93 100,95"/>
-        <path d="M120,95 Q128,93 136,90"/>
+      <g class="brows-tsun" stroke="#8a4c2c" stroke-width="3" stroke-linecap="round" fill="none">
+        <path d="M85,90 Q96,92 107,96"/>
+        <path d="M133,96 Q144,92 155,90"/>
       </g>
-      <!-- 目(開き) -->
+
+      <!-- 目(ぱっちり) -->
       <g class="eyes-open">
-        <ellipse cx="92" cy="108" rx="7" ry="9.5" fill="#54382c"/>
-        <circle cx="89.5" cy="104.5" r="2.4" fill="#fff"/>
-        <ellipse cx="128" cy="108" rx="7" ry="9.5" fill="#54382c"/>
-        <circle cx="125.5" cy="104.5" r="2.4" fill="#fff"/>
+        <ellipse cx="96" cy="113" rx="9" ry="11.5" fill="url(#irisGrad)"/>
+        <ellipse cx="96" cy="114" rx="4" ry="5.5" fill="#57101f"/>
+        <circle cx="93" cy="108" r="3.2" fill="#fff"/>
+        <circle cx="99.5" cy="118" r="1.6" fill="#fff" opacity=".85"/>
+        <path d="M84,104 C89,97 103,97 109,104" stroke="#4d241f" stroke-width="4.5" stroke-linecap="round" fill="none"/>
+        <path d="M88,123 Q96,126 104,123" stroke="#dda58c" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+        <ellipse cx="144" cy="113" rx="9" ry="11.5" fill="url(#irisGrad)"/>
+        <ellipse cx="144" cy="114" rx="4" ry="5.5" fill="#57101f"/>
+        <circle cx="141" cy="108" r="3.2" fill="#fff"/>
+        <circle cx="147.5" cy="118" r="1.6" fill="#fff" opacity=".85"/>
+        <path d="M132,104 C137,97 151,97 157,104" stroke="#4d241f" stroke-width="4.5" stroke-linecap="round" fill="none"/>
+        <path d="M136,123 Q144,126 152,123" stroke="#dda58c" stroke-width="1.5" stroke-linecap="round" fill="none"/>
       </g>
-      <!-- 目(にっこり) -->
-      <g class="eyes-happy" stroke="#54382c" stroke-width="3" stroke-linecap="round" fill="none">
-        <path d="M84,108 Q92,100 100,108"/>
-        <path d="M120,108 Q128,100 136,108"/>
+
+      <!-- 目(ジト目・ニヤリ用) -->
+      <g class="eyes-smug">
+        <path d="M85,110 C90,106 102,106 108,110 L108,121 C102,124 90,124 85,121 Z" fill="url(#irisGrad)"/>
+        <ellipse cx="96" cy="116" rx="3.6" ry="4" fill="#57101f"/>
+        <circle cx="93" cy="112.5" r="2.2" fill="#fff"/>
+        <path d="M83,109 C89,104 103,104 110,109" stroke="#4d241f" stroke-width="4.5" stroke-linecap="round" fill="none"/>
+        <path d="M133,110 C138,106 150,106 156,110 L156,121 C150,124 138,124 133,121 Z" fill="url(#irisGrad)"/>
+        <ellipse cx="144" cy="116" rx="3.6" ry="4" fill="#57101f"/>
+        <circle cx="141" cy="112.5" r="2.2" fill="#fff"/>
+        <path d="M131,109 C137,104 151,104 158,109" stroke="#4d241f" stroke-width="4.5" stroke-linecap="round" fill="none"/>
       </g>
+
+      <!-- キラキラ(興奮時) -->
+      <g class="sparkles" fill="#fff">
+        <path d="M92,106 l1.6,3.6 3.6,1.6 -3.6,1.6 -1.6,3.6 -1.6,-3.6 -3.6,-1.6 3.6,-1.6 Z"/>
+        <path d="M140,106 l1.6,3.6 3.6,1.6 -3.6,1.6 -1.6,3.6 -1.6,-3.6 -3.6,-1.6 3.6,-1.6 Z"/>
+        <path d="M104,118 l1,2.2 2.2,1 -2.2,1 -1,2.2 -1,-2.2 -2.2,-1 2.2,-1 Z" opacity=".9"/>
+        <path d="M152,118 l1,2.2 2.2,1 -2.2,1 -1,2.2 -1,-2.2 -2.2,-1 2.2,-1 Z" opacity=".9"/>
+      </g>
+
       <!-- 口 -->
-      <path class="mouth-smile" d="M102,131 Q110,139 118,131" stroke="#d16a6a" stroke-width="2.6" stroke-linecap="round" fill="none"/>
-      <path class="mouth-open" d="M101,129 Q110,144 119,129 Q110,133 101,129 Z" fill="#e2635f"/>
-      <path class="mouth-worried" d="M103,136 Q110,130 117,136" stroke="#d16a6a" stroke-width="2.6" stroke-linecap="round" fill="none"/>
-      <!-- 前髪 -->
-      <path d="M110,52 C78,52 66,74 68,98 C74,92 79,80 86,92 C92,80 98,74 103,90 C108,76 114,76 119,90 C124,74 130,80 136,92 C142,80 147,92 152,98 C154,74 142,52 110,52 Z" fill="#7a5645"/>
-      <path d="M67,96 C63,116 64,138 70,152 C74,136 74,114 73,100 Z" fill="#6b4a3a"/>
-      <path d="M153,96 C157,116 156,138 150,152 C146,136 146,114 147,100 Z" fill="#6b4a3a"/>
-      <!-- 髪飾り -->
-      <circle cx="146" cy="66" r="5" fill="#f2b544"/>
+      <path class="mouth-smirk" d="M110,141 Q120,147 132,138" stroke="#c96a63" stroke-width="2.8" stroke-linecap="round" fill="none"/>
+      <path class="mouth-smile" d="M110,139 Q120,147 130,139" stroke="#c96a63" stroke-width="2.8" stroke-linecap="round" fill="none"/>
+      <g class="mouth-grin">
+        <path d="M107,136 Q120,154 133,136 Q120,143 107,136 Z" fill="#e2635f"/>
+        <path d="M126,137 l3,5 3,-5 Z" fill="#fff"/>
+      </g>
+      <path class="mouth-pout" d="M112,143 Q120,138 128,143" stroke="#c96a63" stroke-width="2.8" stroke-linecap="round" fill="none"/>
+
+      <!-- 前髪(乱れ気味) -->
+      <path d="M120,48 C82,48 68,72 70,102
+               C76,98 80,84 87,99 C91,85 97,79 102,97
+               C106,81 113,79 118,97 C122,80 129,82 133,97
+               C138,81 144,85 148,99 C155,85 162,96 166,102
+               C172,72 158,48 120,48 Z" fill="#b26a41"/>
+      <path d="M86,56 C100,46 140,46 154,56" stroke="#d19468" stroke-width="4" stroke-linecap="round" fill="none" opacity=".65"/>
+      <!-- サイドの髪 -->
+      <path d="M68,94 C60,124 60,160 72,192 C80,174 80,132 78,104 Z" fill="#a2603e"/>
+      <path d="M172,94 C180,124 180,160 168,192 C160,174 160,132 162,104 Z" fill="#a2603e"/>
     </svg>
-    <div class="chara-name">橘 あかり <span>(部署の後輩・CCNA取得済)</span></div>
-    <div class="level-chip" id="level-chip">Lv.1 顔見知り</div>
+    <div class="chara-name">早瀬 タキ <span>(検証ラボの同期・自称天才)</span></div>
+    <div class="level-chip" id="level-chip">Lv.1 観察対象</div>
     <div class="lovebar-wrap">
       <div class="lovebar-label"><span>好感度</span><span id="love-num">0 / 100</span></div>
       <div class="lovebar"><div id="love-fill" style="width:0%"></div></div>
@@ -159,7 +237,7 @@
   <!-- 右: 記録・統計 -->
   <div>
     <div class="card" style="margin-bottom:16px">
-      <h2>📊 いまの状況</h2>
+      <h2>📊 実験データ(いまの状況)</h2>
       <div class="stats">
         <div class="stat"><div class="v" id="wk-days">0</div><div class="k">今週の勉強日数</div></div>
         <div class="stat"><div class="v" id="wk-q">0</div><div class="k">今週の問題数</div></div>
@@ -169,7 +247,7 @@
     </div>
 
     <div class="card" style="margin-bottom:16px">
-      <h2>✏️ 今日の勉強を記録する</h2>
+      <h2>✏️ 今日のデータを提出する</h2>
       <form id="log-form">
         <label>日付</label>
         <input type="date" id="f-date" required>
@@ -195,7 +273,7 @@
         </div>
         <label>メモ(苦手だった所・打てなかったコマンド等)</label>
         <textarea id="f-memo" rows="2"></textarea>
-        <button type="submit" class="btn-main">記録する 💗</button>
+        <button type="submit" class="btn-main">記録する 🧪</button>
       </form>
     </div>
 
@@ -267,8 +345,8 @@ function dailySummary(){
   return map;
 }
 function computeAffection(){
-  const days = Object.keys(dailySummary()).sort();
   const sum = dailySummary();
+  const days = Object.keys(sum).sort();
   let pts = 0, streak = 0, prev = null;
   for(const d of days){
     streak = (prev !== null && dnum(d) - prev === 1) ? streak + 1 : 1;
@@ -307,56 +385,56 @@ function weekStats(){
   return {days:days.size, q};
 }
 
-/* ---------- レベル・セリフ ---------- */
+/* ---------- レベル・セリフ(ツンデレ研究者・早瀬タキ) ---------- */
 const TIERS = [
-  {min:80, lv:5, name:'両想い(まであと一歩)'},
-  {min:60, lv:4, name:'特別な存在'},
-  {min:40, lv:3, name:'気になる先輩'},
-  {min:20, lv:2, name:'勉強仲間'},
-  {min:0,  lv:1, name:'顔見知り'},
+  {min:80, lv:5, name:'運命共同体(たぶん)'},
+  {min:60, lv:4, name:'かけがえのない相棒'},
+  {min:40, lv:3, name:'興味深いキミ'},
+  {min:20, lv:2, name:'共同研究者'},
+  {min:0,  lv:1, name:'観察対象'},
 ];
 function tierOf(aff){ return TIERS.find(t => aff >= t.min); }
 
 const TALK = {
-  1:[ 'あ、先輩。今日も勉強するんですね。……えらいじゃないですか。',
-      'ENCORって範囲広いですよね。私もCCNAのとき大変でした……ファイトです!',
-      'Ping-tの解説、ちゃんと読むと意外と頭に残りますよ。',
-      '毎日ちょっとずつでいいらしいですよ、資格勉強って。' ],
-  2:[ '今日も来ましたね、先輩!なんだか毎日会うのが普通になってきました。',
-      'OSPFのLSAタイプ、語呂合わせ作ったんです。今度教えてあげますね!',
-      '疲れてる日は10分だけでもいいんですよ。ゼロにしないのが一番大事です。',
-      '先輩が勉強してると、私もCCNP目指したくなっちゃいます。' ],
-  3:[ '先輩が毎日頑張ってるの、ちゃんと見てますよ。……ちょっとかっこいいなって。',
-      '今日もお疲れさまです。先輩の集中してる横顔、好きですよ。……勉強姿の話です!',
-      '間違えた問題は宝物です。私が言ったんじゃなくて、偉い人が言ってました。えへへ。',
-      '先輩、無理はしないでくださいね?体が資本ですから。' ],
-  4:[ '先輩と一緒に勉強するこの時間、私の一日で一番好きな時間かもしれません。',
-      '合格したら……ふたりでお祝い、しませんか?約束ですよ?',
-      '先輩の頑張り、私が一番知ってます。だから絶対大丈夫です。',
-      '今日はどの分野でした?あとで私にも教えてください。……もっと先輩と話したいので。' ],
-  5:[ '先輩なら絶対受かります。私が保証します!',
-      'あとちょっとですね。最後まで、隣にいさせてください。',
-      '模擬試験で85%を安定して出せたら、もう怖いものなしです!',
-      '本番、緊張したら私の顔を思い出してください。……えへへ、照れますね。' ],
+  1:[ 'キミが噂の受験者か。フフ、いい目をしてるじゃないか。……べ、別にキミに興味があるわけじゃない。データが欲しいだけさ。',
+      'ENCOR?ああ、あの試験ね。私なら3日で受かるけど……キミは私の言う通りにやれば9月に間に合うよ。感謝したまえ。',
+      'Ping-tの解説は全部読むこと。知識は反復でシナプスに定着する。実験で証明済みさ。',
+      'ふぁ……徹夜明けでね。キミの勉強データでも眺めて目を覚まそうかな。' ],
+  2:[ '今日も来たのか。フーン……ま、継続できるのは一種の才能だよ。ほんの少しだけ、認めてあげる。',
+      'OSPFのLSAタイプ?いい質問だ。私の研究ノートを貸して……あ、あとでちゃんと返してよね!',
+      '疲れた日は10問でいい。ゼロと1の差は無限大。これは数学的事実だよ。',
+      'キミの正答率の推移、なかなか面白い曲線を描いてる。……何?見せないよ、私の研究データだから。' ],
+  3:[ 'キミのデータを分析するのが、その、日課になりつつある。……研究として!あくまで研究としてだからね!',
+      'べ、別にキミが来るのを待ってたわけじゃない。実験の合間に、たまたま時間があっただけさ。',
+      '間違えた問題は宝だよ。エラーこそ最高の教材……って、なんで私がキミにこんな親身に教えてるんだ。',
+      '今日はどの分野をやったんだい?ほら、報告。……き、キミの声が聞きたいわけじゃなくて、記録のためだよ!' ],
+  4:[ 'キミと一緒だと実験がはかどる……もとい、勉強がはかどるだろう?フフ、私のおかげだね。感謝したまえ。',
+      '合格したら……その、お祝いくらい、してあげなくもない。よ、予定は空けておくように!命令だからね!',
+      'キミの成長曲線、綺麗すぎて見惚れてしまうよ。……グ、グラフの話だからね!?変な勘違いはしないように!',
+      '最近、キミが来ないとラボが静かすぎて調子が出ない。……装置のノイズの問題だよ。たぶん。' ],
+  5:[ 'ここまで来たら合格は時間の問題だね。私の見立てに狂いはない。……キミ、本当によく頑張ったよ。',
+      '本番で緊張したら、私の顔を思い出したまえ。……わ、笑うなよ!実験によると効果があるんだ!',
+      '模試85%超えの安定再現……素晴らしいデータだ。キミはもう、私の自慢の……な、なんでもない!',
+      'あと少しだね。最後まで観察させてもらうよ。キミの一番近くの特等席でね。……深い意味はない!' ],
 };
 const PRAISE = [
-  '今日もお疲れさまでした!ちゃんと記録するの、えらいです💗',
-  'コツコツ続けられるのが先輩のすごいところです!',
-  'また一歩、合格に近づきましたね!',
-  '今日の頑張り、しっかり見届けました!',
+  'ふむ、今日のデータも良好。……べ、別に褒めてないから!事実を述べただけ!',
+  '継続日数が伸びてるね。フフ、いい傾向だ。実験は極めて順調だよ。',
+  'お疲れさま……あっ、いや、今のは実験的な発話であって、労いではない。',
+  '記録を確認した。キミのシナプス、今日もよく発火していたようだね。',
 ];
 const SPECIAL = {
-  firstLog: {title:'はじめての記録', text:'あかり「先輩、勉強はじめたんですね!私、応援してます。毎日ここで待ってますから、記録しに来てくださいね!」'},
-  levelup2: {title:'Lv.2 勉強仲間になった!', text:'あかり「先輩、最近毎日頑張ってますよね。……あの、私も横で勉強していいですか?ひとりより、ふたりのほうが続くと思うんです!」\n\n(あかりと勉強仲間になった)'},
-  levelup3: {title:'Lv.3 気になる先輩', text:'あかり「先輩のこと、最初は"真面目な人だなー"くらいに思ってたんですけど……最近、先輩が来る時間になるとそわそわしちゃうんです。な、なんででしょうね!?」'},
-  levelup4: {title:'Lv.4 特別な存在', text:'あかり「先輩。私、先輩と過ごすこの時間が本当に大切なんです。だから……合格しても、勉強が終わっても、その……これからも一緒にいてくれますか?」'},
-  levelup5: {title:'Lv.5 両想い(まであと一歩)', text:'あかり「ここまで来たんですね、私たち。……合格発表の日、隣にいてもいいですか?先輩の一番近くで、一番に"おめでとう"って言いたいんです」\n\n(あとは合格の報告をするだけ……!)'},
-  streak7:  {title:'7日連続達成!', text:'あかり「7日連続!?すごい、本当にすごいです先輩!継続は力なりって本当だったんですね……尊敬しちゃいます!」'},
-  streak14: {title:'14日連続達成!', text:'あかり「2週間連続……!もう完全に習慣になってますね。先輩のそういうところ、ほんとに好きです。……あっ、いや、その!」'},
-  streak30: {title:'30日連続達成!!', text:'あかり「1ヶ月連続なんて、もう伝説ですよ!会社のみんなに自慢していいですか?"うちの先輩すごいんです"って!」'},
-  comeback: {title:'おかえりなさい', text:'あかり「先輩、おかえりなさい!ちょっと心配してたんですよ?でも、戻ってきてくれたのが一番うれしいです。今日は10問だけでもいいので、また一緒に頑張りましょ!」'},
+  firstLog: {title:'実験開始', text:'タキ『ようこそ、私のラボへ。キミの"CCNP合格プロジェクト"、本日より正式に開始だ。毎日ここにデータを提出するように。サボったら……フフ、どうなるかは自分で確かめてみるかい?』'},
+  levelup2: {title:'Lv.2 共同研究者に昇格', text:'タキ『キミ、毎日ちゃんと来るじゃないか。……いいだろう、今日から観察対象じゃなくて"共同研究者"に昇格だ。こ、光栄に思いたまえよ!別に嬉しくなんかないけど、その、悪くない気分だ』'},
+  levelup3: {title:'Lv.3 興味深いキミ', text:'タキ『認めよう。キミは……興味深い。最初はただのサンプルだと思ってたのに、気づいたらキミの来る時間ばかり気にしてる。……この現象に、まだ名前をつけられずにいるんだ。私としたことが』'},
+  levelup4: {title:'Lv.4 かけがえのない相棒', text:'タキ『キミ。私は天才だから、大抵のことはひとりでできる。でも……キミと一緒にいるときの方が、いいデータが出る。つまり、その……キミは私の、かけがえのない相棒ってことだ。は、反論は認めない!』'},
+  levelup5: {title:'Lv.5 運命共同体(たぶん)', text:'タキ『好感度80超え……もはや誤差でも偶然でもない。有意差アリだ。……合格発表の日、私を隣に置くように。キミの"おめでとう"の第一発見者になる権利は、私のものだからね』\n\n(あとは合格の報告をするだけ……!)'},
+  streak7:  {title:'7日連続達成!', text:'タキ『7日連続!?ほ、ほう……やるじゃないか。習慣化の第一関門突破だ。ご褒美に私の秘蔵のコーヒー豆を……や、やっぱりなし!調子に乗るなよ!でも、すごいよ。ほんとに』'},
+  streak14: {title:'14日連続達成!', text:'タキ『2週間連続。もう完全に習慣として定着してるね。フフ、私の被験者……じゃなくて相棒は優秀で困るよ。……なに笑ってるんだ!早く今日の分をやりたまえ!』'},
+  streak30: {title:'30日連続達成!!', text:'タキ『30日連続だって!?……こ、これは学会に報告すべき事例だよ!キミ、自分がどれだけすごいことをしてるか分かってるのかい?……私は、分かってる。ずっと見てたからね』'},
+  comeback: {title:'おかえり', text:'タキ『3日ぶりの検体……じゃなくて、キミか!サボるとはいい度胸だね?……べ、別に心配なんかしてない!ただ、その、データに欠損があると困るだけで……。…………おかえり。今日は10問でいいから、また始めよう』'},
 };
-const ENDING = 'あかり「合格……合格!!先輩、おめでとうございます!!\n\n……あの、私、ずっと言いたかったことがあるんです。\n毎日頑張る先輩を応援してるうちに、私……先輩のことが、大好きになってました。\n\nこれからは資格の勉強じゃなくても……隣にいて、いいですか?」\n\n〜 ENCOR編・完 〜\n\n(下期、ENARSI編に続く……あかりの好感度は引き継がれます)';
+const ENDING = 'タキ『合格……合格!?……フ、フフ、当然の結果だよ。なにせ私の指導だからね!\n\n……なんて、強がるのはもうやめだ。キミ、本当におめでとう。よく頑張った。\n\n実はね、キミが毎日ラボに来るのが、私の一番の楽しみだった。キミを観察してるはずが、いつの間にか私の心拍数の方が異常値を叩き出すようになってしまって……これはもう、認めるしかない。\n\n私は、キミのことが……す、好きだ!言わせるな!!\n\n合格のご褒美に、これからも私の隣にいることを許可する。……い、嫌とは言わせないからね!』\n\n〜 ENCOR編・完 〜\n\n(下期、ENARSI編に続く……タキの好感度は引き継がれる)';
 
 /* ---------- フェーズ ---------- */
 function phaseInfo(){
@@ -370,17 +448,19 @@ function phaseInfo(){
 function pickTalk(){
   const aff = computeAffection();
   const tier = tierOf(aff);
-  // 3日以上空いていたら心配モード
   const days = Object.keys(dailySummary()).sort();
-  if(days.length){
-    const last = dnum(days[days.length-1]);
-    if(dnum(todayStr()) - last >= 3) return {exp:'exp-worried', text:'あかり「先輩、最近見かけないから寂しいです……。忙しいんですよね。10問だけでも、顔出してくれたらうれしいな」'};
-  } else {
-    return {exp:'exp-normal', text:'あかり「はじめまして、後輩の橘あかりです!先輩がCCNPを目指してるって聞いて……私、応援係に立候補しました!まずは今日の勉強を記録してみてください!」'};
+  if(!days.length){
+    return {exp:'exp-smug', text:'タキ『やあ。キミが例の"CCNP受験者"だね?私は早瀬タキ。この検証ラボの主にして天才エンジニアだ。キミの合格、私が実験台に……いや、監修してあげるよ。まずは今日の勉強データを提出したまえ』'};
   }
-  if(state.passed) return {exp:'exp-excited', text:'あかり「合格した先輩、今日も素敵です💗 下期はENARSI、一緒に頑張りましょうね!」'};
+  // 3日以上空いていたらツン(心配)モード
+  const last = dnum(days[days.length-1]);
+  if(dnum(todayStr()) - last >= 3){
+    return {exp:'exp-tsun', text:'タキ『……ふーん、やっと来たんだ。何日空いたか、言ってあげようか?べ、別に数えてたわけじゃないけど!……10問でいいから、ほら、始めるよ』'};
+  }
+  if(state.passed) return {exp:'exp-excited', text:'タキ『合格者のキミ、今日も余裕の顔だね。フフ、いいことだ。下期はENARSI……次の実験も、私と一緒にやるに決まってるよね?』'};
   const pool = TALK[tier.lv];
-  return {exp: tier.lv >= 3 ? 'exp-smile' : 'exp-normal', text:'あかり「' + pool[Math.floor(Math.random()*pool.length)] + '」'};
+  const exp = tier.lv >= 4 ? 'exp-dere' : 'exp-smug';
+  return {exp: exp, text:'タキ『' + pool[Math.floor(Math.random()*pool.length)] + '』'};
 }
 
 function render(){
@@ -461,22 +541,22 @@ document.getElementById('log-form').addEventListener('submit', function(e){
   setTimeout(()=>pop.classList.remove('show'), 2500);
 
   // イベント判定(優先順)
-  if(wasEmpty){ showEvent(SPECIAL.firstLog); }
+  if(wasEmpty){ showEvent(SPECIAL.firstLog, 'exp-smug'); }
   else if(tier.lv > (state.maxLevelSeen||1)){
     state.maxLevelSeen = tier.lv; save();
-    showEvent(SPECIAL['levelup'+tier.lv]);
+    showEvent(SPECIAL['levelup'+tier.lv], tier.lv >= 3 ? 'exp-dere' : 'exp-excited');
   }
   else if(prevStreak < 30 && streak >= 30){ showEvent(SPECIAL.streak30); }
   else if(prevStreak < 14 && streak >= 14){ showEvent(SPECIAL.streak14); }
   else if(prevStreak < 7 && streak >= 7){ showEvent(SPECIAL.streak7); }
-  else if(isComeback){ showEvent(SPECIAL.comeback, 'exp-smile'); }
+  else if(isComeback){ showEvent(SPECIAL.comeback, 'exp-tsun'); }
   else {
     render();
     document.getElementById('chara').setAttribute('class','exp-excited');
     let msg = PRAISE[Math.floor(Math.random()*PRAISE.length)];
-    if(log.acc > 0 && log.acc < 60) msg = '正答率は気にしすぎないでください!間違えた問題こそ宝物です。解説をじっくり読むのが一番の近道ですよ!';
-    if(log.acc >= 85) msg = '正答率' + log.acc + '%!?す、すごすぎます先輩……!その調子です!';
-    document.getElementById('talk').textContent = 'あかり「' + msg + '」';
+    if(log.acc > 0 && log.acc < 60) msg = '正答率が低い?フフ、慌てない慌てない。エラーログは成長の栄養素だ。解説を読み込みたまえ。キミならできると、データが言ってるよ。';
+    if(log.acc >= 85) msg = 'せ、正答率' + log.acc + '%!?……ちょっとだけ、ほんのちょーっとだけ、すごいと思ってしまった……。き、今日だけだからね!';
+    document.getElementById('talk').textContent = 'タキ『' + msg + '』';
   }
 });
 
@@ -526,7 +606,7 @@ document.getElementById('import-file').addEventListener('change', function(e){
 });
 
 function confetti(){
-  const colors = ['#e0669a','#f2b544','#7a6ff0','#3aa675','#f77b7b'];
+  const colors = ['#c43d55','#e0a13c','#8a5be0','#3aa675','#f77b7b'];
   for(let i=0;i<80;i++){
     const c = document.createElement('div');
     c.className = 'confetti';
@@ -537,6 +617,11 @@ function confetti(){
     document.body.appendChild(c);
     setTimeout(()=>c.remove(), 6000);
   }
+}
+
+/* ---------- PWA ---------- */
+if('serviceWorker' in navigator && location.protocol === 'https:'){
+  navigator.serviceWorker.register('./sw.js').catch(()=>{});
 }
 
 /* ---------- 初期化 ---------- */
