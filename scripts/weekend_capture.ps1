@@ -50,23 +50,23 @@ if (-not (Test-Path $Jlt)) { Log "jltsql not found: $Jlt"; exit 1 }
 $end = [datetime]::Today.Add([timespan]::Parse($StopAt))
 if ((Get-Date) -ge $end) { Log "past stop time ($StopAt) -> skip"; exit 0 }
 Log "start realtime: specs=$Specs  auto-stop=$end"
-$rtOut = Join-Path $LogDir "rt_$Stamp.out"
-$rtErr = Join-Path $LogDir "rt_$Stamp.err"
+# IMPORTANT: realtime spews GBs of import-error text to stdout/stderr. Redirecting
+# to files filled the disk (rt_*.err grew to ~9GB). Discard both streams at the OS
+# level via a cmd wrapper (1>NUL 2>NUL). $Jlt has no spaces so it needs no quoting.
+$argline = "/c $Jlt realtime start --specs $Specs --db sqlite 1>NUL 2>NUL"
 $spArgs = @{
-    FilePath               = $Jlt
-    ArgumentList           = @('realtime', 'start', '--specs', $Specs, '--db', 'sqlite')
-    WorkingDirectory       = $Root
-    PassThru               = $true
-    WindowStyle            = 'Hidden'
-    RedirectStandardOutput = $rtOut
-    RedirectStandardError  = $rtErr
+    FilePath         = "cmd.exe"
+    ArgumentList     = $argline
+    WorkingDirectory = $Root
+    PassThru         = $true
+    WindowStyle      = 'Hidden'
 }
 $p = Start-Process @spArgs
-Log "started PID=$($p.Id)"
+Log "started (cmd wrapper) PID=$($p.Id)"
 
 # --- Monitor until evening (every 60s) ---
 while ((Get-Date) -lt $end) {
-    if ($p.HasExited) { Log "realtime exited early (code $($p.ExitCode)). see $rtErr"; break }
+    if ($p.HasExited) { Log "realtime (cmd) exited early (code $($p.ExitCode))"; break }
     Start-Sleep -Seconds 60
 }
 
@@ -91,6 +91,11 @@ if (Test-Path $Prune) {
 # --- Clean fetch cache (realtime can leave residue) ---
 $cache = Join-Path $Root "data\cache"
 if (Test-Path $cache) { Log "clean cache: $cache"; Remove-Item $cache -Recurse -Force -ErrorAction SilentlyContinue }
+
+# --- Clean stray/huge logs (belt-and-suspenders; the cmd wrapper already discards
+#     realtime output, but jltsql rotates its own jltsql.log.* up to ~1GB) ---
+Remove-Item (Join-Path $LogDir "rt_*.err"), (Join-Path $LogDir "rt_*.out") -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $LogDir "jltsql.log.*") -Force -ErrorAction SilentlyContinue
 
 # --- Record free space ---
 $free = [math]::Round((Get-PSDrive C).Free / 1GB, 2)
