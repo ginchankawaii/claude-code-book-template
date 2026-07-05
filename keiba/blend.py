@@ -33,7 +33,7 @@ def benter_blend(df: pd.DataFrame, model_prob: np.ndarray, market_prob: np.ndarr
 
 
 def fit_blend_weight(df: pd.DataFrame, model_prob: np.ndarray, market_prob: np.ndarray,
-                     outcomes: np.ndarray, grid: int = 21) -> tuple[float, float]:
+                     outcomes: np.ndarray, grid: int = 41) -> tuple[float, float]:
     """検証データで log-loss を最小化するブレンド重み w を grid search。
 
     Returns: (best_w, best_logloss)

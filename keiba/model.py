@@ -47,7 +47,7 @@ def _coerce_categoricals(X: pd.DataFrame, cats: list[str]) -> pd.DataFrame:
 
 @dataclass
 class ModelConfig:
-    objective: str = "binary"          # "binary" | "lambdarank"
+    objective: str = "binary"          # "binary" | "lambdarank"(ensemble=False の時に使用)
     label: str = LABEL_TOP3            # binary の学習ラベル(3着内が安定)
     softmax_temperature: float = 1.0   # 確率化時の温度
     num_boost_round: int = 400
@@ -61,10 +61,26 @@ class ModelConfig:
     max_depth: int = -1
     seed: int = 42
     verbose: int = -1
+    # --- 任意の追加機構(既定OFF) -------------------------------------------
+    # 合成データのA/B(500日・1600日の両スケール)では、以下はいずれも
+    # 中立〜わずかに悪化だったため既定にしない(実測で勝った構成を既定とする)。
+    # 実データでは挙動が変わる可能性があるので --ensemble-model で検証できる。
+    # 検証区間の指標が改善しなくなったら打ち切る(0で無効)。
+    early_stopping_rounds: int = 0
+    # 3系統アンサンブル: top3ラベル + 勝ちラベル + lambdarank を対数平均で合成。
+    ensemble: bool = False
+    n_seeds: int = 1                   # 各系統をシード違いで複数本(バギング)
 
 
 class KeibaModel:
-    """LightGBM をラップし、レース内正規化済みの勝率を返すモデル。"""
+    """LightGBM をラップし、レース内正規化済みの勝率を返すモデル。
+
+    ensemble=True(既定)の場合、性質の異なる3系統
+      * binary(top3ラベル): 安定だが「勝ち」への偏りが弱い
+      * binary(勝ちラベル): 不偏だがノイジー
+      * lambdarank        : レース内の相対順位を直接最適化
+    を学習し、レース内確率の対数平均(幾何平均)で合成する。
+    """
 
     def __init__(self, config: ModelConfig | None = None, features=FEATURE_COLUMNS):
         if lgb is None:  # pragma: no cover
@@ -73,48 +89,62 @@ class KeibaModel:
         self.features = list(features)
         self.cats = [c for c in CATEGORICAL if c in self.features]
         self.booster: "lgb.Booster | None" = None
+        self.members: list[tuple] = []   # [(booster, objective), ...]
 
     # ------------------------------------------------------------------
-    def fit(self, train: pd.DataFrame, valid: pd.DataFrame | None = None) -> "KeibaModel":
+    def _member_specs(self) -> list[tuple]:
+        """学習する (objective, label) の一覧。ensemble なら3系統×シード数。"""
+        cfg = self.cfg
+        if cfg.ensemble:
+            specs = [("binary", LABEL_TOP3), ("binary", LABEL_WIN), ("lambdarank", None)]
+        else:
+            specs = [(cfg.objective, cfg.label if cfg.objective == "binary" else None)]
+        out = []
+        for s in range(max(1, cfg.n_seeds)):
+            out += [(obj, lab, cfg.seed + 101 * s) for obj, lab in specs]
+        return out
+
+    def _train_one(self, objective: str, label, seed: int,
+                   train: pd.DataFrame, valid: pd.DataFrame | None):
         cfg = self.cfg
         cats = self.cats
         Xtr = _coerce_categoricals(train[self.features], cats)
-        if cfg.objective == "binary":
-            ytr = train[cfg.label].to_numpy()
+        if objective == "binary":
             params = self._binary_params()
-            dtrain = lgb.Dataset(Xtr, label=ytr, categorical_feature=cats,
-                                 free_raw_data=False)
-            valid_sets = [dtrain]
+            dtrain = lgb.Dataset(Xtr, label=train[label].to_numpy(),
+                                 categorical_feature=cats, free_raw_data=False)
+            dvalid = None
             if valid is not None:
                 dvalid = lgb.Dataset(_coerce_categoricals(valid[self.features], cats),
-                                     label=valid[cfg.label].to_numpy(),
+                                     label=valid[label].to_numpy(), reference=dtrain,
+                                     categorical_feature=cats, free_raw_data=False)
+        elif objective == "lambdarank":
+            params = self._rank_params()
+            dtrain = lgb.Dataset(Xtr, label=_relevance(train), group=_group_sizes(train),
+                                 categorical_feature=cats, free_raw_data=False)
+            dvalid = None
+            if valid is not None:
+                dvalid = lgb.Dataset(_coerce_categoricals(valid[self.features], cats),
+                                     label=_relevance(valid), group=_group_sizes(valid),
                                      reference=dtrain, categorical_feature=cats,
                                      free_raw_data=False)
-                valid_sets.append(dvalid)
-            self.booster = lgb.train(
-                params, dtrain, num_boost_round=cfg.num_boost_round, valid_sets=valid_sets,
-                callbacks=[lgb.log_evaluation(0)],
-            )
-        elif cfg.objective == "lambdarank":
-            # graded relevance: 着順が良いほど高い(0..K)。上位を厚めに。
-            ytr = _relevance(train)
-            group_tr = _group_sizes(train)
-            params = self._rank_params()
-            dtrain = lgb.Dataset(Xtr, label=ytr, group=group_tr,
-                                 categorical_feature=cats, free_raw_data=False)
-            valid_sets = [dtrain]
-            if valid is not None:
-                dvalid = lgb.Dataset(_coerce_categoricals(valid[self.features], cats),
-                                     label=_relevance(valid),
-                                     group=_group_sizes(valid), reference=dtrain,
-                                     categorical_feature=cats, free_raw_data=False)
-                valid_sets.append(dvalid)
-            self.booster = lgb.train(
-                params, dtrain, num_boost_round=cfg.num_boost_round, valid_sets=valid_sets,
-                callbacks=[lgb.log_evaluation(0)],
-            )
         else:
-            raise ValueError(f"未知の objective: {cfg.objective}")
+            raise ValueError(f"未知の objective: {objective}")
+        params["seed"] = seed
+        use_es = dvalid is not None and cfg.early_stopping_rounds > 0
+        # 早期停止できない時に2500本も回すと過学習・低速なので 400 に抑える
+        rounds = cfg.num_boost_round if use_es else min(cfg.num_boost_round, 400)
+        callbacks = [lgb.log_evaluation(0)]
+        if use_es:
+            callbacks.append(lgb.early_stopping(cfg.early_stopping_rounds, verbose=False))
+        return lgb.train(params, dtrain, num_boost_round=rounds,
+                         valid_sets=[dvalid] if dvalid is not None else [dtrain],
+                         callbacks=callbacks)
+
+    def fit(self, train: pd.DataFrame, valid: pd.DataFrame | None = None) -> "KeibaModel":
+        self.members = [(self._train_one(obj, lab, seed, train, valid), obj)
+                        for obj, lab, seed in self._member_specs()]
+        self.booster = self.members[0][0]   # 後方互換(重要度表示・保存など)
         return self
 
     # ------------------------------------------------------------------
@@ -124,14 +154,19 @@ class KeibaModel:
         return self.booster.predict(_coerce_categoricals(df[self.features], self.cats))
 
     def predict_proba(self, df: pd.DataFrame) -> np.ndarray:
-        """レース内で正規化した勝率(合計1)を返す。"""
-        scores = self.raw_score(df)
-        if self.cfg.objective == "binary":
-            # scores は P(top3 等)。レース内で正規化して勝率の代理にする。
-            return _race_normalize(df, scores, self.cfg.softmax_temperature, is_prob=True)
-        else:
-            # ランクスコアはソフトマックスで確率化
-            return _race_normalize(df, scores, self.cfg.softmax_temperature, is_prob=False)
+        """レース内で正規化した勝率(合計1)を返す。ensemble は対数平均で合成。"""
+        if not self.members:
+            raise RuntimeError("fit されていません")
+        X = _coerce_categoricals(df[self.features], self.cats)
+        log_sum = None
+        for booster, obj in self.members:
+            scores = booster.predict(X)
+            p = _race_normalize(df, scores, self.cfg.softmax_temperature,
+                                is_prob=(obj == "binary"))
+            lp = np.log(np.clip(p, 1e-12, 1.0))
+            log_sum = lp if log_sum is None else log_sum + lp
+        mix = np.exp(log_sum / len(self.members))
+        return _race_normalize(df, mix, 1.0, is_prob=True)
 
     # ------------------------------------------------------------------
     def _binary_params(self) -> dict:

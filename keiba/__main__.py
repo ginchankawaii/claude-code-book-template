@@ -25,6 +25,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--days", type=int, default=600, help="合成データの日数")
     p.add_argument("--seed", type=int, default=7, help="乱数シード")
     p.add_argument("--objective", choices=["binary", "lambdarank"], default="binary")
+    p.add_argument("--ensemble-model", action="store_true",
+                   help="3系統アンサンブル(top3/勝ち/rank)+早期停止で実行。"
+                        "合成データでは効果なしだったが、実データでの検証用に残してある")
     p.add_argument("--myopia", type=float, default=0.7,
                    help="市場の form 読みのノイズ。0=予測エッジ無(ブレンドは市場のlog-lossを"
                         "下回らない)〜大=非効率(エッジ大)。myopia=0 でも EVフィルタは較正"
@@ -101,9 +104,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         reader = SyntheticBackend(SyntheticConfig(n_days=args.days, seed=args.seed,
                                                   market_myopia=args.myopia))
+    mkw = ({"ensemble": True, "early_stopping_rounds": 75, "num_boost_round": 2500}
+           if args.ensemble_model else {})
     result = run_pipeline(
         reader=reader,
-        model_config=ModelConfig(objective=args.objective),
+        model_config=ModelConfig(objective=args.objective, **mkw),
         betting_config=BettingConfig(ev_threshold=args.ev, kelly_fraction=args.kelly),
         wf_config=WalkForwardConfig(),
         exotic_config=ExoticConfig() if args.exotic else None,

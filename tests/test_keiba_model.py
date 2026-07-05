@@ -112,3 +112,24 @@ def test_harville_probabilities_valid():
 
 def _fast_kwargs():
     return dict(num_boost_round=120, min_data_in_leaf=40)
+
+
+def test_ensemble_predicts_normalized_and_uses_three_members(split):
+    tr, va, te = split
+    m = KeibaModel(ModelConfig(ensemble=True, early_stopping_rounds=20,
+                               **_fast_kwargs())).fit(tr, va)
+    assert len(m.members) == 3          # top3 / win / lambdarank
+    assert m.booster is not None        # 後方互換(先頭メンバー)
+    p = m.predict_proba(te)
+    assert _race_sums_to_one(te, p)
+    assert np.all((p > 0) & (p < 1))
+
+
+def test_race_relative_features_are_percentiles(split):
+    tr, _, _ = split
+    # r_ 列はレース内百分位: (0,1] に収まり、レース内最大は 1.0
+    col = "r_j_win_rate"
+    assert col in tr.columns
+    g = tr.dropna(subset=[col]).groupby("race_id")[col]
+    assert (g.max() <= 1.0 + 1e-9).all()
+    assert (g.min() > 0.0).all()

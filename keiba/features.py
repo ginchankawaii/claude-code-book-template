@@ -72,6 +72,16 @@ FEATURE_COLUMNS = [
     "tm_score",          # 対戦型: 予想スコア
 ]
 
+# レース内相対特徴: 上の絶対値を「同じレースの他馬と比べた百分位(0..1)」に変換して
+# 併記する。競馬は相対競技なので、GBDT に「この馬の指標が相手関係の中でどの位置か」
+# という文脈を直接与える(絶対値だけだと相手次第の意味変化を木の分岐で学び切れない)。
+RACE_RELATIVE_BASE = [
+    "h_avg_relfinish", "h_recent_relfinish", "h_form_momentum",
+    "j_win_rate", "t_win_rate", "s_win_rate",
+    "carried_weight", "horse_weight", "days_since_last",
+]
+FEATURE_COLUMNS += [f"r_{c}" for c in RACE_RELATIVE_BASE]
+
 LABEL_WIN = "is_win"
 LABEL_TOP3 = "is_top3"
 KEYS = ["race_id", "race_date"]
@@ -154,6 +164,13 @@ def build_features(runners: pd.DataFrame, config: FeatureConfig | None = None) -
         df["dm_rank"] = df.groupby("race_id")["dm_score"].rank(method="min", ascending=True)
     else:
         df["dm_rank"] = np.nan
+
+    # --- レース内相対(百分位 0..1)。NaN は NaN のまま(GBDT が欠損として扱う)。
+    # rank は不連続なので、累積和の計算順序による 1e-16 級の浮動小数ノイズが
+    # タイ判定を揺らし、リーク監査(再計算との一致検査)を偽陽性にする。
+    # 1e-9 で丸めてからランクし、実質同値は常に同順位になるよう固定する。
+    for c in RACE_RELATIVE_BASE:
+        df[f"r_{c}"] = df[c].round(9).groupby(df["race_id"]).rank(pct=True)
 
     # finish_pos は lambdarank の relevance ラベルとして保持(特徴量ではない)
     keep = KEYS + FEATURE_COLUMNS + [LABEL_WIN, LABEL_TOP3, "finish_pos"] + SETTLE_COLS
