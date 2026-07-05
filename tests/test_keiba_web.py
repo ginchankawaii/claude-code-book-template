@@ -170,6 +170,112 @@ def test_allocate_risk_controls():
     assert "¥" in a["copy"] and "X 1R" in a["copy"]
 
 
+def test_preset_of():
+    assert web._preset_of(1.20, 25, 3) == "katai"
+    assert web._preset_of(1.10, 40, 5) == "std"
+    assert web._preset_of(1.00, 60, 5) == "semeru"
+    assert web._preset_of(1.0, 100, 0) == ""     # カスタムは無印
+
+
+def test_allocate_fallback_equal_split():
+    races = [
+        {"cbval": "A", "label": "X 1R", "fb_bet": {"kind": "単勝", "sel": "1", "odds": 2.0, "ev": 0.9}},
+        {"cbval": "B", "label": "X 2R", "fb_bet": {"kind": "単勝", "sel": "4", "odds": 3.0, "ev": 0.8}},
+        {"cbval": "C", "label": "X 3R", "fb_bet": None},   # オッズ無し→対象外
+    ]
+    a = web._allocate_fallback(races, 10000, max_bets=5)
+    assert a["fallback"] is True and a["n_bet"] == 2
+    assert all(r["amount"] == 5000 for r in a["rows"])     # 均等割り
+    assert a["total"] == 10000
+
+
+def test_auto_mode_allocates_without_picks(state):
+    # おまかせ: pick を一切送らなくても全レースから+EVを自動選出して配分する
+    od = int(state["race_date"].max())
+    html = web.app.test_client().get(
+        f"/day/{od}?submitted=1&budget=10000&mode=auto").get_data(as_text=True)
+    assert "AIおまかせ" in html
+    assert "¥" in html
+
+
+def test_auto_mode_miokuri_when_no_edge(state):
+    # 妙味ゼロの日: 正直に「見送り推奨」。auto_fb で参考配分(本命均等割り)が出る
+    pred = state.copy()
+    pred["bet"] = False
+    web.STATE.update(pred=pred)
+    od = int(pred["race_date"].max())
+    cli = web.app.test_client()
+    html = cli.get(f"/day/{od}?submitted=1&budget=10000&mode=auto").get_data(as_text=True)
+    assert "見送り推奨" in html
+    html2 = cli.get(f"/day/{od}?submitted=1&budget=10000&mode=auto_fb").get_data(as_text=True)
+    assert "参考配分" in html2 and "均等割り" in html2
+
+
+def test_auto_excludes_finished_races_today(state):
+    # 本日の確定済みレースは買えない → おまかせ配分の対象外(+EVがあっても拾わない)
+    pred = state.copy()
+    pred["bet"] = False
+    rid_fin = 202602010501            # 確定済みレースにだけ +EV を付ける
+    m = (pred["race_id"] == rid_fin) & (pred["post_position"] == 2)
+    pred.loc[m, ["win_prob", "odds", "ev", "bet"]] = [0.30, 5.0, 1.5, True]
+    web.STATE.update(pred=pred)
+    od = int(pred["race_date"].max())
+    html = web.app.test_client().get(
+        f"/day/{od}?submitted=1&budget=10000&mode=auto").get_data(as_text=True)
+    assert "見送り推奨" in html
+
+
+def test_auto_relaxes_threshold_instead_of_false_miokuri(state):
+    # EV1.0〜1.10の薄い妙味しか無い日: 「妙味ゼロ」と偽らず、基準を緩めて拾い明示する
+    pred = state.copy()
+    pred["bet"] = False
+    rid = 202610020112                # 発走前レース
+    m = (pred["race_id"] == rid) & (pred["post_position"] == 1)
+    pred.loc[m, ["win_prob", "odds", "ev", "bet"]] = [0.35, 3.0, 1.05, True]
+    web.STATE.update(pred=pred)
+    od = int(pred["race_date"].max())
+    html = web.app.test_client().get(
+        f"/day/{od}?submitted=1&budget=10000&mode=auto").get_data(as_text=True)
+    assert "緩めて" in html and "見送り推奨" not in html
+
+
+def test_small_budget_still_allocates(state):
+    # 小予算×低cap%で cap=0 → 偽の見送り、を防ぐ(capは最低¥100)
+    pred = state.copy()
+    rid = 202610020112
+    m = (pred["race_id"] == rid) & (pred["post_position"] == 1)
+    pred.loc[m, ["win_prob", "odds", "ev", "bet"]] = [0.40, 5.0, 2.0, True]
+    web.STATE.update(pred=pred)
+    od = int(pred["race_date"].max())
+    html = web.app.test_client().get(
+        f"/day/{od}?submitted=1&budget=200&mode=auto").get_data(as_text=True)
+    assert "AIおまかせ" in html and "見送り推奨" not in html
+
+
+def test_form_constraints_do_not_block_submit(state):
+    # step不整合はブラウザの制約検証で全ボタンを無効化する(テストでは検知不能だった)。
+    # novalidate + step整合 + 隠しdefaultボタンは無name(Enter=☑準拠)を回帰チェック。
+    import re
+    od = int(state["race_date"].max())
+    html = web.app.test_client().get(f"/day/{od}").get_data(as_text=True)
+    assert "novalidate" in html
+    assert 'step="100"' in html            # budget(既定10000がstep違反にならない)
+    assert 'step="5"' not in html          # cap_pct の step=5(プリセット値25/40が違反)は禁止
+    hidden = re.search(r'<button[^>]*left:-9999px[^>]*>', html)
+    assert hidden and "name=" not in hidden.group(0)
+
+
+def test_preset_route_overrides_manual(state):
+    od = int(state["race_date"].max())
+    cli = web.app.test_client()
+    # プリセットボタンは詳細設定の数値より優先
+    html = cli.get(f"/day/{od}?preset=katai&min_ev=1.0").get_data(as_text=True)
+    assert 'value="1.20"' in html
+    # 初回(無指定)は「標準」プリセット
+    html2 = cli.get(f"/day/{od}").get_data(as_text=True)
+    assert 'value="1.10"' in html2
+
+
 def test_day_sort_ev_orders_overlays_first(state):
     od = int(state["race_date"].max())
     pred = state.copy()

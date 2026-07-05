@@ -306,6 +306,26 @@ def _best_bet(adv: dict) -> dict | None:
     return max(cands, key=lambda c: c["ev"]) if cands else None
 
 
+# かんたん設定(リスクのプリセット)。数値入力を意識せずワンクリックで選べる。
+#   堅実: 濃い妙味だけ少点数・1点への集中も抑える
+#   標準: 既定。バランス型
+#   勝負: +EVなら広く拾い、1点への配分も太くする
+PRESETS = {
+    "katai":  {"label": "堅実", "min_ev": 1.20, "cap_pct": 25, "max_bets": 3},
+    "std":    {"label": "標準", "min_ev": 1.10, "cap_pct": 40, "max_bets": 5},
+    "semeru": {"label": "勝負", "min_ev": 1.00, "cap_pct": 60, "max_bets": 5},
+}
+
+
+def _preset_of(min_ev: float, cap_pct: int, max_bets: int) -> str:
+    """数値の組がプリセットと一致すればその名前(ボタンのハイライト用)。"""
+    for k, p in PRESETS.items():
+        if (abs(p["min_ev"] - min_ev) < 1e-9 and p["cap_pct"] == cap_pct
+                and p["max_bets"] == max_bets):
+            return k
+    return ""
+
+
 def _allocate(all_races: list, picks: set, budget: int, min_ev: float = 1.0,
               cap_pct: int = 100, max_bets: int = 0) -> dict:
     """選んだレースの最良買い目に、予算を分数ケリー(エッジ比例)で配分する。
@@ -318,13 +338,16 @@ def _allocate(all_races: list, picks: set, budget: int, min_ev: float = 1.0,
     """
     chosen = [(r, r["best_bet"]) for r in all_races
               if r.get("cbval") in picks and r.get("best_bet")
-              and r["best_bet"]["ev"] >= min_ev]
+              and r["best_bet"]["ev"] >= min_ev
+              and r.get("bettable", True)]   # 本日の確定済みレースは買えないので除外
     chosen.sort(key=lambda rb: -rb[1]["ev"])
     if max_bets and len(chosen) > max_bets:
         chosen = chosen[:max_bets]
     fs = [max(0.0, (b["ev"] - 1.0) / (b["odds"] - 1.0)) for _, b in chosen]
     tot = sum(fs)
-    cap = (int(budget * cap_pct / 100) // 100) * 100 if cap_pct < 100 else budget
+    # cap は最低 ¥100(馬券の最小単位)。小予算×低cap%で cap=0 になり
+    # 「+EVがあるのに配分ゼロ=偽の見送り表示」になるのを防ぐ。
+    cap = max(100, (int(budget * cap_pct / 100) // 100) * 100) if cap_pct < 100 else budget
     rows, total = [], 0
     if budget > 0 and tot > 0:
         for (r, b), f in zip(chosen, fs):
@@ -332,13 +355,44 @@ def _allocate(all_races: list, picks: set, budget: int, min_ev: float = 1.0,
             if amt <= 0:
                 continue
             rows.append({"label": r["label"], "kind": b["kind"], "sel": b["sel"],
-                         "odds": b["odds"], "ev": b["ev"], "amount": amt})
+                         "odds": b["odds"], "ev": b["ev"], "amount": amt,
+                         "cbval": r.get("cbval")})
             total += amt
     rows.sort(key=lambda x: -x["amount"])
     copy = "\n".join(f"{r['label']} {r['kind']} {r['sel']} ¥{r['amount']:,}" for r in rows)
     return {"rows": rows, "total": total, "leftover": max(0, budget - total),
-            "requested": bool(picks) and budget > 0,
+            "requested": bool(picks) and budget > 0, "fallback": False, "relaxed": False,
             "n_picked": len(picks), "n_bet": len(rows), "copy": copy}
+
+
+def _allocate_fallback(all_races: list, budget: int, max_bets: int = 0,
+                       cap_pct: int = 100) -> dict:
+    """妙味(+EV)がゼロの日の「参考配分」: 本命単勝をEVのマシな順に均等割り。
+
+    期待値上は分が悪い(見送りが最善手)ことを明示する前提で、娯楽として
+    それでも買いたい時の目安。ケリーは EV≤1 で賭金0になるため均等割りを使う。
+    """
+    n_target = max_bets or 5
+    cands = [(r, r["fb_bet"]) for r in all_races
+             if r.get("fb_bet") and r.get("bettable", True)]
+    cands.sort(key=lambda rb: -rb[1]["ev"])
+    # 予算で買える点数(¥100/点)まで絞る。絞らないと小予算で全点 ¥0 になる。
+    n_afford = budget // 100
+    cands = cands[:min(n_target, n_afford)] if n_afford > 0 else []
+    rows, total = [], 0
+    if cands:
+        cap = max(100, (int(budget * cap_pct / 100) // 100) * 100) if cap_pct < 100 else budget
+        amt = min((budget // len(cands) // 100) * 100, cap)
+        if amt > 0:
+            for r, b in cands:
+                rows.append({"label": r["label"], "kind": b["kind"], "sel": b["sel"],
+                             "odds": b["odds"], "ev": b["ev"], "amount": amt,
+                             "cbval": r.get("cbval")})
+                total += amt
+    copy = "\n".join(f"{r['label']} {r['kind']} {r['sel']} ¥{r['amount']:,}" for r in rows)
+    return {"rows": rows, "total": total, "leftover": max(0, budget - total),
+            "requested": True, "fallback": True, "relaxed": False,
+            "n_picked": len(cands), "n_bet": len(rows), "copy": copy}
 
 
 def _settle_best_bet(g: pd.DataFrame, bb: dict) -> tuple:
@@ -391,7 +445,10 @@ def _win5_rec(pred: pd.DataFrame, day_ord: int) -> dict | None:
 
 def _day_view(pred: pd.DataFrame, day_ord: int, picks: set | None = None,
               budget: int = 10000, submitted: bool = False, sort: str = "num",
-              min_ev: float = 1.0, cap_pct: int = 100, max_bets: int = 0) -> dict:
+              min_ev: float = 1.0, cap_pct: int = 100, max_bets: int = 0,
+              mode: str = "") -> dict:
+    """mode: ""=☑選択で配分 / "auto"=全レースからAIが自動選出 /
+    "auto_fb"=autoで妙味ゼロだった日の参考配分(本命単勝の均等割り)。"""
     sub = pred[pred["race_date"] == day_ord]
     day_odds = _day_odds(day_ord)
     picks = picks or set()
@@ -408,11 +465,22 @@ def _day_view(pred: pd.DataFrame, day_ord: int, picks: set | None = None,
         adv = advise_race(g, day_odds.get(_rid_int(rid)))
         bb = _best_bet(adv)
         cbval = str(rid)
-        # 送信済みなら ☑ 状態を尊重。未送信(初回)は +EV のあるレースを既定 ☑。
-        checked = (cbval in picks) if submitted else (bb is not None)
+        # 参考配分(妙味ゼロ日)用: 本命の単勝。EVが1未満でも候補として持っておく。
+        fb = None
+        o = pick["odds"]
+        if o == o and o and float(o) > 1 and pick["post_position"] == pick["post_position"]:
+            ev = float(pick["ev"]) if pick["ev"] == pick["ev"] else float(pick["win_prob"]) * float(o)
+            fb = {"kind": "単勝", "sel": str(int(pick["post_position"])),
+                  "odds": float(o), "ev": ev}
+        # 本日の確定済みレースはもう買えない → 配分対象から外す。
+        # 過去日の閲覧は回顧(紙上の照合)なので確定済みでも配分対象のまま。
+        bettable = (day_ord != STATE["today"]) or (not finished)
+        # 送信済みなら ☑ 状態を尊重。未送信(初回)は +EV があり買えるレースを既定 ☑。
+        checked = (cbval in picks) if submitted else (bb is not None and bettable)
         race = {"race_id": rid, "cbval": cbval, "num": _racenum(rid),
                 "label": f"{_venue(rid)} {_racenum(rid)}R", "finished": finished,
-                "status": status, "checked": checked, "best_bet": bb,
+                "bettable": bettable,
+                "status": status, "checked": checked, "best_bet": bb, "fb_bet": fb,
                 "rows": [_row_view(h) for _, h in g.head(8).iterrows()], "advice": adv}
         venues.setdefault(_venue(rid), []).append(race)
     for v in venues:
@@ -423,11 +491,30 @@ def _day_view(pred: pd.DataFrame, day_ord: int, picks: set | None = None,
             venues[v].sort(key=lambda r: r["num"])
     ordered = [{"venue": v, "races": venues[v]} for v in sorted(venues)]
     all_races = [r for v in ordered for r in v["races"]]
-    eff_picks = picks if submitted else {r["cbval"] for r in all_races if r["best_bet"]}
-    alloc = _allocate(all_races, eff_picks, budget, min_ev, cap_pct, max_bets)
+    if mode in ("auto", "auto_fb"):
+        # おまかせ: ☑ を無視して買える全レースを候補に、AIが自動選出(min_ev/max_bets で絞る)
+        cand = {r["cbval"] for r in all_races if r["best_bet"] and r["bettable"]}
+        alloc = _allocate(all_races, cand, budget, min_ev, cap_pct, max_bets)
+        if not alloc["rows"] and cand:
+            # プリセット基準(min_ev)では0点だが +EV 自体は存在する
+            # → 基準をEV1.0に緩めて拾い、緩和したことを明示する。
+            # 「妙味ゼロ」と偽って -EV の参考配分に誘導しないため。
+            alloc = _allocate(all_races, cand, budget, 1.0, cap_pct, max_bets)
+            alloc["relaxed"] = bool(alloc["rows"])
+        if mode == "auto_fb" and not alloc["rows"]:
+            alloc = _allocate_fallback(all_races, budget, max_bets, cap_pct)
+        alloc["requested"] = True
+        got = {row.get("cbval") for row in alloc["rows"]}
+        for r in all_races:       # ☑ をAIの選出結果に同期(そこから手調整できる)
+            r["checked"] = r["cbval"] in got
+    else:
+        eff_picks = picks if submitted else {r["cbval"] for r in all_races
+                                             if r["best_bet"] and r["bettable"]}
+        alloc = _allocate(all_races, eff_picks, budget, min_ev, cap_pct, max_bets)
     return {"day_ord": day_ord, "day_label": _date_label(day_ord), "venues": ordered,
             "is_today": day_ord == STATE["today"], "budget": budget, "alloc": alloc,
             "sort": sort, "min_ev": min_ev, "cap_pct": cap_pct, "max_bets": max_bets,
+            "mode": mode, "preset": _preset_of(min_ev, cap_pct, max_bets),
             "win5": _win5_designated(day_ord) is not None,
             "win5_rec": _win5_rec(pred, day_ord)}
 
@@ -529,6 +616,8 @@ BASE_CSS = """
  .daygrid{display:flex;gap:16px;align-items:flex-start}
  .daygrid .races{flex:1;min-width:0} .daygrid .slip{flex:0 0 244px;width:244px}
  .slipbox{position:sticky;top:60px}
+ .pbtn{flex:1;padding:6px 0;font-size:12px;background:#26314b;border-radius:8px}
+ .pbtn.on{background:var(--accent);color:#fff;font-weight:700}
  .bin{width:100%;padding:7px 9px;border-radius:8px;border:1px solid var(--line);background:#0f141c;color:#e6e6e6;font-size:15px}
  button.btn{border:none;cursor:pointer;font-family:inherit}
  input[type=checkbox]{accent-color:var(--accent);margin-right:5px;vertical-align:middle;width:15px;height:15px}
@@ -588,7 +677,7 @@ DAY_BODY = """
     </div>
   </div>
 {% endmacro %}
-<form method="get" action="{{url_for('day', ordinal=view.day_ord)}}" class="daygrid">
+<form method="get" action="{{url_for('day', ordinal=view.day_ord)}}" class="daygrid" novalidate>
 <input type="hidden" name="submitted" value="1">
 <div class="races">
   <h2 style="margin:6px 0">{{view.day_label}} {% if view.is_today %}<span class="sub">(本日)</span>{% endif %}
@@ -605,21 +694,30 @@ DAY_BODY = """
 <aside class="slip">
   <div class="panel slipbox">
     <input type="hidden" name="sort" value="{{view.sort}}">
-    <div style="font-weight:700;margin-bottom:8px">💰 投資配分</div>
+    {# Enterキーの既定送信 = ☑準拠の配分(破壊的でない方)。おまかせは明示クリックのみ #}
+    <button style="position:absolute;left:-9999px" tabindex="-1" aria-hidden="true"></button>
+    <div style="font-weight:700;margin-bottom:8px">💰 AIの買い目・投資配分</div>
     <label class="sub">予算(円)</label>
-    <input class="bin" type="number" name="budget" value="{{view.budget}}" min="100" step="1000" inputmode="numeric">
-    <details style="margin-top:8px" {{'open' if view.min_ev>1.0 or view.cap_pct<100 or view.max_bets}}>
-      <summary class="sub" style="cursor:pointer">リスク制御</summary>
+    <input class="bin" type="number" name="budget" value="{{view.budget}}" min="100" step="100" inputmode="numeric">
+    <div class="sub" style="margin-top:8px">かんたん設定</div>
+    <div style="display:flex;gap:4px;margin-top:4px">
+      <button class="btn pbtn {{'on' if view.preset=='katai'}}" name="preset" value="katai" title="濃い妙味だけ厳選: EV1.20以上・最大3点・1点は予算の25%まで">堅実</button>
+      <button class="btn pbtn {{'on' if view.preset=='std'}}" name="preset" value="std" title="バランス: EV1.10以上・最大5点・1点40%まで">標準</button>
+      <button class="btn pbtn {{'on' if view.preset=='semeru'}}" name="preset" value="semeru" title="広く攻める: +EVすべて候補・最大5点・1点60%まで">勝負</button>
+    </div>
+    <div class="sub" style="margin-top:3px">{% if view.preset=='katai' %}厳選3点まで・妙味EV1.20以上のみ{% elif view.preset=='std' %}最大5点・妙味EV1.10以上{% elif view.preset=='semeru' %}最大5点・+EVは広く拾い1点太め{% else %}カスタム(詳細設定の数値を使用){% endif %}</div>
+    <button class="btn" name="mode" value="auto" style="width:100%;margin-top:10px;background:#2e7d46;font-weight:700">🤖 おまかせ配分(全レースから自動)</button>
+    <button class="btn" style="width:100%;margin-top:6px;background:#26314b">☑ 選んだレースだけで配分</button>
+    <details style="margin-top:8px" {{'open' if not view.preset}}>
+      <summary class="sub" style="cursor:pointer">詳細設定(自分で数値を決める)</summary>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
         <label class="sub">最低EV<input class="bin" type="number" name="min_ev" value="{{'%.2f'|format(view.min_ev)}}" min="1" max="100" step="0.05"></label>
-        <label class="sub">1点上限%<input class="bin" type="number" name="cap_pct" value="{{view.cap_pct}}" min="1" max="100" step="5"></label>
+        <label class="sub">1点上限%<input class="bin" type="number" name="cap_pct" value="{{view.cap_pct}}" min="1" max="100" step="1"></label>
         <label class="sub">最大点数<input class="bin" type="number" name="max_bets" value="{{view.max_bets}}" min="0" max="200" step="1"></label>
       </div>
-      <div class="sub" style="margin-top:4px">最低EV未満は除外/1点に予算の上限%/点数の上限(0=無制限)</div>
+      <div class="sub" style="margin-top:4px">最低EV未満は除外/1点に予算の上限%/点数の上限(0=無制限)。数値を変えて「配分」を押すとカスタム扱い。</div>
     </details>
-    <button class="btn" style="width:100%;margin-top:8px">この予算で配分</button>
-    <div class="sub" style="margin-top:6px;line-height:1.5">レースを ☑ → 予算入力 → 配分。
-      <b>妙味</b>(+EV)買い目に、エッジ比例(分数ケリー)で割り振る。</div>
+    <div class="sub" style="margin-top:6px;line-height:1.5"><b>おまかせ</b>=当日の全レースからAIが妙味(+EV)の濃い順に選んで配分。☑ は選出結果に同期されるので、外したいレースを ☐ にして「☑ 選んだレースだけで配分」で手調整。</div>
     {% if view.win5_rec %}
       <div class="panel" style="margin:8px 0;padding:7px 9px;background:#1a1330;border-color:#3a2a5a">
         <a href="{{url_for('win5_page',ordinal=view.day_ord)}}" style="font-weight:700;color:#c9b3ff">🎯 WIN5</a>
@@ -628,6 +726,11 @@ DAY_BODY = """
       </div>
     {% endif %}
     {% if view.alloc.rows %}
+      {% if view.mode %}
+        <div style="margin-top:10px;padding:6px 8px;background:#15281c;border:1px solid #2e7d46;border-radius:6px;font-size:12px">
+          🤖 <b>AIおまかせ: {{view.alloc.n_bet}}点を自動選出</b>{% if view.alloc.fallback %} <span style="color:#e8b93f">(参考配分)</span>{% endif %}
+          {% if view.alloc.relaxed %}<div class="sub" style="color:#e8b93f;margin-top:2px">設定(EV≥{{'%.2f'|format(view.min_ev)}})に合う買い目が無いため、基準をEV≥1.00に緩めて薄い妙味を拾いました。</div>{% endif %}</div>
+      {% endif %}
       <table style="margin-top:10px"><tr><th class="l">レース</th><th class="l">買い目</th><th>金額</th></tr>
       {% for a in view.alloc.rows %}
         <tr><td class="l">{{a.label}}</td>
@@ -639,15 +742,28 @@ DAY_BODY = """
         <div>合計 <b>¥{{'{:,}'.format(view.alloc.total)}}</b></div>
         {% if view.alloc.leftover %}<div class="sub">余り ¥{{'{:,}'.format(view.alloc.leftover)}}</div>{% endif %}
       </div>
-      <div class="sub" style="margin-top:6px">{{view.alloc.n_bet}}点 / 選択{{view.alloc.n_picked}}レース。¥100単位。</div>
+      <div class="sub" style="margin-top:6px">{{view.alloc.n_bet}}点 / 対象{{view.alloc.n_picked}}レース。¥100単位。</div>
+      {% if view.alloc.fallback %}
+        <div class="sub" style="margin-top:6px;color:#e8b93f">※ 参考配分: 今日は妙味(+EV)ゼロ。本命単勝の均等割りで、期待値上は分が悪い。<b>見送りが最善手</b>。</div>
+      {% endif %}
       <label class="sub" style="display:block;margin-top:8px">買い目リスト(コピー用)</label>
       <textarea class="bin" rows="{{view.alloc.rows|length + 1}}" readonly onclick="this.select()"
         style="font-size:12px;resize:vertical">{{view.alloc.copy}}
 合計 ¥{{'{:,}'.format(view.alloc.total)}}</textarea>
+    {% elif view.mode and view.budget < 100 %}
+      <div class="sub" style="margin-top:10px">予算が少なすぎます。¥100以上を入力してください(馬券の最小単位)。</div>
+    {% elif view.mode == 'auto' %}
+      <div style="margin-top:10px;padding:8px 10px;background:#2a1d14;border:1px solid #8a5a2a;border-radius:6px">
+        🛑 <b>本日は見送り推奨</b>
+        <div class="sub" style="margin-top:3px">発走前の全レースを調べましたが、妙味(+EV)の買い目がありません。賭けないのが期待値上の最善手です。</div>
+      </div>
+      <button class="btn" name="mode" value="auto_fb" style="width:100%;margin-top:6px;background:#5a4a28">それでも参考配分を見る(本命均等割り)</button>
+    {% elif view.mode == 'auto_fb' %}
+      <div class="sub" style="margin-top:10px">配分できる発走前のレースがありません(全レース確定済み、またはオッズ未取得)。</div>
     {% elif view.alloc.requested %}
-      <div class="sub" style="margin-top:10px">選んだレースに条件を満たす妙味(+EV)買い目がありません。☑/最低EVを調整、または実オッズ(O1〜O6)取得を確認。</div>
+      <div class="sub" style="margin-top:10px">選んだレースに条件を満たす妙味(+EV)買い目がありません。☑/かんたん設定を「勝負」に変える、または実オッズ(O1〜O6)取得を確認。</div>
     {% else %}
-      <div class="sub" style="margin-top:10px">妙味のあるレースを既定で ☑ 済み。予算を入れて「配分」。</div>
+      <div class="sub" style="margin-top:10px">予算を入れて「🤖 おまかせ配分」を押すだけ。当日の全レースからAIが選んで割り振ります。</div>
     {% endif %}
     <div class="sub" style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">
       ※ 紙上の目安。資金管理は自己責任。控除率の壁あり。</div>
@@ -755,14 +871,27 @@ def day(ordinal: int):
     budget = max(0, min(budget, 100_000_000))
     picks = set(request.args.getlist("pick"))
     sort = "ev" if request.args.get("sort") == "ev" else "num"
-    min_ev = request.args.get("min_ev", type=float)
-    min_ev = 1.0 if min_ev is None else max(1.0, min(min_ev, 100.0))
-    cap_pct = request.args.get("cap_pct", type=int) or 100
-    cap_pct = max(1, min(cap_pct, 100))
-    max_bets = request.args.get("max_bets", type=int) or 0
-    max_bets = max(0, min(max_bets, 200))
+    mode = request.args.get("mode") or ""
+    if mode not in ("auto", "auto_fb"):
+        mode = ""
+    preset = request.args.get("preset") or ""
+    manual = any(request.args.get(k) is not None
+                 for k in ("min_ev", "cap_pct", "max_bets"))
+    if preset not in PRESETS and not manual:
+        preset = "std"          # 初回はかんたん設定「標準」で開く
+    if preset in PRESETS:       # プリセットボタンは手入力より優先
+        p = PRESETS[preset]
+        min_ev, cap_pct, max_bets = p["min_ev"], p["cap_pct"], p["max_bets"]
+    else:
+        min_ev = request.args.get("min_ev", type=float)
+        min_ev = 1.0 if min_ev is None else max(1.0, min(min_ev, 100.0))
+        cap_pct = request.args.get("cap_pct", type=int) or 100
+        cap_pct = max(1, min(cap_pct, 100))
+        max_bets = request.args.get("max_bets", type=int) or 0
+        max_bets = max(0, min(max_bets, 200))
     view = _day_view(pred, ordinal, picks=picks, budget=budget, submitted=submitted,
-                     sort=sort, min_ev=min_ev, cap_pct=cap_pct, max_bets=max_bets)
+                     sort=sort, min_ev=min_ev, cap_pct=cap_pct, max_bets=max_bets,
+                     mode=mode)
     body = render_template_string(DAY_BODY, view=view)
     # 配分フォーム送信時は自動更新(meta refresh)を切る(入力が消えないように)
     return _render(body, ordinal, auto=(ordinal == today and not submitted))
