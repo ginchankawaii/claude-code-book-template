@@ -28,6 +28,7 @@ input double InpResizeMinLots = 0.10;    // resize open pos only if lot diff >= 
 input double InpResizePct     = 0.20;    // ... or >= this fraction of current size (deadband)
 
 CTrade trade;
+datetime g_expiry = 0;   // last EXP token seen on the signal (0 = heartbeat-less)
 
 int OnInit()
 {
@@ -36,13 +37,31 @@ int OnInit()
    EventSetTimer(InpTimerSec);
    ExportAll();
    ProcessSignal();
+   UpdateStatusComment();
    Print("SteadyBridge started on ", InpSymbol);
    return(INIT_SUCCEEDED);
 }
 
-void OnDeinit(const int reason) { EventKillTimer(); }
-void OnTimer() { ExportAll(); ProcessSignal(); }
+void OnDeinit(const int reason) { EventKillTimer(); Comment(""); }
+void OnTimer() { ExportAll(); ProcessSignal(); UpdateStatusComment(); }
 void OnTick()  { /* timer drives everything */ }
+
+//--- always-visible chart status: is the Python brain alive? ---------
+//  The brain heartbeats the signal file with an EXP token every poll
+//  tick; if Docker/PC dies, this line is how the operator notices.
+void UpdateStatusComment()
+{
+   string hb;
+   if(g_expiry == 0)
+      hb = "no heartbeat token (old brain / manual signal)";
+   else if(TimeGMT() > g_expiry)
+      hb = StringFormat("!! BRAIN SILENT — signal expired %d min ago !!",
+                        (int)((TimeGMT() - g_expiry) / 60));
+   else
+      hb = StringFormat("brain OK (heartbeat valid %d more min)",
+                        (int)((g_expiry - TimeGMT()) / 60));
+   Comment("SteadyBridge | pos ", DoubleToString(CurrentLots(), 2), " lots | ", hb);
+}
 
 //--- net lots of OUR positions (long +, short -) -------------------
 double CurrentLots()
@@ -165,6 +184,7 @@ void ProcessSignal()
    if(k >= 4 && parts[2] == "EXP")
    {
       long expiry = StringToInteger(parts[3]);
+      g_expiry = (datetime)expiry;             // chart status (UpdateStatusComment)
       if(expiry > 0 && (long)TimeGMT() > expiry)
       {
          if(MathAbs(CurrentLots()) > 0)
@@ -175,6 +195,7 @@ void ProcessSignal()
          return;
       }
    }
+   else g_expiry = 0;
 
    double target = 0.0;                       // signed target
    if(action == "LONG")  target = lots;

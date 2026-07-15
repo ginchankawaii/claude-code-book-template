@@ -103,3 +103,15 @@ py -3.12 -m scripts.run_monitor --kind stocks
 - 最大リスク4%/取引・最大ロット上限・**ノーション5倍レバ上限**・magic番号で自分の建玉のみ操作。
 - ドローダウン時は実効上限を自動で縮小（資金保全）。
 - Opus/解析エラー時は **トレンドエッジ単独**で動く（トレンド上ならロング維持、下なら待機）。フェイルセーフでショートは絶対にしない。
+- **ハートビート**：常駐ループはシグナルに `EXP <unix>` を付けて毎ティック書き直す。
+  再コンパイル済みのEAは期限切れ（既定2時間沈黙）で**自動的にFLATへ退避**し、
+  チャート左上に `brain OK (heartbeat valid Xm)` / `!! BRAIN SILENT !!` を常時表示する。
+  **Docker/PCが死んでいてもMT5チャートを見れば一目で分かる。**
+
+## Docker死活の運用（実際に死んでいた事例からの教訓）
+- コンテナ自体は `restart: unless-stopped` で自動復活するが、**Docker Desktopごと死ぬと無力**
+  （Windows Update再起動・WSLのOOM・手動終了）。必ず：
+  1. Docker Desktop → Settings → General → **「Start Docker Desktop when you sign in to Windows」をON**
+  2. PC再起動後は `docker compose ps` で fx が Up か確認する習慣
+- 脳が死んでいた間の挙動：建玉ありなら（新EAなら）期限切れで自動FLAT、建玉なしなら機会損失のみ。
+  復帰は `docker compose up -d` だけ（状態はDBから自動復元される）。
