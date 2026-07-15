@@ -6,7 +6,7 @@ IPC entirely by exchanging plain files in MT5's shared "Common\\Files" folder:
 
   EA  -> Python :  steady_bars.csv    (recent daily OHLC)
   EA  -> Python :  steady_status.csv  (balance, equity, position_lots)
-  Python -> EA  :  steady_signal.txt  ("LONG <lots>" | "FLAT 0")
+  Python -> EA  :  steady_signal.txt  ("LONG <lots>[ EXP <unix>]" | "FLAT 0[ EXP <unix>]")
 
 The EA writes bars/status and executes whatever signal Python last wrote. Python
 reads bars/status, runs the trend + adaptive-risk logic, and writes the signal.
@@ -55,9 +55,26 @@ def read_status(base: Optional[Path] = None) -> Optional[dict]:
         return None
 
 
-def write_signal(action: str, lots: float, base: Optional[Path] = None) -> Path:
+def write_signal(action: str, lots: float, base: Optional[Path] = None,
+                 expires_at: Optional[int] = None) -> Path:
+    """Atomically publish the target order ("LONG 0.10" | "FLAT 0").
+
+    Atomic tmp+rename so the EA can never read a half-written line (a torn
+    read parsed as lots=0 would flatten a healthy position).
+
+    With ``expires_at`` (unix epoch, UTC) an " EXP <epoch>" suffix is appended:
+    a heartbeat-aware EA treats an expired order as FLAT — the fail-safe for a
+    dead Python brain, which holds the only protective stop. Older EAs ignore
+    the extra tokens (they only parse the first two), so the suffix is
+    backward-compatible.
+    """
     d = base or common_files_dir()
     d.mkdir(parents=True, exist_ok=True)
     path = d / SIGNAL_FILE
-    path.write_text(f"{action.upper()} {lots:.2f}\n")
+    line = f"{action.upper()} {lots:.2f}"
+    if expires_at:
+        line += f" EXP {int(expires_at)}"
+    tmp = path.with_name(SIGNAL_FILE + ".tmp")
+    tmp.write_text(line + "\n")
+    os.replace(tmp, path)
     return path

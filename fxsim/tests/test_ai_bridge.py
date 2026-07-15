@@ -42,7 +42,10 @@ def wired(monkeypatch):
     monkeypatch.setattr(bridge, "read_status",
                         lambda *a, **k: {"balance": 500000.0, "equity": 500000.0, "position_lots": 0.0})
     monkeypatch.setattr(bridge, "write_signal",
-                        lambda action, lots, base=None: written.append((action, round(lots, 2))))
+                        lambda action, lots, base=None, expires_at=None:
+                            written.append((action, round(lots, 2))))
+    # the bundled test candles are historical: disable the live freshness guard
+    monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
     # keep the DB out of the unit test
     monkeypatch.setattr(db, "list_runs", lambda: [])
     monkeypatch.setattr(db, "create_run", lambda **k: 1)
@@ -127,6 +130,7 @@ def test_flat_decision_clears_the_stop(wired, monkeypatch):
 
 
 def test_trend_gate_probe(monkeypatch):
+    monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
     monkeypatch.setattr(bridge, "read_status",
                         lambda *a, **k: {"balance": 500000.0, "equity": 500000.0,
                                          "position_lots": 0.05})
@@ -141,3 +145,86 @@ def test_trend_gate_probe(monkeypatch):
 def test_trend_gate_not_ready_returns_none(monkeypatch):
     monkeypatch.setattr(bridge, "read_status", lambda *a, **k: None)
     assert R._trend_gate("USD_JPY", "D", 90, "no-such-file.csv") is None
+
+
+# ---- audit fixes (round-2 money-path bug hunt) -----------------------------
+
+def test_stale_bars_are_refused(monkeypatch):
+    # The audit found real orders placeable on a weeks-old fallback CSV. Any
+    # candle set whose last bar is older than MAX_BAR_AGE_H must be refused —
+    # for the probe AND (via the shared loader) for decisions.
+    monkeypatch.setattr(bridge, "read_status",
+                        lambda *a, **k: {"balance": 500000.0, "equity": 500000.0,
+                                         "position_lots": 0.0})
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _UP)
+    assert R._trend_gate("USD_JPY", "D", 90, "no-such-file.csv") is None  # _UP ends years ago
+
+
+def test_short_live_feed_does_not_fall_back_to_csv(monkeypatch):
+    # A truncated/partial live bars file (torn EA write) must SKIP the tick,
+    # never silently substitute the bundled history CSV.
+    monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    monkeypatch.setattr(bridge, "read_bars",
+                        lambda instr="USD_JPY", gran="D", base=None: _UP[:50])  # < sma_n+5
+    assert R._load_bars("USD_JPY", "D", 90, str(DATA_DIR / "USD_JPY_D.csv")) is None
+
+
+def test_dry_run_writes_nothing(monkeypatch):
+    written, recorded = [], []
+    monkeypatch.setattr(bridge, "read_status",
+                        lambda *a, **k: {"balance": 500000.0, "equity": 500000.0,
+                                         "position_lots": 0.0})
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _UP)
+    monkeypatch.setattr(bridge, "write_signal",
+                        lambda *a, **k: written.append(a))
+    monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    monkeypatch.setattr(db, "list_runs", lambda: [])
+    monkeypatch.setattr(db, "create_run",
+                        lambda **k: (_ for _ in ()).throw(AssertionError("dry created a run")))
+    monkeypatch.setattr(db, "record_equity",
+                        lambda *a, **k: recorded.append("equity"))
+    monkeypatch.setattr(db, "load_equity", lambda *a, **k: [])
+    monkeypatch.setattr(db, "record_signal",
+                        lambda *a, **k: recorded.append("signal"))
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0)
+    res = R.decide_once(cfg, "USD_JPY", 0.04, 5.0, str(DATA_DIR / "USD_JPY_D.csv"),
+                        _Trader(_Dec(True, "long", 0.8)), dry=True, trigger="test",
+                        granularity="D", sma_n=90)
+    assert res["action"] == "LONG"
+    assert written == [] and recorded == []   # --dry touches neither EA nor DB
+
+
+def test_hold_with_lost_stop_rearms(wired, monkeypatch):
+    # INVARIANT: an open LONG must carry a stop. If the carried stop was lost
+    # (old records, manual --once, wiped DB), the hold decision re-arms one.
+    monkeypatch.setattr(bridge, "read_status",
+                        lambda *a, **k: {"balance": 500000.0, "equity": 500000.0,
+                                         "position_lots": 0.09})
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _UP)
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0)
+    res = R.decide_once(cfg, "USD_JPY", 0.04, 5.0, str(DATA_DIR / "USD_JPY_D.csv"),
+                        _Trader(_Dec(True, "long", 1.0)), dry=False, trigger="test",
+                        granularity="D", sma_n=90, prev_stop=None)
+    assert res["action"] == "LONG" and res["fresh"] is False
+    assert res["stop"] is not None and res["stop"] < _UP[-1].close
+
+
+def test_restore_state_scans_back_for_the_stop(monkeypatch):
+    # A hold record with stop_price=null must not disarm the restore: the scan
+    # walks back through the unbroken run of LONG decisions to the entry stop.
+    rows = [
+        {"source": "combined", "direction": 1, "time": "2026-07-01T00:00:00+00:00",
+         "components": '{"stop_price": 158.917}'},
+        {"source": "combined", "direction": 1, "time": "2026-07-02T00:00:00+00:00",
+         "components": '{"stop_price": null}'},
+    ]
+    monkeypatch.setattr(db, "list_runs",
+                        lambda: [{"id": 7, "ended_at": None, "params": '{"system": "steady-ai"}'}])
+    monkeypatch.setattr(db, "load_signals", lambda rid: rows)
+    intent, stop, ts = R._restore_state()
+    assert intent == "LONG" and stop == 158.917 and ts > 0
+    # ...but a FLAT after the stop-exit means no stop and FLAT intent
+    rows.append({"source": "combined", "direction": 0, "time": "2026-07-03T00:00:00+00:00",
+                 "components": '{"trigger": "stop"}'})
+    intent, stop, _ = R._restore_state()
+    assert intent == "FLAT" and stop is None

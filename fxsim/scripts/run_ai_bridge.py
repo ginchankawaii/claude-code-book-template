@@ -56,14 +56,57 @@ from app.providers.csv import load_csv_file
 from app.sizing import conviction_leverage
 
 
-def _ongoing_run(start_balance: float, model: str, max_risk: float,
-                 granularity: str = "H1") -> int:
+def _find_run() -> Optional[int]:
+    """The ongoing steady-ai run id, or None. Read-only (never creates)."""
     for r in db.list_runs():
         if not r.get("ended_at") and "steady-ai" in (r.get("params") or ""):
             return r["id"]
+    return None
+
+
+def _ongoing_run(start_balance: float, model: str, max_risk: float,
+                 granularity: str = "H1") -> int:
+    rid = _find_run()
+    if rid is not None:
+        return rid
     return db.create_run(mode="live", instrument="USD_JPY", granularity=granularity,
                          initial_balance=start_balance,
                          params={"system": "steady-ai", "model": model, "max_risk": max_risk})
+
+
+# Bars older than this are refused (weekend + a Monday holiday still passes;
+# a wedged/detached EA feed or a frozen fallback CSV does not).
+MAX_BAR_AGE_H = 75.0
+
+
+def _load_bars(instrument: str, granularity: str, sma_n: int, history_csv: str):
+    """Candles for BOTH the poll probe and the decision — ONE threshold, ONE
+    freshness rule, so the two can never disagree about the data source
+    (audit: probe on live bars + decide on a weeks-old fallback CSV produced
+    a real-order stop-out churn loop). Returns None when the feed can't be
+    trusted this tick; callers must skip, never guess."""
+    need = sma_n + 5
+    candles = bridge.read_bars(instrument, granularity)
+    src = "ea"
+    if len(candles) < need:
+        # Bootstrap only: an EA that has published NOTHING yet. A repo CSV must
+        # never silently replace a live feed, and even then it must be fresh.
+        if len(candles) == 0 and Path(history_csv).exists():
+            candles = load_csv_file(Path(history_csv), instrument, granularity)
+            src = "csv"
+        if len(candles) < need:
+            print(f"[ai] bars not ready ({len(candles)}/{need} bars from {src}); skipping",
+                  flush=True)
+            return None
+    last_t = candles[-1].time
+    if last_t.tzinfo is None:
+        last_t = last_t.replace(tzinfo=timezone.utc)
+    age_h = (datetime.now(timezone.utc) - last_t).total_seconds() / 3600.0
+    if age_h > MAX_BAR_AGE_H:
+        print(f"[ai] bars STALE (last {last_t.isoformat()} = {age_h:.0f}h old, src={src}); "
+              f"refusing to trade on them", flush=True)
+        return None
+    return candles
 
 
 def _trend_gate(instrument: str, granularity: str, sma_n: int,
@@ -73,10 +116,8 @@ def _trend_gate(instrument: str, granularity: str, sma_n: int,
     status = bridge.read_status()
     if status is None or (status.get("equity") or 0) <= 0:
         return None
-    candles = bridge.read_bars(instrument, granularity)
-    if len(candles) < sma_n + 1 and Path(history_csv).exists():
-        candles = load_csv_file(Path(history_csv), instrument, granularity)
-    if len(candles) < sma_n + 1:
+    candles = _load_bars(instrument, granularity, sma_n, history_csv)
+    if candles is None:
         return None
     closes = [c.close for c in candles]
     price = float(closes[-1])
@@ -84,23 +125,42 @@ def _trend_gate(instrument: str, granularity: str, sma_n: int,
     return price > ma, price, float(status.get("position_lots") or 0.0)
 
 
-def _restore_stop() -> Optional[float]:
-    """After a restart, recover the protective stop of an already-open LONG from
-    the last recorded decision of the ongoing run (harmless if actually flat —
-    the stop is only enforced while the EA reports an open position)."""
+def _restore_state() -> tuple[Optional[str], Optional[float], float]:
+    """After a restart: (intent "LONG"/"FLAT"/None, protective stop, epoch of
+    the last decision). The stop is searched backward through the unbroken run
+    of long decisions (older records may carry stop_price=null on holds), so a
+    single poisoned hold record can't silently disarm an open position."""
     try:
-        for r in db.list_runs():
-            if not r.get("ended_at") and "steady-ai" in (r.get("params") or ""):
-                sigs = [s for s in db.load_signals(r["id"]) if s.get("source") == "combined"]
-                if not sigs or sigs[-1].get("direction") != 1:
-                    return None
-                comp = sigs[-1].get("components")
+        rid = _find_run()
+        if rid is None:
+            return None, None, 0.0
+        sigs = [s for s in db.load_signals(rid) if s.get("source") == "combined"]
+        if not sigs:
+            return None, None, 0.0
+        last = sigs[-1]
+        intent = "LONG" if last.get("direction") == 1 else "FLAT"
+        try:
+            last_ts = datetime.fromisoformat(str(last.get("time"))).timestamp()
+        except Exception:
+            last_ts = 0.0
+        stop = None
+        if intent == "LONG":
+            for s in reversed(sigs):
+                if s.get("direction") != 1:
+                    break
+                comp = s.get("components")
                 comp = json.loads(comp) if isinstance(comp, str) else (comp or {})
                 sp = comp.get("stop_price")
-                return float(sp) if sp else None
-    except Exception:
-        return None
-    return None
+                if sp:
+                    stop = float(sp)
+                    break
+            if stop is None:
+                print("[ai] WARNING: restored a LONG intent with NO recoverable stop — "
+                      "the loop will re-arm one on the next decision", flush=True)
+        return intent, stop, last_ts
+    except Exception as exc:
+        print(f"[ai] state restore failed: {exc}", flush=True)
+        return None, None, 0.0
 
 
 def build_context(instrument: str, candles, status: dict) -> dict:
@@ -148,12 +208,8 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
         print("[ai] waiting for EA status (balance/equity). Is SteadyBridge attached & synced?",
               flush=True)
         return None
-    need = sma_n + 5
-    candles = bridge.read_bars(instrument, granularity)
-    if len(candles) < need and Path(history_csv).exists():
-        candles = load_csv_file(Path(history_csv), instrument, granularity)
-    if len(candles) < need:
-        print(f"[ai] not enough {granularity} history ({len(candles)} bars, need {need})", flush=True)
+    candles = _load_bars(instrument, granularity, sma_n, history_csv)
+    if candles is None:
         return None
 
     balance = status["balance"]; equity = status["equity"]
@@ -185,10 +241,18 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
             action, conviction, reason = "FLAT", 0.0, f"trend-up but Opus veto ({decision.action}): {decision.reason}"
             factors = decision.factors
 
-    # drawdown brake on the hard cap (capital preservation)
-    run_id = _ongoing_run(balance, trader.model, max_risk, granularity)
-    db.record_equity(run_id, datetime.now(timezone.utc), balance, equity, price)
-    eq_hist = [e["equity"] for e in db.load_equity(run_id)] or [equity]
+    # drawdown brake on the hard cap (capital preservation). Dry runs must not
+    # touch the live run's history (audit: --dry created runs and poisoned the
+    # signal/equity records the restart-restore and the monitor read).
+    now = datetime.now(timezone.utc)
+    if dry:
+        run_id = _find_run()
+        eq_hist = ([e["equity"] for e in db.load_equity(run_id)] if run_id is not None else [])
+    else:
+        run_id = _ongoing_run(balance, trader.model, max_risk, granularity)
+        db.record_equity(run_id, now, balance, equity, price)
+        eq_hist = [e["equity"] for e in db.load_equity(run_id)]
+    eq_hist = eq_hist or [equity]
     brake, _, _ = AdaptiveController(AdaptiveConfig(base_risk=1.0, min_risk=0.2)).evaluate(eq_hist, [])
 
     # Conviction-scaled leverage: within the same hard 5x cap, pull exposure down
@@ -220,22 +284,27 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
     risk_used = round(max_risk * conviction * brake, 4)
     # Protective stop (the engine's 1.5-ATR stop; the EA holds no SL, so the
     # resident loop enforces this between decisions): set at entry, carried
-    # while holding, cleared when flat.
+    # while holding, cleared when flat. INVARIANT (audit): an open LONG must
+    # always carry a stop — if the carried one was lost (old records, manual
+    # --once, wiped DB), re-arm from the current price and say so loudly.
     if action != "LONG":
         stop_price = None
-    elif fresh:
+    elif fresh or prev_stop is None:
         stop_price = round(price - max(1.5 * atr_now, 5 * pip), 3)
+        if not fresh:
+            print(f"[ai] WARNING: open position had NO stop — re-armed at "
+                  f"{stop_price:.3f} (current price {price:.3f})", flush=True)
     else:
         stop_price = prev_stop
 
-    now = datetime.now(timezone.utc)
-    db.record_signal(run_id, now, instrument, "combined", direction,
-                     conviction * direction, reason,
-                     {"action": action, "conviction": conviction, "trend_up": trend_up,
-                      "risk_used": risk_used, "brake": round(brake, 3),
-                      "eff_leverage": round(eff_leverage, 2), "stop_price": stop_price,
-                      "target_lots": lots, "position_lots": status.get("position_lots", 0.0),
-                      "factors": factors, "plan": plan, "trigger": trigger})
+    if not dry:
+        db.record_signal(run_id, now, instrument, "combined", direction,
+                         conviction * direction, reason,
+                         {"action": action, "conviction": conviction, "trend_up": trend_up,
+                          "risk_used": risk_used, "brake": round(brake, 3),
+                          "eff_leverage": round(eff_leverage, 2), "stop_price": stop_price,
+                          "target_lots": lots, "position_lots": status.get("position_lots", 0.0),
+                          "factors": factors, "plan": plan, "trigger": trigger})
     stop_txt = f" stop {stop_price:.3f}" if stop_price else ""
     print(f"[ai] decision: {action} {lots:.2f} lots | conviction {conviction:.2f} "
           f"risk {risk_used:.3f} (brake {brake:.2f}) lev {eff_leverage:.1f}x{stop_txt} | {reason}",
@@ -270,6 +339,10 @@ def main() -> None:
                     help="min minutes between gate-triggered decisions")
     ap.add_argument("--veto-ttl-h", type=float, default=4.0,
                     help="suppress gate re-entries for this long after an AI veto")
+    ap.add_argument("--signal-ttl-min", type=float, default=120.0,
+                    help="heartbeat expiry on the signal file (EXP token; a "
+                         "heartbeat-aware EA fails safe to FLAT if this brain "
+                         "dies). 0 disables the token")
     ap.add_argument("--calendar-mode", default="file", help="file | anthropic (refresh schedule)")
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--dry", action="store_true")
@@ -280,24 +353,41 @@ def main() -> None:
     trader = AITrader(model=args.model)
 
     if args.once:
+        _, prev_stop, _ = _restore_state()
         decide_once(cfg, args.instrument, args.max_risk, args.max_lots, args.history,
                     trader, args.dry, trigger="manual",
-                    granularity=args.granularity, sma_n=args.sma)
+                    granularity=args.granularity, sma_n=args.sma, prev_stop=prev_stop)
         return
 
     print(f"[ai] resident. model={trader.model} max_risk={args.max_risk} "
           f"daily_gap={args.daily_gap_h}h event_window={args.event_window_min}m "
-          f"poll={args.poll}s gate_cd={args.gate_cooldown_min}m veto_ttl={args.veto_ttl_h}h",
-          flush=True)
-    last_decision = 0.0
+          f"poll={args.poll}s gate_cd={args.gate_cooldown_min}m veto_ttl={args.veto_ttl_h}h "
+          f"signal_ttl={args.signal_ttl_min}m", flush=True)
+    # intent = the brain's last ordered state; the loop's job is to make the
+    # book converge to it and never to silently re-adopt a diverging book.
+    intent, stop_price, last_decision = _restore_state()
+    intent_lots = 0.0
+    if intent:
+        stop_txt = f" stop {stop_price:.3f}" if stop_price else ""
+        print(f"[ai] restored state: intent {intent}{stop_txt}", flush=True)
     last_gate = 0.0
     veto_until = 0.0
-    stop_price = _restore_stop()
-    if stop_price:
-        print(f"[ai] restored protective stop {stop_price:.3f} from the last decision", flush=True)
     acted_events: set[str] = set()
     cal = get_calendar(args.calendar_mode, args.instrument)
     cal_day = datetime.now(timezone.utc).date()
+
+    def record_stop_exit(price: float, stop: float, pos: float, now: datetime) -> None:
+        try:
+            status = bridge.read_status()
+            if status and (status.get("balance") or 0) > 0:
+                run_id = _ongoing_run(status["balance"], trader.model,
+                                      args.max_risk, args.granularity)
+                db.record_signal(run_id, now, args.instrument, "combined", 0, 0.0,
+                                 f"stop-loss: last {price:.3f} <= stop {stop:.3f}",
+                                 {"action": "FLAT", "trigger": "stop",
+                                  "stop_price": stop, "position_lots": pos})
+        except Exception as exc:
+            print(f"[ai] stop-exit DB record failed: {exc}", flush=True)
 
     while True:
         try:
@@ -308,12 +398,25 @@ def main() -> None:
                 cal_day = now.date(); acted_events.clear()
 
             probe = _trend_gate(args.instrument, args.granularity, args.sma, args.history)
-            stopped_this_tick = False
+            trigger = None
+            skip_scheduled = False
             if probe is not None:
                 trend_up, price, pos = probe
-                # 1) protective stop — the EA holds no SL; this loop is the stop.
-                #    Exit immediately; the gate re-enters later if the trend holds.
-                if pos > 0 and stop_price is not None and price <= stop_price:
+                if intent == "LONG" and intent_lots <= 0 and pos > 0:
+                    intent_lots = pos      # after a restart: adopt the book's size
+
+                gate_ok = (_time.time() - last_gate) >= args.gate_cooldown_min * 60
+                if intent == "FLAT" and pos > 0:
+                    # Ordered closed but still on the books (EA lag or detached
+                    # terminal). Do NOT decide: a hold decision would re-adopt
+                    # the position and overwrite the pending FLAT (audit: stop
+                    # exits were silently reverted this way). The heartbeat
+                    # below keeps re-asserting FLAT until the EA obeys.
+                    print(f"[ai] waiting for EA to close {pos:.2f} lots (intent FLAT)",
+                          flush=True)
+                    skip_scheduled = True
+                elif pos > 0 and stop_price is not None and price <= stop_price:
+                    # Protective stop — the EA holds no SL; this loop is the stop.
                     if args.dry:
                         print(f"[ai][DRY] STOP hit ({price:.3f} <= {stop_price:.3f}); "
                               f"FLAT NOT written", flush=True)
@@ -321,50 +424,36 @@ def main() -> None:
                         bridge.write_signal("FLAT", 0.0)
                         print(f"[ai] STOP hit: last {price:.3f} <= stop {stop_price:.3f} "
                               f"-> FLAT (gate may re-enter if trend holds)", flush=True)
-                        # Record the exit so the dashboard/PDCA monitor sees the
-                        # book match the last decision (else: false drift alarm).
-                        try:
-                            status = bridge.read_status()
-                            if status and (status.get("balance") or 0) > 0:
-                                run_id = _ongoing_run(status["balance"], trader.model,
-                                                      args.max_risk, args.granularity)
-                                db.record_signal(
-                                    run_id, now, args.instrument, "combined", 0, 0.0,
-                                    f"stop-loss: last {price:.3f} <= stop {stop_price:.3f}",
-                                    {"action": "FLAT", "trigger": "stop",
-                                     "stop_price": stop_price, "position_lots": pos})
-                        except Exception as exc:
-                            print(f"[ai] stop-exit DB record failed: {exc}", flush=True)
-                    stop_price = None
+                        record_stop_exit(price, stop_price, pos, now)
+                    intent, intent_lots, stop_price = "FLAT", 0.0, None
                     last_gate = _time.time()          # brief pause before re-entry
-                    stopped_this_tick = True
-
-            trigger = None
-            if not stopped_this_tick:
-                if probe is not None:
-                    trend_up, price, pos = probe
-                    # 2) state-mismatch gate: enter/exit NOW, don't wait for the
-                    #    daily slot (round-2: daily-only execution cost ~half the
-                    #    CAGR and doubled maxDD). Entries respect the veto TTL and
-                    #    a cooldown; exits are never suppressed.
+                    skip_scheduled = True
+                elif pos > 0 and intent == "LONG" and stop_price is None and gate_ok:
+                    # INVARIANT: an open LONG must carry a stop. Heal it now.
+                    trigger = "gate-rearm"
+                else:
+                    # State-mismatch gate: enter/exit NOW, don't wait for the
+                    # daily slot (round-2: daily-only execution cost ~half the
+                    # CAGR and doubled maxDD). Entries respect the veto TTL and
+                    # a cooldown; exits are never suppressed.
                     wants_entry = trend_up and pos <= 0
                     wants_exit = (not trend_up) and pos > 0
-                    gate_ok = (_time.time() - last_gate) >= args.gate_cooldown_min * 60
                     if wants_exit and gate_ok:
                         trigger = "gate-exit"
-                    elif (wants_entry and gate_ok and _time.time() >= veto_until):
+                    elif wants_entry and gate_ok and _time.time() >= veto_until:
                         trigger = "gate-entry"
-                if trigger is None:
-                    if (_time.time() - last_decision) >= args.daily_gap_h * 3600:
-                        trigger = "daily"
-                    else:
-                        for e in cal.for_instrument(args.instrument):
-                            if not e.is_high:
-                                continue
-                            mins = -e.minutes_until(now)   # minutes SINCE release
-                            key = f"{e.time.isoformat()}|{e.title}"
-                            if 0 <= mins <= args.event_window_min and key not in acted_events:
-                                trigger = f"event:{e.title}"; acted_events.add(key); break
+
+            if trigger is None and not skip_scheduled:
+                if (_time.time() - last_decision) >= args.daily_gap_h * 3600:
+                    trigger = "daily"
+                else:
+                    for e in cal.for_instrument(args.instrument):
+                        if not e.is_high:
+                            continue
+                        mins = -e.minutes_until(now)   # minutes SINCE release
+                        key = f"{e.time.isoformat()}|{e.title}"
+                        if 0 <= mins <= args.event_window_min and key not in acted_events:
+                            trigger = f"event:{e.title}"; acted_events.add(key); break
 
             if trigger:
                 res = decide_once(cfg, args.instrument, args.max_risk, args.max_lots,
@@ -372,6 +461,8 @@ def main() -> None:
                                   granularity=args.granularity, sma_n=args.sma,
                                   prev_stop=stop_price)
                 if res is not None:
+                    intent = res["action"]
+                    intent_lots = res["lots"] if res["action"] == "LONG" else 0.0
                     stop_price = res["stop"]
                     if trigger.startswith("gate"):
                         last_gate = _time.time()
@@ -381,6 +472,17 @@ def main() -> None:
                     # re-consult the paid API every poll tick while it stands.
                     if probe is not None and probe[0] and res["action"] == "FLAT":
                         veto_until = _time.time() + args.veto_ttl_h * 3600
+
+            # Heartbeat: atomically re-assert the current order with a fresh
+            # expiry. A heartbeat-aware EA fails safe to FLAT if this brain
+            # dies (it holds the only protective stop); old EAs ignore the
+            # token. Also re-asserts a pending FLAT the EA hasn't executed.
+            # Guard: never write "LONG 0.00" (a restart before the probe has
+            # adopted the book's size would read to the EA as close-everything).
+            if not args.dry and intent is not None and (intent == "FLAT" or intent_lots > 0):
+                ttl = int(args.signal_ttl_min * 60)
+                bridge.write_signal(intent, intent_lots if intent == "LONG" else 0.0,
+                                    expires_at=(int(_time.time()) + ttl) if ttl > 0 else None)
         except Exception as exc:
             print(f"[ai] loop error: {exc}", flush=True)
         _time.sleep(args.poll)

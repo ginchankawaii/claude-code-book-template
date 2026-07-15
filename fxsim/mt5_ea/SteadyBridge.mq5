@@ -10,7 +10,8 @@
 //|   Files (in Common\Files):                                      |
 //|     steady_bars.csv    (EA -> Python)  time,open,high,low,close |
 //|     steady_status.csv  (EA -> Python)  balance,equity,pos_lots  |
-//|     steady_signal.txt  (Python -> EA)  "LONG <lots>" | "FLAT 0" |
+//|     steady_signal.txt  (Python -> EA)                          |
+//|       "LONG <lots> [EXP <unix>]" | "FLAT 0 [EXP <unix>]"        |
 //+------------------------------------------------------------------+
 #property strict
 #include <Trade/Trade.mqh>
@@ -139,7 +140,7 @@ void ReduceBy(double vol)
 }
 
 //--- read + act on the Python signal -------------------------------
-//  signal: "LONG <lots>" | "SHORT <lots>" | "FLAT 0"
+//  signal: "LONG <lots>" | "SHORT <lots>" | "FLAT 0"  [+ " EXP <unix-utc>"]
 //  Tracks the AI's target size: opens, flips, and RESIZES an open position
 //  (add / partial-close) toward the target, with a deadband to avoid churn.
 void ProcessSignal()
@@ -155,6 +156,25 @@ void ProcessSignal()
    if(k < 1) return;
    string action = parts[0];
    double lots = (k >= 2) ? NormalizeLots(StringToDouble(parts[1])) : 0.0;
+
+   // Optional heartbeat expiry: "LONG 0.10 EXP <unix-utc>". The Python brain
+   // rewrites the signal every poll tick with a fresh expiry; it also holds
+   // the ONLY protective stop. If the brain dies the order expires and we
+   // fail safe to FLAT instead of holding an unprotected position forever.
+   // Signals without the token (older brain, manual writes) never expire.
+   if(k >= 4 && parts[2] == "EXP")
+   {
+      long expiry = StringToInteger(parts[3]);
+      if(expiry > 0 && (long)TimeGMT() > expiry)
+      {
+         if(MathAbs(CurrentLots()) > 0)
+         {
+            Print("SteadyBridge: signal expired (brain heartbeat lost) -> FLAT fail-safe");
+            CloseAll();
+         }
+         return;
+      }
+   }
 
    double target = 0.0;                       // signed target
    if(action == "LONG")  target = lots;

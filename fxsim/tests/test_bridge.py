@@ -10,6 +10,15 @@ def test_write_and_read_signal(tmp_path):
     assert (tmp_path / bridge.SIGNAL_FILE).read_text().strip() == "FLAT 0.00"
 
 
+def test_write_signal_heartbeat_expiry_and_atomicity(tmp_path):
+    # EXP token: "<ACTION> <lots> EXP <epoch>" — heartbeat-aware EAs fail safe
+    # to FLAT when it lapses; old EAs only parse the first two tokens.
+    bridge.write_signal("LONG", 0.09, base=tmp_path, expires_at=1782950000)
+    assert (tmp_path / bridge.SIGNAL_FILE).read_text().strip() == "LONG 0.09 EXP 1782950000"
+    # atomic tmp+rename: no half-written temp file left behind
+    assert not (tmp_path / (bridge.SIGNAL_FILE + ".tmp")).exists()
+
+
 def test_read_status(tmp_path):
     (tmp_path / bridge.STATUS_FILE).write_text(
         "balance,equity,position_lots\n3000000.00,3001234.50,0.30\n")
