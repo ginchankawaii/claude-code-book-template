@@ -55,34 +55,75 @@ def wired(monkeypatch):
     return written
 
 
-def _run(monkeypatch, window, dec):
+def _run(monkeypatch, window, dec, authority="entry", position_lots=None):
     monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: window)
+    if position_lots is not None:
+        monkeypatch.setattr(bridge, "read_status",
+                            lambda *a, **k: {"balance": 500000.0, "equity": 500000.0,
+                                             "position_lots": position_lots})
     trader = _Trader(dec)
-    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0)
-    R.decide_once(cfg, "USD_JPY", 0.04, 5.0, str(DATA_DIR / "USD_JPY_D.csv"),
-                  trader, dry=False, trigger="test", granularity="D", sma_n=90)
-    return trader
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0, ai_authority=authority)
+    res = R.decide_once(cfg, "USD_JPY", 0.04, 5.0, str(DATA_DIR / "USD_JPY_D.csv"),
+                        trader, dry=False, trigger="test", granularity="D", sma_n=90)
+    return trader, res
 
 
 def test_trend_down_stands_aside_without_calling_opus(wired, monkeypatch):
-    trader = _run(monkeypatch, _DOWN, _Dec(True, "long", 0.9))
+    trader, _ = _run(monkeypatch, _DOWN, _Dec(True, "long", 0.9))
     assert wired[-1][0] == "FLAT" and wired[-1][1] == 0.0
-    assert trader.calls == 0          # gate short-circuits the (paid) Opus call
+    assert trader.calls == 0          # gate short-circuits the (paid) AI call
 
 
 def test_trend_up_no_key_trades_the_deterministic_long(wired, monkeypatch):
-    _run(monkeypatch, _UP, _Dec(False, "flat", 0.0))   # Opus unavailable
+    _run(monkeypatch, _UP, _Dec(False, "flat", 0.0))   # AI unavailable
     assert wired[-1][0] == "LONG" and wired[-1][1] > 0
 
 
-def test_trend_up_opus_veto_stands_aside(wired, monkeypatch):
-    _run(monkeypatch, _UP, _Dec(True, "flat", 0.0))
+def test_entry_authority_veto_blocks_fresh_entry(wired, monkeypatch):
+    _run(monkeypatch, _UP, _Dec(True, "flat", 0.0), authority="entry")
     assert wired[-1][0] == "FLAT"
 
 
-def test_trend_up_never_shorts(wired, monkeypatch):
-    _run(monkeypatch, _UP, _Dec(True, "short", 0.9))
+def test_never_shorts_in_any_mode(wired, monkeypatch):
+    # "short" from the AI can at most force FLAT (entry mode) or be logged
+    # (shadow) — a short order is never produced.
+    _run(monkeypatch, _UP, _Dec(True, "short", 0.9), authority="entry")
     assert wired[-1][0] == "FLAT"
+    _run(monkeypatch, _UP, _Dec(True, "short", 0.9), authority="shadow")
+    assert wired[-1][0] == "LONG"     # advisory dissent, edge decides; never SHORT
+
+
+def test_shadow_authority_veto_is_advisory_only(wired, monkeypatch):
+    # Round-3 inquest: default authority follows the validated edge and only
+    # LOGS the AI's dissent (the veto path is unvalidated and return-negative).
+    _, res = _run(monkeypatch, _UP, _Dec(True, "flat", 0.0), authority="shadow")
+    assert wired[-1][0] == "LONG" and wired[-1][1] > 0
+    assert res["action"] == "LONG"
+
+
+def test_entry_authority_never_liquidates_a_hold(wired, monkeypatch):
+    # An AI veto while a position is OPEN must not flatten it in "entry" mode —
+    # that exit path exists in no backtest.
+    _, res = _run(monkeypatch, _UP, _Dec(True, "flat", 0.0),
+                  authority="entry", position_lots=0.09)
+    assert res["action"] == "LONG"
+    assert wired[-1] == ("LONG", 0.09)          # hold kept at entry size
+
+
+def test_full_authority_veto_can_flatten_a_hold(wired, monkeypatch):
+    # Legacy opt-in keeps the old semantics.
+    _, res = _run(monkeypatch, _UP, _Dec(True, "flat", 0.0),
+                  authority="full", position_lots=0.09)
+    assert res["action"] == "FLAT" and wired[-1][0] == "FLAT"
+
+
+def test_shadow_sizing_pins_reference_conviction(wired, monkeypatch):
+    # Shadow authority sizes at the validated 0.6 reference even when the AI
+    # confirms with a different conviction (conviction scaling is unvalidated).
+    _run(monkeypatch, _UP, _Dec(True, "long", 0.2), authority="shadow")
+    a_shadow = wired[-1]
+    _run(monkeypatch, _UP, _Dec(False, "flat", 0.0), authority="shadow")  # AI down -> 0.6 path
+    assert a_shadow == wired[-1]
 
 
 def test_trend_up_opus_long_sizes_within_leverage_cap(wired, monkeypatch):

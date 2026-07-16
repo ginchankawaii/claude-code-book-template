@@ -134,6 +134,19 @@ class Settings:
     #   "technical" = the mechanical MA/MACD/RSI/BB ensemble (loses OOS — legacy)
     ai_base: str = field(default_factory=lambda: os.getenv("FXSIM_AI_BASE", "trend"))
 
+    # What the AI overlay may overrule (round-3 inquest, docs/RESEARCH.md: the
+    # overlay is the only UNVALIDATED layer; its hold-liquidation and entry-veto
+    # paths were confirmed return-negative in structure, and the edge's profit is
+    # concentrated in a handful of long-held trends):
+    #   "shadow" (default) = advisory only. The AI is still consulted and its
+    #       view logged at the key moments, but decisions follow the validated
+    #       edge (trend gate + stop). Builds the forward record needed to ever
+    #       prove the veto skill before re-granting authority.
+    #   "entry" = may veto FRESH entries only; can never liquidate an open
+    #       position. Opt-in event protection at the cost of missed entries.
+    #   "full"  = legacy: may also flatten holds (unvalidated exit path).
+    ai_authority: str = field(default_factory=lambda: os.getenv("FXSIM_AI_AUTHORITY", "shadow"))
+
     # --- AI decision layer ---------------------------------------------------
     # Who makes the final call:
     #   "rule"      = deterministic, offline-capable risk-aware decider

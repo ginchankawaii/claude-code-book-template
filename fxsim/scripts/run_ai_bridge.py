@@ -1,15 +1,18 @@
 """Live trader on the MT5 file-bridge: validated trend edge + Opus overlay.
 
 The DECISION is the OOS-validated long-or-flat trend filter (be long only while
-price > its long SMA, else stand aside — docs/RESEARCH.md). Opus is consulted at
-the KEY MOMENTS only (once a day, shortly after each high-impact USD/JPY
-release, and on fresh gate entries) as a RISK-FIRST GATE: when the trend says
-long, Opus can confirm and size the conviction, or VETO it (stand aside) — it
-never shorts and never opens a long the trend filter doesn't already justify.
-With no API key the trend edge runs on its own (Opus simply can't veto).
+price > its long SMA, else stand aside — docs/RESEARCH.md). The AI is consulted
+at the KEY MOMENTS only (once a day, shortly after each high-impact USD/JPY
+release, and on fresh gate entries); how much it may OVERRULE is bounded by
+FXSIM_AI_AUTHORITY (round-3 inquest — the AI overlay is the only unvalidated
+layer): "shadow" (default) logs its view but the validated edge decides;
+"entry" lets it veto fresh entries only (never liquidate a hold); "full" is the
+legacy behavior. It never shorts and never opens a long the trend filter
+doesn't already justify. With no API key the trend edge runs on its own.
 Sizing = conviction x hard max-risk x a conviction-scaled leverage cap (<=5x:
 convex ramp — near the floor at the SMA, full cap only when the trend is well
-established; app/sizing.py, docs/RESEARCH.md), scaled down on drawdown.
+established; app/sizing.py, docs/RESEARCH.md), scaled down on drawdown; in
+shadow authority the conviction is pinned to the validated 0.6 reference.
 
 Round-2 execution model (docs/RESEARCH.md: the daily-only loop cost ~half the
 CAGR and doubled drawdown vs the backtest):
@@ -163,7 +166,7 @@ def _restore_state() -> tuple[Optional[str], Optional[float], float]:
         return None, None, 0.0
 
 
-def build_context(instrument: str, candles, status: dict) -> dict:
+def build_context(instrument: str, candles, status: dict, granularity: str = "D") -> dict:
     df = enrich(candles_to_df(candles))
     last = df.iloc[-1]
     closes = df["close"]
@@ -174,18 +177,21 @@ def build_context(instrument: str, candles, status: dict) -> dict:
     rsi = float(last["rsi"]) if not math.isnan(last["rsi"]) else 50.0
     mom20 = (price / float(closes.iloc[-21]) - 1) * 100 if len(closes) > 21 else 0.0
     mom60 = (price / float(closes.iloc[-61]) - 1) * 100 if len(closes) > 61 else 0.0
+    # Field names carry the bar timeframe honestly: on H1 a 20-bar momentum is
+    # ~20 hours, not 20 days (round-3 inquest: the old *_20d labels misled the AI).
     return {
         "instrument": instrument,
+        "bar_timeframe": granularity,
         "asof_utc": datetime.now(timezone.utc).isoformat(),
         "technical": {
             "price": round(price, 3),
-            "sma150": round(sma150, 3),
-            "dist_from_sma150_pct": round((price / sma150 - 1) * 100, 2),
-            "sma50": round(sma50, 3),
+            "sma150bar": round(sma150, 3),
+            "dist_from_sma150bar_pct": round((price / sma150 - 1) * 100, 2),
+            "sma50bar": round(sma50, 3),
             "rsi14": round(rsi, 1),
             "atr": round(atr, 3),
-            "momentum_20d_pct": round(mom20, 2),
-            "momentum_60d_pct": round(mom60, 2),
+            "momentum_20bar_pct": round(mom20, 2),
+            "momentum_60bar_pct": round(mom60, 2),
             "trend": "up" if price > sma150 else "down",
         },
         "account": {
@@ -213,7 +219,7 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
         return None
 
     balance = status["balance"]; equity = status["equity"]
-    ctx = build_context(instrument, candles, status)
+    ctx = build_context(instrument, candles, status, granularity)
     # VALIDATED EDGE: long only while price > long SMA, else stand aside.
     closes = enrich(candles_to_df(candles))["close"]
     price = float(closes.iloc[-1]); ma = float(closes.iloc[-sma_n:].mean())
@@ -221,25 +227,51 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
     trend_txt = f"price {price:.3f} {'>' if trend_up else '<'} SMA{sma_n} {ma:.3f}"
 
     factors: list = []; plan = ""
+    ai_view: dict = {}
+    holding = float(status.get("position_lots") or 0.0) >= 0.005
+    authority = getattr(cfg, "ai_authority", "shadow")
     if not trend_up:
         # Below the trend filter -> flat. No Opus call needed (edge stands aside).
         action, conviction, reason = "FLAT", 0.0, f"trend-down: {trend_txt} -> stand aside"
         print(f"[ai] ({trigger}) {reason}", flush=True)
     else:
-        # Trend says long. Opus is a veto/sizing gate at the key moments.
-        print(f"[ai] ({trigger}) trend-up ({trend_txt}); consulting Opus... "
-              f"pos={status.get('position_lots')}", flush=True)
+        # Trend says long. The AI overlay is consulted at the key moments; how
+        # much it may OVERRULE is bounded by cfg.ai_authority (round-3 inquest:
+        # the overlay is the only unvalidated layer — the edge's profit sits in
+        # a few long-held trends, so vetoed entries and AI-forced exits carry
+        # unbounded opportunity cost while a stopped-out entry is bounded).
+        print(f"[ai] ({trigger}) trend-up ({trend_txt}); consulting AI "
+              f"(authority={authority})... pos={status.get('position_lots')}", flush=True)
         decision = trader.decide(ctx)
+        veto = decision.ok and decision.action != "long"
+        veto_binds = veto and (authority == "full" or (authority == "entry" and not holding))
+        if decision.ok:
+            ai_view = {"ai_action": decision.action, "ai_conviction": decision.conviction,
+                       "ai_binding": veto_binds if veto else authority != "shadow"}
         if not decision.ok:
             # No key / API error: the deterministic trend edge still says LONG.
-            action, conviction, reason = "LONG", 0.6, f"trend-up; Opus unavailable ({decision.reason})"
-        elif decision.action == "long":
-            action, conviction, reason = "LONG", decision.conviction, decision.reason
+            action, conviction, reason = "LONG", 0.6, f"trend-up; AI unavailable ({decision.reason})"
+        elif veto_binds:
+            # Opted-in veto (never short): fresh entries in "entry" mode, plus
+            # holds in legacy "full" mode.
+            action, conviction, reason = "FLAT", 0.0, \
+                f"trend-up but AI veto ({decision.action}): {decision.reason}"
+            factors = decision.factors
+        elif veto:
+            # Advisory only: log the dissent, follow the validated edge at the
+            # reference conviction.
+            action, conviction = "LONG", 0.6
+            reason = (f"trend-up; AI dissent logged (advisory, authority={authority}, "
+                      f"ai={decision.action}): {decision.reason}")
+            factors, plan = decision.factors, decision.plan
+        elif authority == "shadow":
+            # Confirmed long; in shadow mode sizing stays at the validated
+            # reference (conviction scaling is unvalidated, reduce-only).
+            action, conviction, reason = "LONG", 0.6, decision.reason
             factors, plan = decision.factors, decision.plan
         else:
-            # Opus veto (short or flat) -> stand aside. Never short.
-            action, conviction, reason = "FLAT", 0.0, f"trend-up but Opus veto ({decision.action}): {decision.reason}"
-            factors = decision.factors
+            action, conviction, reason = "LONG", decision.conviction, decision.reason
+            factors, plan = decision.factors, decision.plan
 
     # drawdown brake on the hard cap (capital preservation). Dry runs must not
     # touch the live run's history (audit: --dry created runs and poisoned the
@@ -304,7 +336,11 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
                           "risk_used": risk_used, "brake": round(brake, 3),
                           "eff_leverage": round(eff_leverage, 2), "stop_price": stop_price,
                           "target_lots": lots, "position_lots": status.get("position_lots", 0.0),
-                          "factors": factors, "plan": plan, "trigger": trigger})
+                          "factors": factors, "plan": plan, "trigger": trigger,
+                          # the AI's own view, recorded even when advisory — this
+                          # is the forward dataset that can prove/disprove the
+                          # veto skill before authority is (re)granted
+                          **ai_view})
     stop_txt = f" stop {stop_price:.3f}" if stop_price else ""
     print(f"[ai] decision: {action} {lots:.2f} lots | conviction {conviction:.2f} "
           f"risk {risk_used:.3f} (brake {brake:.2f}) lev {eff_leverage:.1f}x{stop_txt} | {reason}",
@@ -337,8 +373,10 @@ def main() -> None:
                     help="decide within this many minutes after a high-impact release")
     ap.add_argument("--gate-cooldown-min", type=float, default=15.0,
                     help="min minutes between gate-triggered decisions")
-    ap.add_argument("--veto-ttl-h", type=float, default=4.0,
-                    help="suppress gate re-entries for this long after an AI veto")
+    ap.add_argument("--veto-ttl-h", type=float, default=1.0,
+                    help="suppress gate re-entries for this long after a BINDING AI veto "
+                         "(inert in the default shadow authority; keep short — entry delay "
+                         "is expensive for a right-tail strategy)")
     ap.add_argument("--signal-ttl-min", type=float, default=120.0,
                     help="heartbeat expiry on the signal file (EXP token; a "
                          "heartbeat-aware EA fails safe to FLAT if this brain "
