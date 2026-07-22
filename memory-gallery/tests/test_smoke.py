@@ -213,6 +213,85 @@ class TestMindmap(unittest.TestCase):
         self.assertIn("タイプ1", line)
 
 
+class TestGraphLinks(unittest.TestCase):
+    _MAP = {
+        "center": "テーマX",
+        "branches": [{"label": "枝A"}, {"label": "枝B"}],
+    }
+
+    def _ledger(self):
+        return [
+            Anchor(page_id="g1", name="番号キャラ", kinds=["属性"], status="採用",
+                   used_by=["old-card"]),  # 属性は使用済みでも再利用可
+            Anchor(page_id="g2", name="激痛の記憶", kinds=["感情"], status="採用",
+                   used_by=["old-card"]),  # 感情は専有＝使用済みなら不可
+            Anchor(page_id="g3", name="新しい怒り", kinds=["感情"], status="採用"),
+            Anchor(page_id="g4", name="タロウ", kinds=["人物"], status="採用"),
+        ]
+
+    def _cards(self):
+        from src.models import MemoryCard
+        return [MemoryCard(page_id="c1", title="既習カードZ")]
+
+    def _check(self, links):
+        from src.graph import static_check_links
+        return static_check_links(links, self._MAP, self._ledger(), self._cards())
+
+    def test_valid_attribute_reuse_allowed(self):
+        valid, issues = self._check([
+            {"node": "枝A", "anchor": "番号キャラ", "reason": "r", "visual": "図鑑風キャラ"},
+        ])
+        self.assertEqual(len(valid), 1)
+        self.assertEqual(issues, [])
+
+    def test_used_emotion_anchor_rejected(self):
+        valid, issues = self._check([
+            {"node": "枝A", "anchor": "激痛の記憶", "reason": "r", "visual": "転ぶ人"},
+        ])
+        self.assertEqual(valid, [])
+        self.assertTrue(any("専有" in i for i in issues))
+
+    def test_unused_emotion_anchor_allowed(self):
+        valid, _ = self._check([
+            {"node": "枝A", "anchor": "新しい怒り", "reason": "r", "visual": "怒りの炎"},
+        ])
+        self.assertEqual(len(valid), 1)
+
+    def test_unknown_node_rejected(self):
+        valid, issues = self._check([
+            {"node": "存在しない枝", "anchor": "番号キャラ", "reason": "r", "visual": "x"},
+        ])
+        self.assertEqual(valid, [])
+        self.assertTrue(any("存在しません" in i for i in issues))
+
+    def test_personal_name_in_visual_rejected(self):
+        valid, issues = self._check([
+            {"node": "枝A", "anchor": "新しい怒り", "reason": "r",
+             "visual": "タロウが怒っている絵"},
+        ])
+        self.assertEqual(valid, [])
+        self.assertTrue(any("個人的な名前" in i for i in issues))
+
+    def test_related_card_must_exist(self):
+        valid, issues = self._check([
+            {"node": "枝B", "related_card": "無いカード", "reason": "r", "visual": "道標"},
+        ])
+        self.assertEqual(valid, [])
+        valid2, _ = self._check([
+            {"node": "枝B", "related_card": "既習カードZ", "reason": "r", "visual": "道標"},
+        ])
+        self.assertEqual(len(valid2), 1)
+
+    def test_image_prompt_includes_link_visuals(self):
+        from src.render import build_image_prompt
+        links = [{"node": "枝A", "anchor": "新しい怒り", "reason": "r",
+                  "visual": "燃える炎の挿絵", "related_card": "既習カードZ"}]
+        prompt = build_image_prompt(self._MAP, links)
+        self.assertIn("燃える炎の挿絵", prompt)
+        self.assertIn("関連: 既習カードZ", prompt)
+        self.assertNotIn("新しい怒り", prompt)  # アンカー名は絵のプロンプトに出さない
+
+
 class TestNotionParsers(unittest.TestCase):
     def test_parse_anchor_minimal(self):
         page = {

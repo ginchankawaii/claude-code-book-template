@@ -295,6 +295,21 @@ class NotionClient:
             pages = [p for p in pages if _card_chain_is_empty(p)]
         return [_parse_card(p) for p in pages]
 
+    def fetch_all_cards(self) -> list[MemoryCard]:
+        """記憶カードDBの全カード（処理済み含む）を取得する。結線エンジンの既習カード一覧用。"""
+        pages = self._query_all(CARDS_DS_ID, CARDS_DB_ID)
+        return [_parse_card(p) for p in pages]
+
+    def set_related_cards(self, page_id: str, related_page_ids: list[str]) -> None:
+        """「関連カード」relation を設定する（ナレッジグラフの網）。"""
+        if not related_page_ids:
+            return
+        self._request("PATCH", f"/pages/{page_id}", json_body={
+            "properties": {"関連カード": {
+                "relation": [{"id": pid} for pid in related_page_ids],
+            }},
+        })
+
     def fetch_card(self, page_id: str) -> MemoryCard:
         """記憶カードを page_id で単体取得する。"""
         data = self._request("GET", f"/pages/{page_id}")

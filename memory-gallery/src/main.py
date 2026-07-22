@@ -15,7 +15,7 @@ import re
 import sys
 import traceback
 
-from . import chain, gate, mindmap, render, skeleton
+from . import chain, gate, graph, mindmap, render, skeleton
 from .models import STATE_ACTIVE, MemoryCard
 from .notion import NotionClient
 
@@ -55,8 +55,35 @@ def _print_structure(m: dict) -> None:
 # v2: mindmap モード
 # ---------------------------------------------------------------------------
 
-def process_card_mindmap(notion: NotionClient, card: MemoryCard,
-                         args: argparse.Namespace, stats: dict) -> None:
+def _propose_links(structure: dict, card: MemoryCard, anchors: list,
+                   all_cards: list, args: argparse.Namespace) -> tuple[list[dict], list[str]]:
+    """結線（アンカー・既習カード）を提案し、チェックと本人確認を通す。失敗しても結線なしで続行。"""
+    try:
+        raw = graph.propose_links(structure, card, anchors, all_cards)
+        links, notes = graph.static_check_links(raw, structure, anchors, all_cards)
+        links, claim_notes = graph.verify_link_claims(links, structure.get("center", ""))
+        notes += claim_notes
+        if links:
+            print("  記憶フックの結線案:")
+            for link in links:
+                target = link.get("anchor") or link.get("related_card") or ""
+                print(f"    🔗 {link.get('node')} ← {target}")
+                print(f"       {link.get('reason', '')}")
+                print(f"       挿絵: {link.get('visual', '')}")
+            if not args.yes and not args.dry_run:
+                answer = input("  この結線を使いますか? [y=使う / n=結線なしで続行] > ").strip().lower()
+                if answer != "y":
+                    return [], notes
+        else:
+            print("  結線なし（効くアンカー・既習カードが見つかりませんでした）")
+        return links, notes
+    except Exception as e:  # 結線は付加機能。失敗してもマップ生成は止めない
+        print(f"  ⚠ 結線エンジンをスキップ: {e}")
+        return [], []
+
+
+def process_card_mindmap(notion: NotionClient, card: MemoryCard, anchors: list,
+                         all_cards: list, args: argparse.Namespace, stats: dict) -> None:
     card.images = notion.fetch_card_images(card.page_id)
     if card.images:
         print(f"  画像添付 {len(card.images)} 枚を取得")
@@ -80,15 +107,20 @@ def process_card_mindmap(notion: NotionClient, card: MemoryCard,
             print(f"    - {issue}")
         return
 
+    links, link_notes = _propose_links(structure, card, anchors, all_cards, args)
     mermaid = mindmap.to_mermaid_mindmap(structure)
 
     if args.dry_run:
         print("  [dry-run] 作画・書き込みは行いません。Mermaid:")
         print("  " + mermaid.replace("\n", "\n  "))
+        if links:
+            print("  結線:")
+            for line in graph.links_body_lines(links):
+                print(f"    {line}")
         return
 
     print(f"  Nano Banana ({render.gemini_image_model()}) で作画中...（数十秒かかります）")
-    image_bytes, mime = render.render_mindmap_image(structure)
+    image_bytes, mime = render.render_mindmap_image(structure, links)
     ext = "png" if "png" in mime else mime.split("/")[-1]
     os.makedirs(OUT_DIR, exist_ok=True)
     filename = f"{_safe_filename(card.title)}.{ext}"
@@ -104,8 +136,18 @@ def process_card_mindmap(notion: NotionClient, card: MemoryCard,
     upload_id_body = notion.upload_file(filename, image_bytes, content_type=mime)
     notion.append_image(card.page_id, upload_id_body, caption=card.title)
     notion.write_mindmap_result(
-        card, mermaid, mindmap.summary_line(structure), issues=[], state=STATE_ACTIVE,
+        card, mermaid, mindmap.summary_line(structure),
+        issues=graph.links_body_lines(links) + link_notes, state=STATE_ACTIVE,
     )
+    if links:
+        linked_anchor_names = [l["anchor"] for l in links if l.get("anchor")]
+        if linked_anchor_names:
+            notion.mark_anchors_used(linked_anchor_names, card, anchors)
+        related_ids = [
+            c.page_id for c in all_cards
+            if c.title in {l.get("related_card") for l in links if l.get("related_card")}
+        ]
+        notion.set_related_cards(card.page_id, related_ids)
     stats["written"] += 1
     print("  ✓ 完了。カバー画像つきでカードに添付しました（ギャラリービューで見えます）。")
 
@@ -189,12 +231,11 @@ def run(args: argparse.Namespace) -> int:
     _load_dotenv()
     notion = NotionClient()
 
-    anchors = []
-    if args.chains:
-        print("アンカー台帳を取得中...")
-        anchors = notion.fetch_anchors()
-        usable = [a for a in anchors if not a.used_by]
-        print(f"  採用アンカー {len(anchors)} 件（うち未使用 {len(usable)} 件）")
+    print("アンカー台帳を取得中...")
+    anchors = notion.fetch_anchors()
+    usable = [a for a in anchors if not a.used_by]
+    print(f"  採用アンカー {len(anchors)} 件（うち未使用 {len(usable)} 件）")
+    all_cards = [] if args.chains else notion.fetch_all_cards()
 
     if args.card:
         cards = [notion.fetch_card(args.card)]
@@ -214,7 +255,7 @@ def run(args: argparse.Namespace) -> int:
             if args.chains:
                 process_card_chains(notion, card, anchors, args, stats)
             else:
-                process_card_mindmap(notion, card, args, stats)
+                process_card_mindmap(notion, card, anchors, all_cards, args, stats)
         except KeyboardInterrupt:
             print("\n中断しました。")
             break

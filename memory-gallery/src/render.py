@@ -25,8 +25,11 @@ def gemini_image_model() -> str:
     return os.environ.get("GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview")
 
 
-def build_image_prompt(mindmap: dict) -> str:
-    """構造を一字一句埋め込んだ作画指示を決定論的に組み立てる（テスト可能な純関数）。"""
+def build_image_prompt(mindmap: dict, links: list[dict] | None = None) -> str:
+    """構造を一字一句埋め込んだ作画指示を決定論的に組み立てる（テスト可能な純関数）。
+
+    links の visual（人名を含まない挿絵描写）は該当ノードの近くに描かせる。
+    """
     lines = [
         "以下の構造の「手描き風マインドマップ」のイラストを1枚描いてください。",
         "",
@@ -38,6 +41,17 @@ def build_image_prompt(mindmap: dict) -> str:
         lines.append(f"枝{i} {emoji}: {branch.get('label', '')}")
         for child in branch.get("children") or []:
             lines.append(f"  - {child.get('label', '')}")
+    if links:
+        lines += ["", "# 記憶フックの挿絵（指定ノードのすぐ近くに、目立つ小さな挿絵として描く）"]
+        for link in links:
+            node = link.get("node")
+            place = "中央のすぐ横" if node == "center" else f"「{node}」の枝のすぐ近く"
+            lines.append(f"- {place}: {link.get('visual', '')}")
+            if link.get("related_card"):
+                lines.append(
+                    f"- マップの端、「{node}」寄りに小さな道標: 「関連: {link['related_card']}」"
+                )
+        lines.append("※ 挿絵は絵のみで説明文字を書かない（道標の「関連: …」だけは文字可）")
     lines += [
         "",
         "# スタイル",
@@ -78,13 +92,13 @@ def list_models() -> list[str]:
     return [m.get("name", "") for m in (resp.json().get("models") or [])]
 
 
-def render_mindmap_image(mindmap: dict) -> tuple[bytes, str]:
+def render_mindmap_image(mindmap: dict, links: list[dict] | None = None) -> tuple[bytes, str]:
     """マインドマップ構造から手描き風イラストを生成する。返り値 (画像bytes, MIME)。"""
     import requests
 
     model = gemini_image_model()
     body = {
-        "contents": [{"parts": [{"text": build_image_prompt(mindmap)}]}],
+        "contents": [{"parts": [{"text": build_image_prompt(mindmap, links)}]}],
         "generationConfig": {"responseModalities": ["IMAGE"]},
     }
     resp = requests.post(
