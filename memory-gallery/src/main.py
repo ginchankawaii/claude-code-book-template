@@ -59,8 +59,9 @@ def _propose_links(structure: dict, card: MemoryCard, anchors: list,
                    all_cards: list, args: argparse.Namespace) -> tuple[list[dict], list[str]]:
     """結線（アンカー・既習カード）を提案し、チェックと本人確認を通す。失敗しても結線なしで続行。"""
     try:
-        raw = graph.propose_links(structure, card, anchors, all_cards)
-        links, notes = graph.static_check_links(raw, structure, anchors, all_cards)
+        others = [c for c in all_cards if c.page_id != card.page_id]  # 自己結線防止
+        raw = graph.propose_links(structure, card, anchors, others)
+        links, notes = graph.static_check_links(raw, structure, anchors, others)
         links, claim_notes = graph.verify_link_claims(links, structure.get("center", ""))
         notes += claim_notes
         if links:

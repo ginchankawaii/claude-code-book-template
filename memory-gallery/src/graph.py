@@ -189,8 +189,13 @@ def verify_link_claims(links: list[dict], center: str) -> tuple[list[dict], list
         data = _extract_json(_response_text(response))
         bad: dict[int, str] = {}
         for item in data.get("issues") or []:
-            if isinstance(item, dict) and isinstance(item.get("number"), (int, float)):
-                bad[int(item["number"])] = str(item.get("issue") or "")
+            number = item.get("number") if isinstance(item, dict) else None
+            text = str(item.get("issue") or "") if isinstance(item, dict) else str(item)
+            if isinstance(number, (int, float)) and 1 <= int(number) <= len(links):
+                bad[int(number)] = text
+            elif text:
+                # 番号が不正・範囲外でも「指摘あり」を素通しにしない（gate と同じ失敗ポリシー）
+                return [], [f"結線の審査結果を対応付けできないため結線なしで続行します: {text}"]
         kept = [link for i, link in enumerate(links, 1) if i not in bad]
         issues = [f"結線除外（技術的誤り）: {text}" for text in bad.values()]
         return kept, issues
