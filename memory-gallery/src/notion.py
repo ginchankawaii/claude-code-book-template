@@ -149,6 +149,8 @@ class NotionClient:
                 "環境変数 NOTION_TOKEN を設定するか NotionClient(token=...) で渡してください。"
             )
         self._token = token
+        # APIバージョンは env で上書き可。クエリ成功時に「通ったバージョン」を自動採用する。
+        self._version = os.environ.get("NOTION_VERSION") or NOTION_VERSION
         self._min_interval = 1.0 / max(NOTION_RPS, 1)
         self._next_allowed = 0.0  # time.monotonic ベース
 
@@ -161,15 +163,15 @@ class NotionClient:
             now = time.monotonic()
         self._next_allowed = now + self._min_interval
 
-    def _headers(self) -> dict:
+    def _headers(self, version: str | None = None) -> dict:
         return {
             "Authorization": f"Bearer {self._token}",
-            "Notion-Version": NOTION_VERSION,
+            "Notion-Version": version or self._version,
             "Content-Type": "application/json",
         }
 
     def _request(self, method: str, path: str, json_body: dict | None = None,
-                 params: dict | None = None) -> dict:
+                 params: dict | None = None, version: str | None = None) -> dict:
         """Notion API へ1リクエスト。スロットル＋429/5xx リトライ込み。"""
         import requests  # 遅延 import（依存未導入環境への防御）
 
@@ -179,7 +181,7 @@ class NotionClient:
         while True:
             self._throttle()
             resp = requests.request(
-                method, url, headers=self._headers(), json=json_body,
+                method, url, headers=self._headers(version), json=json_body,
                 params=params, timeout=60,
             )
             if resp.status_code == 429:
@@ -216,9 +218,20 @@ class NotionClient:
     def _query_all(self, ds_id: str, db_id: str, filter_: dict | None = None) -> list[dict]:
         """DBクエリ。data_sources を優先し、404/400 なら databases にフォールバック。
         has_more/next_cursor のページネーションで全件返す。"""
-        paths = [f"/data_sources/{ds_id}/query", f"/databases/{db_id}/query"]
-        errors: list[NotionAPIError] = []
-        for i, path in enumerate(paths):
+        # APIバージョン×エンドポイントの候補を順に試し、通った組を self._version に採用する。
+        # 2025-09-03 以降: /data_sources/{id}/query ／ それ以前: /databases/{id}/query
+        ds_path = f"/data_sources/{ds_id}/query"
+        db_path = f"/databases/{db_id}/query"
+        attempts: list[tuple[str, str]] = []
+        for version in (self._version, "2025-09-03"):
+            if (version, ds_path) not in attempts:
+                attempts.append((version, ds_path))
+        for version in (self._version, "2022-06-28"):
+            if (version, db_path) not in attempts:
+                attempts.append((version, db_path))
+
+        errors: list[tuple[str, NotionAPIError]] = []
+        for version, path in attempts:
             results: list[dict] = []
             cursor: str | None = None
             try:
@@ -228,7 +241,8 @@ class NotionClient:
                         body["filter"] = filter_
                     if cursor:
                         body["start_cursor"] = cursor
-                    data = self._request("POST", path, json_body=body)
+                    data = self._request("POST", path, json_body=body, version=version)
+                    self._version = version  # 通ったバージョンを以後の全リクエストで使う
                     results.extend(data.get("results") or [])
                     if not data.get("has_more"):
                         return results
@@ -236,23 +250,28 @@ class NotionClient:
                     if not cursor:
                         return results
             except NotionAPIError as e:
-                errors.append(e)
-                # APIバージョン差異への防御: 404/400 は次の候補へ。
-                # 最後の候補でも raise せず for を抜け、下の統合エラー（根本原因つき）に到達させる。
+                errors.append((version, e))
+                # 400/404 は次の候補へ。最後の候補でも raise せず、下の統合エラーに到達させる。
                 if e.status in (400, 404):
                     continue
                 raise
-        # 両エンドポイントとも失敗。根本原因は最初（data_sources）のエラーの方。
-        primary = errors[0] if errors else NotionAPIError(0, paths[0], "unreachable")
+        # 全候補が失敗。根本原因（最初のエラー）を先頭に、全試行を並べて報告する。
+        primary = errors[0][1] if errors else NotionAPIError(0, ds_path, "unreachable")
+        codes = {e.code for _, e in errors}
         hint = ""
-        if any(e.code == "object_not_found" for e in errors):
+        if "object_not_found" in codes:
             hint = (
                 "\n→ ヒント: 統合トークンは接続を付与したページしか見えません。"
                 "Notion で対象ページ（記憶ギャラリー）を開き、⋯ → 接続 → 作成したコネクトを追加してください。"
             )
-        elif any(e.code in ("unauthorized", "restricted_resource") for e in errors):
+        elif codes & {"unauthorized", "restricted_resource"}:
             hint = "\n→ ヒント: NOTION_TOKEN の値が正しいか確認してください（コピーミス・再生成後の旧トークン等）。"
-        details = " / ".join(str(e) for e in errors)
+        elif codes == {"invalid_request_url"}:
+            hint = (
+                "\n→ ヒント: どのAPIバージョンでもエンドポイントが見つかりません。"
+                " .env に NOTION_VERSION=2025-09-03 を追加して再実行してみてください。"
+            )
+        details = " / ".join(f"[{v}] {e}" for v, e in errors)
         raise NotionAPIError(
             primary.status, primary.path, primary.code, f"{details}{hint}"
         )
