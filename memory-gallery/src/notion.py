@@ -37,6 +37,13 @@ _MAX_RETRIES = 3            # 429/5xx それぞれの最大リトライ回数
 _BLOCK_APPEND_CHUNK = 100   # blocks children 追記の1リクエスト上限
 _ANCHOR_STATUS_ADOPTED = "採用"
 
+# fetch_card_text が素材として拾う rich_text 持ちブロック種別
+_TEXT_BLOCK_TYPES = (
+    "paragraph", "heading_1", "heading_2", "heading_3",
+    "bulleted_list_item", "numbered_list_item", "quote", "callout",
+    "toggle", "code",
+)
+
 
 class NotionAPIError(RuntimeError):
     """Notion API がエラー status を返したとき。個人情報は含めない（APIのエラーメッセージのみ）。"""
@@ -301,12 +308,29 @@ class NotionClient:
         return [_parse_card(p) for p in pages]
 
     def set_related_cards(self, page_id: str, related_page_ids: list[str]) -> None:
-        """「関連カード」relation を設定する（ナレッジグラフの網）。"""
+        """「関連カード」relation に追記する（ナレッジグラフの網）。
+
+        全置換ではなく既存 relation との和集合で PATCH する（mark_anchors_used と同じ方針）。
+        再処理（--card 指定・失敗後の再実行）や本人が手で足したリンクを消さないため。
+        """
         if not related_page_ids:
             return
+        existing: list[str] = []
+        try:
+            page = self._request("GET", f"/pages/{page_id}")
+            existing = [
+                r.get("id", "")
+                for r in (_prop(page, "関連カード").get("relation") or [])
+                if isinstance(r, dict) and r.get("id")
+            ]
+        except NotionAPIError:
+            pass  # 取得失敗時は追記分のみで続行（消すよりマシだが、原則ここには来ない）
+        merged = list(dict.fromkeys(existing + [pid for pid in related_page_ids if pid]))
+        if set(merged) == set(existing):
+            return  # 追加分なし
         self._request("PATCH", f"/pages/{page_id}", json_body={
             "properties": {"関連カード": {
-                "relation": [{"id": pid} for pid in related_page_ids],
+                "relation": [{"id": pid} for pid in merged],
             }},
         })
 
@@ -353,6 +377,62 @@ class NotionClient:
             if not cursor:
                 break
         return images
+
+    def fetch_card_text(self, page_id: str) -> str:
+        """カード本文のテキスト系ブロック（段落・見出し・リスト・表・コード等）を素材テキストとして返す。
+
+        v2 の「素材＝テキスト」の入口。build_mindmap / verify_mindmap には
+        ここで取得した同一の素材を渡すこと（画像は fetch_card_images が担う）。
+        """
+        lines: list[str] = []
+        cursor: str | None = None
+        while True:
+            params: dict = {"page_size": 100}
+            if cursor:
+                params["start_cursor"] = cursor
+            data = self._request("GET", f"/blocks/{page_id}/children", params=params)
+            for block in data.get("results") or []:
+                btype = block.get("type")
+                if btype in _TEXT_BLOCK_TYPES:
+                    text = _plain_text((block.get(btype) or {}).get("rich_text"))
+                    if text.strip():
+                        lines.append(text)
+                elif btype == "table":
+                    try:
+                        lines.extend(self._fetch_table_rows(block.get("id", "")))
+                    except NotionAPIError:
+                        continue  # 1つの表の失敗で全体を落とさない
+            if not data.get("has_more"):
+                break
+            cursor = data.get("next_cursor")
+            if not cursor:
+                break
+        return "\n".join(lines)
+
+    def _fetch_table_rows(self, table_block_id: str) -> list[str]:
+        """table ブロックの子（table_row）を「セル | セル | …」の行テキストにして返す。"""
+        if not table_block_id:
+            return []
+        rows: list[str] = []
+        cursor: str | None = None
+        while True:
+            params: dict = {"page_size": 100}
+            if cursor:
+                params["start_cursor"] = cursor
+            data = self._request(
+                "GET", f"/blocks/{table_block_id}/children", params=params
+            )
+            for row in data.get("results") or []:
+                if row.get("type") != "table_row":
+                    continue
+                cells = (row.get("table_row") or {}).get("cells") or []
+                rows.append(" | ".join(_plain_text(c) for c in cells))
+            if not data.get("has_more"):
+                break
+            cursor = data.get("next_cursor")
+            if not cursor:
+                break
+        return rows
 
     # -- 書き -------------------------------------------------------------
 
@@ -493,18 +573,39 @@ class NotionClient:
 
     def mark_anchors_used(self, anchor_names: list[str], card: MemoryCard,
                           anchors: list[Anchor]) -> None:
-        """使用アンカーの「使用済み項目」relation にカードページを追記する（既存は保持）。"""
+        """使用アンカーの「使用済み項目」relation にカードページを追記する（既存は保持）。
+
+        stale 対策（バッチ内で複数カードを処理するケース）:
+        - PATCH 直前に該当アンカーページを GET し、Notion 上の最新 relation とマージする
+          （起動時スナップショットで relation を丸ごと置換すると他カードの使用記録が消えるため）。
+        - 書き込み後は in-memory の anchor.used_by にも反映する。これで同一実行内の後続カードでも
+          感情アンカーの1項目専有チェック（propose_links / static_check_links / gate.static_checks /
+          chain._candidate_anchors）が正しく効く（ルール#3）。
+        """
         by_name = {a.name: a for a in anchors}
         for name in anchor_names:
             anchor = by_name.get(name)
             if anchor is None or not anchor.page_id:
                 continue  # 台帳にない名前は黙ってスキップ（ゲート側で検出済みの想定）
-            existing = [pid for pid in anchor.used_by if pid]
-            if card.page_id in existing:
-                continue
-            relation = [{"id": pid} for pid in existing] + [{"id": card.page_id}]
-            self._request(
-                "PATCH",
-                f"/pages/{anchor.page_id}",
-                json_body={"properties": {"使用済み項目": {"relation": relation}}},
-            )
+            current = [pid for pid in anchor.used_by if pid]
+            try:
+                page = self._request("GET", f"/pages/{anchor.page_id}")
+                remote = [
+                    r.get("id", "")
+                    for r in (_prop(page, "使用済み項目").get("relation") or [])
+                    if isinstance(r, dict) and r.get("id")
+                ]
+                current = list(dict.fromkeys(remote + current))
+            except NotionAPIError:
+                pass  # 取得失敗時は手元のスナップショット＋実行中の追記分で続行
+            if card.page_id not in current:
+                merged = current + [card.page_id]
+                self._request(
+                    "PATCH",
+                    f"/pages/{anchor.page_id}",
+                    json_body={"properties": {"使用済み項目": {
+                        "relation": [{"id": pid} for pid in merged],
+                    }}},
+                )
+                current = merged
+            anchor.used_by = current  # in-memory 反映（同一バッチ内の専有チェック用）

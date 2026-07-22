@@ -57,6 +57,7 @@ class MemoryCard:
     state: str = ""                                  # 状態
     combo_before: float | None = None                # コンボ前
     images: list[CardImage] = field(default_factory=list)
+    source_text: str = ""                            # 本文のテキスト素材（fetch_card_text で取得）
 
 
 @dataclass

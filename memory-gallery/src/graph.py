@@ -99,12 +99,14 @@ def static_check_links(
     labels = {str(b.get("label", "")).strip() for b in mindmap.get("branches") or []}
     labels.add("center")
     card_titles = {c.title for c in other_cards}
+    # 禁止語は種別を問わず**全アンカー**の名前から集める。
+    # 属性アンカーにもペット名・家族名（例: 「銀ちゃん（柴）」）が登録されるため、
+    # 人物/感情に限定すると固有名が画像プロンプトへ漏れる（CLAUDE.md v3 の静的遮断の約束）。
     forbidden_words: set[str] = set()
     for a in anchors:
-        if "人物" in a.kinds or "感情" in a.kinds:
-            for variant in _name_variants(a.name):
-                if len(variant) >= 2:
-                    forbidden_words.add(variant)
+        for variant in _name_variants(a.name):
+            if len(variant) >= 2:
+                forbidden_words.add(variant)
 
     valid: list[dict] = []
     issues: list[str] = []
@@ -138,6 +140,14 @@ def static_check_links(
                 f"結線除外: 「{node}」の挿絵描写に個人的な名前が含まれています（絵はイメージのみ）"
             )
             continue
+        # 既習カードのタイトルが個人語（アンカー名と一致・包含）の場合、結線（relation・本文記録）は
+        # 許可しつつ、絵の道標「関連: カード名」の描画だけ抑止する（エピソード文字を画像APIへ送らない）。
+        if related and any(w in str(related) for w in forbidden_words):
+            link = {**link, "suppress_signpost": True}
+            issues.append(
+                f"道標抑止: 「{node}」の関連カード名に個人的な名前が含まれるため、"
+                "絵の道標は描きません（結線は保持）"
+            )
         valid.append(link)
     if len(valid) > MAX_LINKS:
         issues.append(f"結線は最大{MAX_LINKS}個のため超過分を除外しました")

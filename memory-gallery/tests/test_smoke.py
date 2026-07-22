@@ -227,11 +227,15 @@ class TestGraphLinks(unittest.TestCase):
                    used_by=["old-card"]),  # 感情は専有＝使用済みなら不可
             Anchor(page_id="g3", name="新しい怒り", kinds=["感情"], status="採用"),
             Anchor(page_id="g4", name="タロウ", kinds=["人物"], status="採用"),
+            Anchor(page_id="g5", name="ポチ（柴）", kinds=["属性"], status="採用"),
         ]
 
     def _cards(self):
         from src.models import MemoryCard
-        return [MemoryCard(page_id="c1", title="既習カードZ")]
+        return [
+            MemoryCard(page_id="c1", title="既習カードZ"),
+            MemoryCard(page_id="c2", title="タロウ"),  # 個人語タイトルの既習カード
+        ]
 
     def _check(self, links):
         from src.graph import static_check_links
@@ -291,6 +295,27 @@ class TestGraphLinks(unittest.TestCase):
         self.assertIn("関連: 既習カードZ", prompt)
         self.assertNotIn("新しい怒り", prompt)  # アンカー名は絵のプロンプトに出さない
 
+    def test_attribute_pet_name_in_visual_rejected(self):
+        # 属性アンカーの名前（ペット名等）も禁止語。visual に混入したら除外する
+        valid, issues = self._check([
+            {"node": "枝A", "anchor": "ポチ（柴）", "reason": "r",
+             "visual": "ポチが走っている絵"},
+        ])
+        self.assertEqual(valid, [])
+        self.assertTrue(any("個人的な名前" in i for i in issues))
+
+    def test_personal_card_title_signpost_suppressed(self):
+        # 個人語タイトルの既習カード: 結線は保持しつつ、絵の道標だけ抑止する
+        from src.render import build_image_prompt
+        valid, issues = self._check([
+            {"node": "枝B", "related_card": "タロウ", "reason": "r", "visual": "道標"},
+        ])
+        self.assertEqual(len(valid), 1)
+        self.assertTrue(valid[0].get("suppress_signpost"))
+        self.assertTrue(any("道標抑止" in i for i in issues))
+        prompt = build_image_prompt(self._MAP, valid)
+        self.assertNotIn("タロウ", prompt)  # カード名（個人語）は画像プロンプトに出さない
+
 
 class TestNotionParsers(unittest.TestCase):
     def test_parse_anchor_minimal(self):
@@ -348,6 +373,94 @@ class TestNotionParsers(unittest.TestCase):
         card = _parse_card({"id": "page-card-2", "properties": {}})
         self.assertEqual(card.title, "")
         self.assertIsNone(card.combo_before)
+
+
+class TestNotionWrites(unittest.TestCase):
+    """_request をモックして、relation の追記マージと素材テキスト取得を検証する。"""
+
+    def _client(self):
+        from src.notion import NotionClient
+        return NotionClient(token="dummy-token")
+
+    def test_mark_anchors_used_merges_remote_and_updates_memory(self):
+        from src.models import MemoryCard
+        client = self._client()
+        calls = []
+
+        def fake_request(method, path, json_body=None, params=None, version=None):
+            calls.append((method, path, json_body))
+            if method == "GET":
+                # Notion 上には（同一バッチの前カード分など）既存の使用記録がある
+                return {"properties": {"使用済み項目": {"relation": [{"id": "card-old"}]}}}
+            return {}
+
+        client._request = fake_request
+        anchor = Anchor(page_id="a1", name="感情A", kinds=["感情"], status="採用")
+        card = MemoryCard(page_id="card-new", title="カードN")
+        client.mark_anchors_used(["感情A"], card, [anchor])
+
+        # in-memory 反映（同一実行内の専有チェックが効く）
+        self.assertIn("card-new", anchor.used_by)
+        self.assertIn("card-old", anchor.used_by)
+        # PATCH は既存＋新規の和集合（既存を上書きしない）
+        patch = next(c for c in calls if c[0] == "PATCH")
+        ids = [r["id"] for r in patch[2]["properties"]["使用済み項目"]["relation"]]
+        self.assertEqual(set(ids), {"card-old", "card-new"})
+
+    def test_mark_anchors_used_skips_patch_when_already_recorded(self):
+        from src.models import MemoryCard
+        client = self._client()
+        calls = []
+
+        def fake_request(method, path, json_body=None, params=None, version=None):
+            calls.append((method, path, json_body))
+            return {"properties": {"使用済み項目": {"relation": [{"id": "card-new"}]}}}
+
+        client._request = fake_request
+        anchor = Anchor(page_id="a1", name="感情A", kinds=["感情"], status="採用")
+        client.mark_anchors_used(["感情A"], MemoryCard(page_id="card-new", title="t"), [anchor])
+        self.assertEqual([c[0] for c in calls], ["GET"])  # PATCH なし
+        self.assertEqual(anchor.used_by, ["card-new"])
+
+    def test_set_related_cards_unions_existing_relation(self):
+        client = self._client()
+        calls = []
+
+        def fake_request(method, path, json_body=None, params=None, version=None):
+            calls.append((method, path, json_body))
+            if method == "GET":
+                return {"properties": {"関連カード": {"relation": [{"id": "rel-old"}]}}}
+            return {}
+
+        client._request = fake_request
+        client.set_related_cards("page-1", ["rel-new", "rel-old"])
+        patch = next(c for c in calls if c[0] == "PATCH")
+        ids = [r["id"] for r in patch[2]["properties"]["関連カード"]["relation"]]
+        self.assertEqual(set(ids), {"rel-old", "rel-new"})  # 既存 rel-old を消さない
+
+    def test_fetch_card_text_reads_paragraphs_and_tables(self):
+        client = self._client()
+
+        def fake_request(method, path, json_body=None, params=None, version=None):
+            if path == "/blocks/page-1/children":
+                return {"results": [
+                    {"type": "paragraph",
+                     "paragraph": {"rich_text": [{"plain_text": "本文の素材1"}]}},
+                    {"type": "image", "image": {}},
+                    {"id": "tbl-1", "type": "table", "table": {}},
+                ], "has_more": False}
+            if path == "/blocks/tbl-1/children":
+                return {"results": [
+                    {"type": "table_row", "table_row": {"cells": [
+                        [{"plain_text": "タイプ1"}], [{"plain_text": "全ルータ"}],
+                    ]}},
+                ], "has_more": False}
+            return {}
+
+        client._request = fake_request
+        text = client.fetch_card_text("page-1")
+        self.assertIn("本文の素材1", text)
+        self.assertIn("タイプ1 | 全ルータ", text)
 
 
 if __name__ == "__main__":

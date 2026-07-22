@@ -47,7 +47,9 @@ def build_image_prompt(mindmap: dict, links: list[dict] | None = None) -> str:
             node = link.get("node")
             place = "中央のすぐ横" if node == "center" else f"「{node}」の枝のすぐ近く"
             lines.append(f"- {place}: {link.get('visual', '')}")
-            if link.get("related_card"):
+            # suppress_signpost: カード名が個人語のとき static_check_links が立てるフラグ。
+            # 結線は保持するが、道標（カード名の文字）は画像プロンプトに入れない。
+            if link.get("related_card") and not link.get("suppress_signpost"):
                 lines.append(
                     f"- マップの端、「{node}」寄りに小さな道標: 「関連: {link['related_card']}」"
                 )

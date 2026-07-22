@@ -87,6 +87,18 @@ def process_card_mindmap(notion: NotionClient, card: MemoryCard, anchors: list,
     card.images = notion.fetch_card_images(card.page_id)
     if card.images:
         print(f"  画像添付 {len(card.images)} 枚を取得")
+    card.source_text = notion.fetch_card_text(card.page_id)
+    if card.source_text:
+        print("  本文のテキスト素材を取得")
+    if not card.images and not card.source_text.strip():
+        # 素材が項目名しかない＝「素材に書かれていることだけを使う」が成立しない。
+        # 無人モードでは作画しない（一般知識の補完＝ハルシネーション経路を塞ぐ）。
+        print("  ⚠ 素材がありません（本文にテキストも画像もなし。項目名のみ）")
+        if args.yes and not args.dry_run:
+            stats["skipped"] += 1
+            print("  無人モードでは素材なしカードを処理しません。"
+                  "カード本文に素材（テキスト or 画像）を貼ってから再実行してください。")
+            return
 
     print("  構造を抽出中...")
     structure = mindmap.build_mindmap(card)
@@ -229,12 +241,37 @@ def process_card_chains(notion: NotionClient, card: MemoryCard, anchors: list,
 
 def run(args: argparse.Namespace) -> int:
     _load_dotenv()
+
+    # 既定（v2）フローは作画に GEMINI_API_KEY が必須。構造抽出（Claude API 課金）や
+    # 本人確認を消費した後に落ちないよう、最初に fail-fast する。
+    if not args.chains and not args.dry_run:
+        try:
+            render.gemini_api_key()
+        except RuntimeError as e:
+            print(f"✗ {e}")
+            print("  既定の作画フロー（v2）には GEMINI_API_KEY が必要です。"
+                  "--dry-run なら未設定でも構造抽出まで確認できます。")
+            return 1
+
     notion = NotionClient()
 
     print("アンカー台帳を取得中...")
     anchors = notion.fetch_anchors()
     usable = [a for a in anchors if not a.used_by]
     print(f"  採用アンカー {len(anchors)} 件（うち未使用 {len(usable)} 件）")
+
+    if args.chains:
+        # v1 連想鎖モードの静的ゲートは各案に属性1＋感情1を要求する。台帳が足りないと
+        # extract_fact（課金）後に全カードが必ず失敗するため、カード処理前に fail-fast する。
+        usable_kinds: set[str] = set()
+        for a in usable:
+            usable_kinds.update(a.kinds)
+        if not usable or "属性" not in usable_kinds or "感情" not in usable_kinds:
+            print("アンカー台帳に使えるアンカーが足りません。")
+            print("  --chains には「状態=採用 かつ 未使用」の属性アンカー1件＋感情アンカー1件以上が必要です。")
+            print("  アンカー台帳DBに行を足す（または使用済みを整理する）→ 状態を「採用」にしてから再実行してください。")
+            return 0
+
     all_cards = [] if args.chains else notion.fetch_all_cards()
 
     if args.card:

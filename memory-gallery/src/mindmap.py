@@ -12,6 +12,21 @@ from .gate import _extract_json
 from .models import MemoryCard, anthropic_model
 
 
+def _text_material(card: MemoryCard) -> str:
+    """テキスト素材の共通表現。build_mindmap と verify_mindmap に**同一の素材**を渡す。
+
+    素材の実体はカード本文のテキスト（notion.fetch_card_text で card.source_text に格納）。
+    本文が空の場合は項目名だけになる（呼び出し側で needs_human 扱いにすること）。
+    """
+    parts = [f"素材（テキスト）: {card.title}"]
+    if card.return_to:
+        parts.append(f"戻り先: {card.return_to}")
+    body = (card.source_text or "").strip()
+    if body:
+        parts.append(f"素材本文:\n{body}")
+    return "\n".join(parts)
+
+
 def build_mindmap(card: MemoryCard) -> dict:
     """素材からマインドマップ構造を抽出する。
 
@@ -39,7 +54,7 @@ def build_mindmap(card: MemoryCard) -> dict:
         content: list[dict] = _image_blocks(card.images)
         content.append({"type": "text", "text": instruction})
     else:
-        content = [{"type": "text", "text": f"素材（テキスト）: {card.title}\n戻り先: {card.return_to}\n\n{instruction}"}]
+        content = [{"type": "text", "text": f"{_text_material(card)}\n\n{instruction}"}]
     response = client.messages.create(
         model=anthropic_model(),
         max_tokens=4000,
@@ -77,7 +92,7 @@ def verify_mindmap(mindmap: dict, card: MemoryCard) -> list[str]:
             content: list[dict] = _image_blocks(card.images)
             content.append({"type": "text", "text": instruction})
         else:
-            content = [{"type": "text", "text": f"素材（テキスト）: {card.title}\n\n{instruction}"}]
+            content = [{"type": "text", "text": f"{_text_material(card)}\n\n{instruction}"}]
         response = client.messages.create(
             model=anthropic_model(),
             max_tokens=2000,
