@@ -1,24 +1,25 @@
-"""CLI 入口: python3 -m src.main run [--dry-run] [--card PAGE_ID] [--yes]
+"""CLI 入口: python3 -m src.main run [--dry-run] [--card PAGE_ID] [--yes] [--chains]
 
-フロー（CLAUDE.md 5章。順序を死守: 入力画像 → 事実の確認 → 連想鎖）:
-  1. 未処理カード（連想鎖が空）とアンカー台帳を Notion から取得
-  2. 画像添付があれば取得し、Claude が「覚えたい事実」を抽出
-  3. 画像入力カードは事実を確認（対話: 人間 / --yes: gate照合が代替）
-  4. 連想鎖3案を生成 → 事実照合ゲート
-  5. ゲートNGなら書き込まない（何も作らないほうがマシ）
-  6. OKなら Mermaid 化して書き戻し（状態=一言待ち）＋使用済みアンカー更新
+既定フロー（v2 mindmap モード）:
+  記憶カードの素材（テキスト/画像） → 構造化マインドマップ（Claude）
+  → 忠実性チェック（素材にない事実は絵にしない） → 手描き風イラスト（Nano Banana / Gemini）
+  → Notion カードのカバー＋本文に自動添付 → ギャラリービューで眺める
 
-「自分の一言」は絶対に自動記入しない（生成効果）。
+--chains で v1 の連想鎖モード（アンカー台帳ベース・3案生成）に切り替え。
 """
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 import traceback
 
-from . import chain, gate, skeleton
+from . import chain, gate, mindmap, render, skeleton
+from .models import STATE_ACTIVE, MemoryCard
 from .notion import NotionClient
+
+OUT_DIR = "out"
 
 
 def _load_dotenv(path: str = ".env") -> None:
@@ -36,8 +37,84 @@ def _load_dotenv(path: str = ".env") -> None:
                 os.environ.setdefault(key, value)
 
 
+def _safe_filename(title: str) -> str:
+    name = re.sub(r"[^\w぀-ヿ一-鿿-]+", "_", title).strip("_")
+    return (name or "mindmap")[:60]
+
+
+def _print_structure(m: dict) -> None:
+    print(f"  中央: {m.get('center')}（題材: {m.get('theme')}）")
+    for branch in m.get("branches") or []:
+        emoji = branch.get("emoji") or ""
+        print(f"    {emoji} {branch.get('label')}")
+        for child in branch.get("children") or []:
+            print(f"       - {child.get('label')}")
+
+
+# ---------------------------------------------------------------------------
+# v2: mindmap モード
+# ---------------------------------------------------------------------------
+
+def process_card_mindmap(notion: NotionClient, card: MemoryCard,
+                         args: argparse.Namespace, stats: dict) -> None:
+    card.images = notion.fetch_card_images(card.page_id)
+    if card.images:
+        print(f"  画像添付 {len(card.images)} 枚を取得")
+
+    print("  構造を抽出中...")
+    structure = mindmap.build_mindmap(card)
+    _print_structure(structure)
+
+    if not args.yes and not args.dry_run:
+        answer = input("  この構造で作画しますか? [y=作画 / n=スキップ] > ").strip().lower()
+        if answer != "y":
+            stats["skipped"] += 1
+            print("  スキップしました。")
+            return
+
+    issues = mindmap.verify_mindmap(structure, card)
+    if issues:
+        stats["gate_ng"] += 1
+        print("  ✗ 忠実性チェックNG。作画しません（誤りを絵にしない）:")
+        for issue in issues:
+            print(f"    - {issue}")
+        return
+
+    mermaid = mindmap.to_mermaid_mindmap(structure)
+
+    if args.dry_run:
+        print("  [dry-run] 作画・書き込みは行いません。Mermaid:")
+        print("  " + mermaid.replace("\n", "\n  "))
+        return
+
+    print("  Nano Banana で作画中...（数十秒かかります）")
+    image_bytes, mime = render.render_mindmap_image(structure)
+    ext = "png" if "png" in mime else mime.split("/")[-1]
+    os.makedirs(OUT_DIR, exist_ok=True)
+    filename = f"{_safe_filename(card.title)}.{ext}"
+    local_path = os.path.join(OUT_DIR, filename)
+    with open(local_path, "wb") as f:
+        f.write(image_bytes)
+    print(f"  画像を保存: {local_path}")
+
+    print("  Notion へアップロード中...")
+    upload_id = notion.upload_file(filename, image_bytes, content_type=mime)
+    notion.set_cover(card.page_id, upload_id)
+    # カバーと本文は同じ file_upload id を使い回せない場合に備え、本文用に再アップロード
+    upload_id_body = notion.upload_file(filename, image_bytes, content_type=mime)
+    notion.append_image(card.page_id, upload_id_body, caption=card.title)
+    notion.write_mindmap_result(
+        card, mermaid, mindmap.summary_line(structure), issues=[], state=STATE_ACTIVE,
+    )
+    stats["written"] += 1
+    print("  ✓ 完了。カバー画像つきでカードに添付しました（ギャラリービューで見えます）。")
+
+
+# ---------------------------------------------------------------------------
+# v1: 連想鎖モード（--chains）
+# ---------------------------------------------------------------------------
+
 def _confirm_fact(fact: str) -> str | None:
-    """画像入力カードの事実確認（対話モード）。y=採用 / e=修正 / n=スキップ。"""
     print(f"\n  抽出した『覚えたい事実』:\n    {fact}")
     while True:
         answer = input("  この事実で正しいですか? [y=採用 / e=修正 / n=スキップ] > ").strip().lower()
@@ -51,14 +128,73 @@ def _confirm_fact(fact: str) -> str | None:
                 return edited
 
 
+def process_card_chains(notion: NotionClient, card: MemoryCard, anchors: list,
+                        args: argparse.Namespace, stats: dict) -> None:
+    card.images = notion.fetch_card_images(card.page_id)
+    if card.images:
+        print(f"  画像添付 {len(card.images)} 枚を取得")
+
+    fact = chain.extract_fact(card)
+    if card.images and not args.yes:
+        confirmed = _confirm_fact(fact)
+        if confirmed is None:
+            stats["skipped"] += 1
+            print("  スキップしました。")
+            return
+        fact = confirmed
+    else:
+        print(f"  覚えたい事実: {fact}")
+
+    proposals = chain.generate_chains(fact, card, anchors)
+    result = gate.verify(fact, proposals, anchors, has_images=bool(card.images))
+
+    if not result.ok:
+        stats["gate_ng"] += 1
+        print("  ✗ 事実照合ゲートNG。書き込みません（何も作らないほうがマシ）:")
+        for issue in result.issues:
+            print(f"    - {issue}")
+        return
+
+    kept = [proposals[i] for i in result.kept_indices] or proposals
+    if len(kept) < len(proposals):
+        print(f"  ⚠ {len(proposals) - len(kept)} 案は技術的誤りのため除外:")
+        for issue in result.issues:
+            print(f"    - {issue}")
+    proposals = kept
+
+    mermaids = [skeleton.to_mermaid(p) for p in proposals]
+
+    if args.dry_run:
+        print("  [dry-run] 書き込みは行いません。生成結果:")
+        for i, (p, mm) in enumerate(zip(proposals, mermaids), 1):
+            print(f"\n  --- 案{i} ---")
+            print(f"  アンカー: {' / '.join(p.anchors)}")
+            print(f"  連想鎖:   {p.chain}")
+            if p.rationale:
+                print(f"  根拠:     {p.rationale}")
+            print("  " + mm.replace("\n", "\n  "))
+        return
+
+    notion.write_result(card, fact, proposals, mermaids, result)
+    notion.mark_anchors_used(proposals[0].anchors, card, anchors)
+    stats["written"] += 1
+    note = "（⚠️ 事実は要目視確認の注記つき）" if result.needs_human else ""
+    print(f"  ✓ 書き込み完了{note}。状態=一言待ち。")
+    print("    →「自分の一言」を Notion で手書きしたら状態を「運用中」にして、Ping-t へ戻ってください。")
+
+
+# ---------------------------------------------------------------------------
+
 def run(args: argparse.Namespace) -> int:
     _load_dotenv()
     notion = NotionClient()
 
-    print("アンカー台帳を取得中...")
-    anchors = notion.fetch_anchors()
-    usable = [a for a in anchors if not a.used_by]
-    print(f"  採用アンカー {len(anchors)} 件（うち未使用 {len(usable)} 件）")
+    anchors = []
+    if args.chains:
+        print("アンカー台帳を取得中...")
+        anchors = notion.fetch_anchors()
+        usable = [a for a in anchors if not a.used_by]
+        print(f"  採用アンカー {len(anchors)} 件（うち未使用 {len(usable)} 件）")
 
     if args.card:
         cards = [notion.fetch_card(args.card)]
@@ -75,62 +211,10 @@ def run(args: argparse.Namespace) -> int:
         stats["processed"] += 1
         print(f"\n=== {card.title} ===")
         try:
-            card.images = notion.fetch_card_images(card.page_id)
-            if card.images:
-                print(f"  画像添付 {len(card.images)} 枚を取得")
-
-            fact = chain.extract_fact(card)
-
-            # 画像入力の事実確認（CLAUDE.md「順序を死守」）。
-            # --yes（無人バッチ）では確認せず、後段の gate 照合が代替になる。
-            if card.images and not args.yes:
-                confirmed = _confirm_fact(fact)
-                if confirmed is None:
-                    stats["skipped"] += 1
-                    print("  スキップしました。")
-                    continue
-                fact = confirmed
+            if args.chains:
+                process_card_chains(notion, card, anchors, args, stats)
             else:
-                print(f"  覚えたい事実: {fact}")
-
-            proposals = chain.generate_chains(fact, card, anchors)
-            result = gate.verify(fact, proposals, anchors, has_images=bool(card.images))
-
-            if not result.ok:
-                stats["gate_ng"] += 1
-                print("  ✗ 事実照合ゲートNG。書き込みません（何も作らないほうがマシ）:")
-                for issue in result.issues:
-                    print(f"    - {issue}")
-                continue
-
-            # 誤りが指摘された案は除外し、無傷の案だけ残す
-            kept = [proposals[i] for i in result.kept_indices] or proposals
-            if len(kept) < len(proposals):
-                print(f"  ⚠ {len(proposals) - len(kept)} 案は技術的誤りのため除外:")
-                for issue in result.issues:
-                    print(f"    - {issue}")
-            proposals = kept
-
-            mermaids = [skeleton.to_mermaid(p) for p in proposals]
-
-            if args.dry_run:
-                print("  [dry-run] 書き込みは行いません。生成結果:")
-                for i, (p, mm) in enumerate(zip(proposals, mermaids), 1):
-                    print(f"\n  --- 案{i} ---")
-                    print(f"  アンカー: {' / '.join(p.anchors)}")
-                    print(f"  連想鎖:   {p.chain}")
-                    if p.rationale:
-                        print(f"  根拠:     {p.rationale}")
-                    print("  " + mm.replace("\n", "\n  "))
-                continue
-
-            notion.write_result(card, fact, proposals, mermaids, result)
-            notion.mark_anchors_used(proposals[0].anchors, card, anchors)
-            stats["written"] += 1
-            note = "（⚠️ 事実は要目視確認の注記つき）" if result.needs_human else ""
-            print(f"  ✓ 書き込み完了{note}。状態=一言待ち。")
-            print("    →「自分の一言」を Notion で手書きしたら状態を「運用中」にして、Ping-t へ戻ってください。")
-
+                process_card_mindmap(notion, card, args, stats)
         except KeyboardInterrupt:
             print("\n中断しました。")
             break
@@ -150,16 +234,17 @@ def run(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="memory-gallery",
-        description="記憶カードに連想鎖3案＋Mermaidを生成して書き戻す（v1: 画像生成なし）",
+        description="覚えたい素材を手描き風マインドマップ画像にして Notion ギャラリーに貯める",
     )
     sub = parser.add_subparsers(dest="command", required=True)
     run_parser = sub.add_parser("run", help="連想鎖が空の記憶カードを処理する")
-    run_parser.add_argument("--dry-run", action="store_true", help="書き込みなしで生成結果を表示")
+    run_parser.add_argument("--dry-run", action="store_true",
+                            help="構造抽出まで（作画・書き込みなし）")
     run_parser.add_argument("--card", metavar="PAGE_ID", help="特定カードだけ処理")
-    run_parser.add_argument(
-        "--yes", action="store_true",
-        help="無人バッチ（確認プロンプトなし。画像入力はgate照合を通った場合のみ書き込み）",
-    )
+    run_parser.add_argument("--yes", action="store_true",
+                            help="無人バッチ（確認プロンプトなし）")
+    run_parser.add_argument("--chains", action="store_true",
+                            help="v1 連想鎖モード（アンカー台帳ベース）")
     args = parser.parse_args(argv)
     return run(args)
 

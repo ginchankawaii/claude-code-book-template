@@ -6,3 +6,5 @@ services:
       # コード変更を再ビルドなしで反映
       - ./src:/app/src
       - ./tests:/app/tests
+      # 生成画像のローカル控え
+      - ./out:/app/out

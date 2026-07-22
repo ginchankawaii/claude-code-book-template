@@ -15,7 +15,8 @@ NOTION_API_BASE = "https://api.notion.com/v1"
 NOTION_VERSION = "2026-03-11"
 NOTION_RPS = 3  # レート制限 3 req/sec
 
-STATE_AWAITING_COMMENT = "一言待ち"  # 3案書き込み後のカード状態。「自分の一言」は絶対に自動化しない
+STATE_AWAITING_COMMENT = "一言待ち"  # 連想鎖モード: 3案書き込み後。「自分の一言」は絶対に自動化しない
+STATE_ACTIVE = "運用中"              # mindmapモード: 画像添付後（ギャラリー閲覧で運用）
 
 MAX_IMAGES_PER_CARD = 3
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 1枚あたり上限

@@ -414,6 +414,68 @@ class NotionClient:
                 json_body={"children": blocks[start : start + _BLOCK_APPEND_CHUNK]},
             )
 
+    def upload_file(self, filename: str, content: bytes,
+                    content_type: str = "image/png") -> str:
+        """File Upload API で画像等をアップロードし file_upload id を返す（20MB single_part）。"""
+        import requests  # 遅延 import
+
+        meta = self._request(
+            "POST", "/file_uploads",
+            json_body={"mode": "single_part", "filename": filename,
+                       "content_type": content_type},
+        )
+        upload_id = meta.get("id")
+        if not upload_id:
+            raise NotionAPIError(0, "/file_uploads", "no_id", "file_upload id が返りません")
+        upload_url = meta.get("upload_url") or f"{NOTION_API_BASE}/file_uploads/{upload_id}/send"
+        self._throttle()
+        resp = requests.post(
+            upload_url,
+            headers={"Authorization": f"Bearer {self._token}",
+                     "Notion-Version": self._version},
+            files={"file": (filename, content, content_type)},
+            timeout=120,
+        )
+        if resp.status_code >= 400:
+            raise NotionAPIError(resp.status_code, "/file_uploads/send", "upload_failed",
+                                 resp.text[:300])
+        return upload_id
+
+    def set_cover(self, page_id: str, file_upload_id: str) -> None:
+        """アップロード済みファイルをページカバーに設定する（ギャラリービュー用）。"""
+        self._request("PATCH", f"/pages/{page_id}", json_body={
+            "cover": {"type": "file_upload", "file_upload": {"id": file_upload_id}},
+        })
+
+    def append_image(self, page_id: str, file_upload_id: str, caption: str = "") -> None:
+        """アップロード済みファイルを本文に画像ブロックとして追記する。"""
+        image: dict = {"type": "file_upload", "file_upload": {"id": file_upload_id}}
+        if caption:
+            image["caption"] = _rich_text(caption)
+        self._request("PATCH", f"/blocks/{page_id}/children", json_body={
+            "children": [{"object": "block", "type": "image", "image": image}],
+        })
+
+    def write_mindmap_result(self, card: MemoryCard, mermaid: str, summary: str,
+                             issues: list[str], state: str) -> None:
+        """v2: 処理済みマーカーと Mermaid（検証用の正）を書き戻す。"""
+        properties = {
+            "連想鎖": {"rich_text": _rich_text(summary[:NOTION_RICH_TEXT_LIMIT])},
+            "状態": {"select": {"name": state}},
+        }
+        self._request("PATCH", f"/pages/{card.page_id}", json_body={"properties": properties})
+        blocks: list[dict] = [
+            {"object": "block", "type": "heading_2",
+             "heading_2": {"rich_text": _rich_text("マインドマップ（検証用の正）")}},
+            {"object": "block", "type": "code",
+             "code": {"language": "mermaid", "rich_text": _rich_text(mermaid)}},
+        ]
+        for issue in issues:
+            blocks.append({"object": "block", "type": "bulleted_list_item",
+                           "bulleted_list_item": {"rich_text": _rich_text(issue)}})
+        self._request("PATCH", f"/blocks/{card.page_id}/children",
+                      json_body={"children": blocks})
+
     def mark_anchors_used(self, anchor_names: list[str], card: MemoryCard,
                           anchors: list[Anchor]) -> None:
         """使用アンカーの「使用済み項目」relation にカードページを追記する（既存は保持）。"""

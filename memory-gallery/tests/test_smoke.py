@@ -177,6 +177,42 @@ class TestChainParseProposals(unittest.TestCase):
             _parse_proposals(text, "事実F")
 
 
+class TestMindmap(unittest.TestCase):
+    _MAP = {
+        "center": "OSPF LSAタイプ一覧",
+        "theme": "ルータ",
+        "branches": [
+            {"label": "タイプ1 (ルータリンク)", "emoji": "🔴",
+             "children": [{"label": "生成: 全ルータ"}, {"label": "コード: O"}]},
+            {"label": "タイプ5 (AS外部リンク)", "emoji": "🌍",
+             "children": [{"label": "生成: ASBR"}]},
+        ],
+    }
+
+    def test_mermaid_deterministic_and_sanitized(self):
+        from src.mindmap import to_mermaid_mindmap
+        first = to_mermaid_mindmap(self._MAP)
+        self.assertEqual(first, to_mermaid_mindmap(self._MAP))
+        self.assertTrue(first.startswith("mindmap"))
+        self.assertIn("root((OSPF LSAタイプ一覧))", first)
+        self.assertIn("タイプ1 （ルータリンク）", first)  # 半角括弧は全角へ
+        self.assertIn("生成: 全ルータ", first)
+
+    def test_image_prompt_contains_all_labels_verbatim(self):
+        from src.render import build_image_prompt
+        prompt = build_image_prompt(self._MAP)
+        for text in ["OSPF LSAタイプ一覧", "タイプ1 (ルータリンク)", "生成: 全ルータ",
+                     "コード: O", "タイプ5 (AS外部リンク)", "生成: ASBR"]:
+            self.assertIn(text, prompt)
+        self.assertIn("禁止", prompt)  # 事実の描き足し禁止が明記されている
+
+    def test_summary_line_lists_branches(self):
+        from src.mindmap import summary_line
+        line = summary_line(self._MAP)
+        self.assertIn("mindmap生成済み", line)
+        self.assertIn("タイプ1", line)
+
+
 class TestNotionParsers(unittest.TestCase):
     def test_parse_anchor_minimal(self):
         page = {
