@@ -39,13 +39,15 @@ _ANCHOR_STATUS_ADOPTED = "採用"
 
 
 class NotionAPIError(RuntimeError):
-    """Notion API がエラー status を返したとき。個人情報は含めない。"""
+    """Notion API がエラー status を返したとき。個人情報は含めない（APIのエラーメッセージのみ）。"""
 
-    def __init__(self, status: int, path: str, code: str = ""):
+    def __init__(self, status: int, path: str, code: str = "", message: str = ""):
         self.status = status
         self.path = path
         self.code = code
-        super().__init__(f"Notion API error {status} ({code or 'unknown'}) at {path}")
+        self.message = message
+        detail = f" | {message}" if message else ""
+        super().__init__(f"Notion API error {status} ({code or 'unknown'}) at {path}{detail}")
 
 
 # ---------------------------------------------------------------------------
@@ -198,11 +200,14 @@ class NotionClient:
                 continue
             if resp.status_code >= 400:
                 code = ""
+                message = ""
                 try:
-                    code = (resp.json() or {}).get("code", "")
+                    payload = resp.json() or {}
+                    code = payload.get("code", "")
+                    message = str(payload.get("message", ""))[:300]
                 except ValueError:
                     pass
-                raise NotionAPIError(resp.status_code, path, code)
+                raise NotionAPIError(resp.status_code, path, code, message)
             try:
                 return resp.json()
             except ValueError:
@@ -212,7 +217,7 @@ class NotionClient:
         """DBクエリ。data_sources を優先し、404/400 なら databases にフォールバック。
         has_more/next_cursor のページネーションで全件返す。"""
         paths = [f"/data_sources/{ds_id}/query", f"/databases/{db_id}/query"]
-        last_err: NotionAPIError | None = None
+        errors: list[NotionAPIError] = []
         for i, path in enumerate(paths):
             results: list[dict] = []
             cursor: str | None = None
@@ -231,12 +236,25 @@ class NotionClient:
                     if not cursor:
                         return results
             except NotionAPIError as e:
-                last_err = e
+                errors.append(e)
                 # APIバージョン差異への防御: 404/400 のときのみ次のエンドポイントへ
                 if e.status in (400, 404) and i + 1 < len(paths):
                     continue
                 raise
-        raise last_err if last_err else NotionAPIError(0, paths[-1], "unreachable")
+        # 両エンドポイントとも失敗。根本原因は最初（data_sources）のエラーの方。
+        primary = errors[0] if errors else NotionAPIError(0, paths[0], "unreachable")
+        hint = ""
+        if any(e.code == "object_not_found" for e in errors):
+            hint = (
+                "\n→ ヒント: 統合トークンは接続を付与したページしか見えません。"
+                "Notion で対象ページ（記憶ギャラリー）を開き、⋯ → 接続 → 作成したコネクトを追加してください。"
+            )
+        elif any(e.code in ("unauthorized", "restricted_resource") for e in errors):
+            hint = "\n→ ヒント: NOTION_TOKEN の値が正しいか確認してください（コピーミス・再生成後の旧トークン等）。"
+        details = " / ".join(str(e) for e in errors)
+        raise NotionAPIError(
+            primary.status, primary.path, primary.code, f"{details}{hint}"
+        )
 
     # -- 読み -------------------------------------------------------------
 
