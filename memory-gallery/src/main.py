@@ -103,6 +103,14 @@ def run(args: argparse.Namespace) -> int:
                     print(f"    - {issue}")
                 continue
 
+            # 誤りが指摘された案は除外し、無傷の案だけ残す
+            kept = [proposals[i] for i in result.kept_indices] or proposals
+            if len(kept) < len(proposals):
+                print(f"  ⚠ {len(proposals) - len(kept)} 案は技術的誤りのため除外:")
+                for issue in result.issues:
+                    print(f"    - {issue}")
+            proposals = kept
+
             mermaids = [skeleton.to_mermaid(p) for p in proposals]
 
             if args.dry_run:

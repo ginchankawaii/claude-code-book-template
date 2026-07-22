@@ -80,29 +80,40 @@ def _extract_json(text: str) -> dict:
     raise ValueError(f"応答からJSONを抽出できません: {text[:200]!r}")
 
 
-def llm_fact_check(fact: str, proposals: list[ChainProposal]) -> list[str]:
-    """懐疑モードの Claude で技術的断定を検証する。失敗時はNG扱いの issue を返す（素通し禁止）。"""
+def llm_fact_check(
+    fact: str, proposals: list[ChainProposal]
+) -> list[tuple[int | None, str]]:
+    """懐疑モードの Claude で技術的断定を検証する。
+
+    返り値は (案番号, 指摘) のリスト。案番号 None は事実そのものの誤り（全案NG級）。
+    失敗時は (None, NG理由) を返す（素通し禁止）。
+    """
     try:
         if not os.environ.get("ANTHROPIC_API_KEY"):
             raise RuntimeError("ANTHROPIC_API_KEY が未設定です")
         import anthropic  # 遅延 import
 
         chains = "\n".join(f"案{i}: {p.chain}" for i, p in enumerate(proposals, 1))
-        prompt = f"""あなたは CCNP ENCOR(350-401) の技術審査官です。以下の「覚えたい事実」と各連想鎖に含まれる技術的断定を、公式ブループリントの知識で厳密に検証してください。
+        prompt = f"""あなたは CCNP ENCOR(350-401) の技術審査官です。以下の「覚えたい事実」と各連想鎖に含まれる技術的断定を検証してください。
 
 # 覚えたい事実
 {fact}
 
-# 連想鎖（記憶用の連想です。技術的断定の部分だけを審査してください）
+# 連想鎖（記憶術の連想です）
 {chains}
 
-# 指示
-- 技術的に誤り・不正確・古い断定だけを具体的に指摘する（連想の面白さ・良し悪しは審査しない）
-- すべて正しければ issues は空配列にする
+# 審査基準（厳守）
+- 指摘するのは【技術的な断定が誤っている場合】のみ。
+- 個人的な記憶・比喩へのこじつけは記憶術として正当。審査しない。
+  ただし比喩が技術的な因果・理由として断定され、それが誤りの場合は指摘する
+  （例: 「エリア内に留まるのはTTLのせい」→ 実際はフラッディングスコープの仕様なので誤り）。
+- 説明の省略・不完全さ・網羅性の欠如は指摘しない（誤りではない）。
+- 「覚えたい事実」自体が誤っている場合は proposal を null にして指摘する。
+- 問題がなければ issues は空配列。
 
 # 出力形式（このJSONのみをコードフェンスで出力）
 ```json
-{{"issues": ["指摘1", "指摘2"]}}
+{{"issues": [{{"proposal": 2, "issue": "指摘内容"}}]}}
 ```"""
         client = anthropic.Anthropic()
         response = client.messages.create(
@@ -114,9 +125,17 @@ def llm_fact_check(fact: str, proposals: list[ChainProposal]) -> list[str]:
             b.text for b in response.content if getattr(b, "type", None) == "text"
         )
         data = _extract_json(text)
-        return [str(x) for x in data.get("issues") or []]
+        results: list[tuple[int | None, str]] = []
+        for item in data.get("issues") or []:
+            if isinstance(item, dict):
+                prop = item.get("proposal")
+                prop = int(prop) if isinstance(prop, (int, float)) else None
+                results.append((prop, str(item.get("issue") or "")))
+            else:  # 想定外の形式は全案NG級として扱う（防御）
+                results.append((None, str(item)))
+        return [(p, t) for p, t in results if t]
     except Exception as e:  # noqa: BLE001 - 失敗=素通しを防ぐため一括でNGに倒す
-        return [f"事実照合ゲートを実行できませんでした（素通し禁止のためNG扱い）: {e}"]
+        return [(None, f"事実照合ゲートを実行できませんでした（素通し禁止のためNG扱い）: {e}")]
 
 
 def verify(
@@ -125,9 +144,27 @@ def verify(
     anchors: list[Anchor],
     has_images: bool,
 ) -> GateResult:
-    """静的チェック＋LLM事実照合。静的チェックで違反があればLLMは呼ばない（すでにNG）。"""
-    issues = static_checks(fact, proposals, anchors)
-    if not issues:
-        issues = llm_fact_check(fact, proposals)
-    ok = not issues
-    return GateResult(ok=ok, issues=issues, needs_human=bool(has_images) or not ok)
+    """静的チェック＋LLM事実照合。
+
+    - 静的チェック違反（構造の問題）→ 全案NG
+    - 事実そのものの誤り／ゲート実行不能 → 全案NG
+    - 特定の案の技術的誤り → その案だけ除外し、無傷の案は kept_indices に残す
+    """
+    static_issues = static_checks(fact, proposals, anchors)
+    if static_issues:
+        return GateResult(ok=False, issues=static_issues, needs_human=True, kept_indices=[])
+
+    llm_issues = llm_fact_check(fact, proposals)
+    fatal = [t for p, t in llm_issues if p is None or not (1 <= p <= len(proposals))]
+    bad_numbers = {p for p, _ in llm_issues if p is not None and 1 <= p <= len(proposals)}
+    kept = [i for i in range(len(proposals)) if (i + 1) not in bad_numbers]
+    texts = [f"案{p}: {t}" if p else t for p, t in llm_issues]
+
+    if fatal or not kept:
+        return GateResult(ok=False, issues=texts, needs_human=True, kept_indices=[])
+    return GateResult(
+        ok=True,
+        issues=texts,  # 除外した案の理由（書き込み時に記録される）
+        needs_human=bool(has_images) or bool(texts),
+        kept_indices=kept,
+    )

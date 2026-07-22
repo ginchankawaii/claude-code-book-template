@@ -360,7 +360,9 @@ class NotionClient:
                 "object": "block",
                 "type": "heading_2",
                 "heading_2": {
-                    "rich_text": _rich_text("連想鎖 3案（自分の一言を書いたら状態を運用中に）")
+                    "rich_text": _rich_text(
+                        f"連想鎖 {len(proposals)}案（自分の一言を書いたら状態を運用中に）"
+                    )
                 },
             },
             {

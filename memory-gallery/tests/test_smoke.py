@@ -113,6 +113,40 @@ class TestGateStaticChecks(unittest.TestCase):
         self.assertEqual(gate.static_checks("事実F", proposals, ledger), [])
 
 
+class TestGateVerifyFiltering(unittest.TestCase):
+    """LLM照合の案別フィルタリング（llm_fact_check をモックしてネットワークなしで検証）。"""
+
+    def _with_mock(self, mock_issues):
+        original = gate.llm_fact_check
+        gate.llm_fact_check = lambda fact, proposals: mock_issues
+        try:
+            return gate.verify("事実F", _ok_proposals(), _ledger(), has_images=False)
+        finally:
+            gate.llm_fact_check = original
+
+    def test_clean_pass_keeps_all(self):
+        result = self._with_mock([])
+        self.assertTrue(result.ok)
+        self.assertEqual(result.kept_indices, [0, 1, 2])
+        self.assertFalse(result.needs_human)
+
+    def test_bad_proposal_dropped_others_kept(self):
+        result = self._with_mock([(2, "案2の技術的誤り")])
+        self.assertTrue(result.ok)
+        self.assertEqual(result.kept_indices, [0, 2])
+        self.assertTrue(result.needs_human)  # 指摘があるので要目視
+
+    def test_fact_level_issue_blocks_all(self):
+        result = self._with_mock([(None, "覚えたい事実そのものが誤り")])
+        self.assertFalse(result.ok)
+        self.assertEqual(result.kept_indices, [])
+
+    def test_all_proposals_bad_blocks_all(self):
+        result = self._with_mock([(1, "誤り"), (2, "誤り"), (3, "誤り")])
+        self.assertFalse(result.ok)
+        self.assertEqual(result.kept_indices, [])
+
+
 class TestChainParseProposals(unittest.TestCase):
     _JSON = (
         '{"proposals": ['

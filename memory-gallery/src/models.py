@@ -69,7 +69,11 @@ class ChainProposal:
 
 @dataclass
 class GateResult:
-    """事実照合ゲートの結果。ok=False のカードには書き込まない（何も作らないほうがマシ）。"""
+    """事実照合ゲートの結果。ok=False のカードには書き込まない（何も作らないほうがマシ）。
+
+    ok=True でも誤りのある案は kept_indices から除外される（無傷の案だけ書き込む）。
+    """
     ok: bool
     issues: list[str] = field(default_factory=list)
     needs_human: bool = True  # 画像入力時は常に True（入口の誤読はハルシネーション経路）
+    kept_indices: list[int] = field(default_factory=list)  # 書き込んでよい案のインデックス
