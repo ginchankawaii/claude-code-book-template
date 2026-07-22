@@ -237,8 +237,9 @@ class NotionClient:
                         return results
             except NotionAPIError as e:
                 errors.append(e)
-                # APIバージョン差異への防御: 404/400 のときのみ次のエンドポイントへ
-                if e.status in (400, 404) and i + 1 < len(paths):
+                # APIバージョン差異への防御: 404/400 は次の候補へ。
+                # 最後の候補でも raise せず for を抜け、下の統合エラー（根本原因つき）に到達させる。
+                if e.status in (400, 404):
                     continue
                 raise
         # 両エンドポイントとも失敗。根本原因は最初（data_sources）のエラーの方。
