@@ -14,6 +14,19 @@ import re
 from .models import Anchor, ChainProposal, GateResult, anthropic_model
 
 
+def _name_variants(name: str) -> list[str]:
+    """アンカー名の許容表記。台帳名そのもの＋括弧の補足を除いた短縮形（例: 銀ちゃん（柴）→ 銀ちゃん）。"""
+    variants = [name]
+    base = re.sub(r"[（(].*?[）)]", "", name).strip()
+    if base and base != name:
+        variants.append(base)
+    return variants
+
+
+def _appears_in(name: str, chain_text: str) -> bool:
+    return any(v in chain_text for v in _name_variants(name))
+
+
 def static_checks(
     fact: str, proposals: list[ChainProposal], anchors: list[Anchor]
 ) -> list[str]:
@@ -44,7 +57,7 @@ def static_checks(
         if "感情" not in kinds:
             issues.append(f"案{idx}: 感情アンカーが含まれていません（ルール#4）")
         for name in p.anchors:
-            if name not in p.chain:
+            if not _appears_in(name, p.chain):
                 issues.append(f"案{idx}: アンカー「{name}」が連想鎖の文中に現れません")
         anchor_sets.append(frozenset(p.anchors))
 

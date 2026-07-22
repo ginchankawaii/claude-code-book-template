@@ -103,6 +103,15 @@ class TestGateStaticChecks(unittest.TestCase):
         issues = gate.static_checks("事実F", proposals, _ledger())
         self.assertTrue(any("文中に現れません" in i for i in issues))
 
+    def test_anchor_short_form_accepted(self):
+        # 台帳名「アンカーG（犬）」に対し、鎖では短縮形「アンカーG」でも一致とみなす
+        ledger = _ledger() + [
+            Anchor(page_id="p7", name="アンカーG（犬）", kinds=["属性", "感情"], status="採用")
+        ]
+        proposals = _ok_proposals()
+        proposals[0] = _proposal(["アンカーG（犬）"], "アンカーG → 吠える → 事実F")
+        self.assertEqual(gate.static_checks("事実F", proposals, ledger), [])
+
 
 class TestChainParseProposals(unittest.TestCase):
     _JSON = (
