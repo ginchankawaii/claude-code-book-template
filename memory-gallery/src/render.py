@@ -100,5 +100,7 @@ def render_mindmap_image(mindmap: dict) -> tuple[bytes, str]:
             f"モデル「{model}」が見つかりません(404)。.env の GEMINI_IMAGE_MODEL を修正してください。{hint}"
         )
     if resp.status_code >= 400:
-        raise RuntimeError(f"Gemini API エラー {resp.status_code}: {resp.text[:300]}")
+        raise RuntimeError(
+            f"Gemini API エラー {resp.status_code} (model={model}): {resp.text[:1500]}"
+        )
     return _extract_image(resp.json())

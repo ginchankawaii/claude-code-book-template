@@ -87,7 +87,7 @@ def process_card_mindmap(notion: NotionClient, card: MemoryCard,
         print("  " + mermaid.replace("\n", "\n  "))
         return
 
-    print("  Nano Banana で作画中...（数十秒かかります）")
+    print(f"  Nano Banana ({render.gemini_image_model()}) で作画中...（数十秒かかります）")
     image_bytes, mime = render.render_mindmap_image(structure)
     ext = "png" if "png" in mime else mime.split("/")[-1]
     os.makedirs(OUT_DIR, exist_ok=True)
