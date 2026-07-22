@@ -3,7 +3,23 @@
 Ping-t で繰り返し落ちる項目に、個人アンカー経由の連想鎖を張る記憶符号化システム。
 設計・制約は **CLAUDE.md（引き継ぎ書）が正**。v1 ＝ 連想鎖＋Mermaid のみ（画像生成 L3 は測定ゲート後）。
 
-## セットアップ
+## セットアップ（Docker 推奨）
+
+```bash
+cp .env.example .env   # NOTION_TOKEN / ANTHROPIC_API_KEY を記入
+docker compose build
+docker compose run --rm mg python -m src.main run --dry-run   # 動作確認
+```
+
+夜間バッチや対話実行も同じ形:
+
+```bash
+docker compose run --rm mg python -m src.main run          # 対話（画像カードの事実確認あり）
+docker compose run --rm mg python -m src.main run --yes    # 無人バッチ
+docker compose run --rm mg python -m unittest discover -s tests   # テスト
+```
+
+### Docker を使わない場合
 
 ```bash
 pip install -r requirements.txt

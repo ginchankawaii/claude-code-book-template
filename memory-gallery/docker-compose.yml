@@ -1,0 +1,8 @@
+services:
+  mg:
+    build: .
+    env_file: .env
+    volumes:
+      # コード変更を再ビルドなしで反映
+      - ./src:/app/src
+      - ./tests:/app/tests
