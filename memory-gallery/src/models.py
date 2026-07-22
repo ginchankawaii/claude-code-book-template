@@ -23,7 +23,7 @@ NOTION_RICH_TEXT_LIMIT = 2000      # rich_text 1要素の文字数上限
 
 
 def anthropic_model() -> str:
-    return os.environ.get("MEMORY_GALLERY_MODEL", "claude-sonnet-5")
+    return os.environ.get("MEMORY_GALLERY_MODEL", "claude-opus-4-8")
 
 
 @dataclass
