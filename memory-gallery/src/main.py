@@ -207,6 +207,15 @@ def process_card_mindmap(notion: NotionClient, card: MemoryCard, anchors: list,
                 print(f"    {line}")
         return
 
+    leaks = graph.mindmap_label_leaks(structure, anchors)
+    if leaks:
+        stats["gate_ng"] += 1
+        print("  ✗ マップのラベルに絵に出せない個人的な名前が含まれるため作画を中止します（fail-closed）:")
+        for label in leaks:
+            print(f"    - {label}")
+        print("    素材から名前を外す（または台帳の「絵に出してOK」をチェックする）と作画できます。")
+        return
+
     print(f"  Nano Banana ({render.gemini_image_model()}) で作画中...（数十秒かかります）")
     image_bytes, mime = render.render_mindmap_image(structure, links)
     ext = "png" if "png" in mime else mime.split("/")[-1]

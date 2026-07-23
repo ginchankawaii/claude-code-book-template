@@ -221,6 +221,28 @@ def verify_link_claims(links: list[dict], center: str) -> tuple[list[dict], list
         return [], [f"結線の事実照合を実行できなかったため結線なしで続行します: {e}"]
 
 
+def mindmap_label_leaks(mindmap: dict, anchors: list[Anchor]) -> list[str]:
+    """マップのラベル（中央・枝・子）に「絵に出してはいけない」アンカー名が無いか検査する。
+
+    build_image_prompt はラベルを一字一句そのまま画像APIへ送るため、素材の汚染などで
+    個人名がラベルに紛れた場合はここで検出し、**作画自体を中止**する（fail-closed）。
+    static_check_links が守るのは links[].visual / 道標だけで、ラベルはこの関数が守る。
+    """
+    forbidden: set[str] = set()
+    for a in anchors:
+        if a.image_ok:
+            continue
+        for variant in _name_variants(a.name):
+            if len(variant) >= 2:
+                forbidden.add(variant)
+    labels = [str(mindmap.get("center") or "")]
+    for branch in mindmap.get("branches") or []:
+        labels.append(str(branch.get("label") or ""))
+        for child in branch.get("children") or []:
+            labels.append(str(child.get("label") or ""))
+    return [label for label in labels if any(w in label for w in forbidden)]
+
+
 def links_body_lines(links: list[dict]) -> list[str]:
     """Notion 本文に記録する結線の説明行（人名可・本人だけが読む）。"""
     lines = []

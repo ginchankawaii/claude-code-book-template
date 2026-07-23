@@ -462,6 +462,45 @@ class TestNotionWrites(unittest.TestCase):
         self.assertIn("本文の素材1", text)
         self.assertIn("タイプ1 | 全ルータ", text)
 
+    def test_fetch_card_text_excludes_system_blocks(self):
+        """自己汚染ループ対策: 🔗 結線文・生成結果見出し以降を素材として再取込しない。"""
+        client = self._client()
+
+        def fake_request(method, path, json_body=None, params=None, version=None):
+            return {"results": [
+                {"type": "paragraph",
+                 "paragraph": {"rich_text": [{"plain_text": "本人が貼った素材"}]}},
+                {"type": "callout",
+                 "callout": {"rich_text": [{"plain_text": "🔗 枝A ← 個人名X: 理由文"}]}},
+                {"type": "bulleted_list_item",
+                 "bulleted_list_item": {"rich_text": [
+                     {"plain_text": "🆕 インタビューで新アンカー「個人名X」を台帳に追加"}]}},
+                {"type": "heading_2",
+                 "heading_2": {"rich_text": [{"plain_text": "マインドマップ（検証用の正）"}]}},
+                {"type": "paragraph",
+                 "paragraph": {"rich_text": [{"plain_text": "見出し以降のシステム出力"}]}},
+            ], "has_more": False}
+
+        client._request = fake_request
+        text = client.fetch_card_text("page-1")
+        self.assertEqual(text, "本人が貼った素材")
+
+    def test_write_mindmap_result_clears_anchor_property_when_no_links(self):
+        """結線ゼロの再処理で旧アンカー名が property に残留しないこと（無条件上書き）。"""
+        from src.models import MemoryCard
+        client = self._client()
+        calls = []
+
+        def fake_request(method, path, json_body=None, params=None, version=None):
+            calls.append((method, path, json_body))
+            return {}
+
+        client._request = fake_request
+        card = MemoryCard(page_id="card-1", title="t")
+        client.write_mindmap_result(card, "mindmap", "サマリ", issues=[], state="運用中")
+        patch = next(c for c in calls if c[1] == "/pages/card-1")
+        self.assertEqual(patch[2]["properties"]["アンカー"]["rich_text"], [])
+
 
 class TestImageOkAndTheme(unittest.TestCase):
     """v3.2: 「絵に出してOK」による遮断の選別と、テーマ結線（世界観）の制約。"""
@@ -529,6 +568,21 @@ class TestImageOkAndTheme(unittest.TestCase):
             {"node": "枝A", "anchor": "番号キャラ", "reason": "r", "visual": "挿絵"},
         ])
         self.assertNotIn("# 世界観", prompt)
+
+    def test_mindmap_label_leak_detected(self):
+        """素材汚染などでラベルに個人名が入ったら作画前に検出されること（fail-closed）。"""
+        from src.graph import mindmap_label_leaks
+        contaminated = {
+            "center": "テーマX",
+            "branches": [{"label": "タロウが重い", "children": [{"label": "無害な子"}]}],
+        }
+        leaks = mindmap_label_leaks(contaminated, self._ledger())
+        self.assertEqual(leaks, ["タロウが重い"])
+
+    def test_mindmap_label_image_ok_name_not_flagged(self):
+        from src.graph import mindmap_label_leaks
+        m = {"center": "番号キャラ図鑑", "branches": [{"label": "枝A"}]}
+        self.assertEqual(mindmap_label_leaks(m, self._ledger()), [])
 
 
 class TestInterview(unittest.TestCase):

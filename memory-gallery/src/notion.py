@@ -44,6 +44,12 @@ _TEXT_BLOCK_TYPES = (
     "toggle", "code",
 )
 
+# 自分（システム）が書き戻したブロックを素材として再取込しないための目印。
+# 🔗 callout（結線文・人名入り）等が --card 再処理でラベル→画像プロンプトへ漏れる
+# 自己汚染ループの遮断（本文の素材＝本人が貼ったものだけ、を維持する）。
+_SYSTEM_TEXT_PREFIXES = ("🔗", "🆕", "🗺", "📌")
+_SYSTEM_HEADINGS = ("マインドマップ（検証用の正）", "連想鎖 ")
+
 
 class NotionAPIError(RuntimeError):
     """Notion API がエラー status を返したとき。個人情報は含めない（APIのエラーメッセージのみ）。"""
@@ -385,10 +391,12 @@ class NotionClient:
 
         v2 の「素材＝テキスト」の入口。build_mindmap / verify_mindmap には
         ここで取得した同一の素材を渡すこと（画像は fetch_card_images が担う）。
+        システムが書き戻したブロック（🔗 結線文・生成結果見出し以降）は素材にしない。
         """
         lines: list[str] = []
         cursor: str | None = None
-        while True:
+        stop = False
+        while not stop:
             params: dict = {"page_size": 100}
             if cursor:
                 params["start_cursor"] = cursor
@@ -397,8 +405,16 @@ class NotionClient:
                 btype = block.get("type")
                 if btype in _TEXT_BLOCK_TYPES:
                     text = _plain_text((block.get(btype) or {}).get("rich_text"))
-                    if text.strip():
-                        lines.append(text)
+                    stripped = text.strip()
+                    if not stripped:
+                        continue
+                    if btype in ("heading_1", "heading_2", "heading_3") and \
+                            stripped.startswith(_SYSTEM_HEADINGS):
+                        stop = True  # 生成結果の見出し以降はすべてシステム出力
+                        break
+                    if stripped.startswith(_SYSTEM_TEXT_PREFIXES):
+                        continue  # 結線文・生成マーカー行は素材にしない
+                    lines.append(text)
                 elif btype == "table":
                     try:
                         lines.extend(self._fetch_table_rows(block.get("id", "")))
@@ -607,9 +623,10 @@ class NotionClient:
         properties = {
             "連想鎖": {"rich_text": _rich_text((chain_text or summary)[:NOTION_RICH_TEXT_LIMIT])},
             "状態": {"select": {"name": state}},
+            # 結線ゼロでも必ず上書きする（再処理時に旧アンカー名が残留すると
+            # 「結線済み」に見えてしまう。空なら property をクリア）。
+            "アンカー": {"rich_text": _rich_text(" / ".join(anchor_names or []))},
         }
-        if anchor_names:
-            properties["アンカー"] = {"rich_text": _rich_text(" / ".join(anchor_names))}
         self._request("PATCH", f"/pages/{card.page_id}", json_body={"properties": properties})
         blocks: list[dict] = []
         if link_lines:
