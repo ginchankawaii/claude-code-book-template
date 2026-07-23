@@ -39,7 +39,7 @@ class Anchor:
     strength: str = ""                              # 強度: 弱/中/強
     status: str = ""                                # 状態: 候補/採用
     used_by: list[str] = field(default_factory=list)  # 使用済み項目（記憶カードのURL/ID）
-    image_ok: bool = False  # 絵に出してOK: 本人がチェックした行だけ名前を画像プロンプトに出せる
+    no_image: bool = False  # 絵に出さない: チェックした行だけ名前を絵から遮断（既定＝固有名詞OK。本人専用のため）
 
 
 @dataclass

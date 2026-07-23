@@ -31,7 +31,7 @@ def propose_links(
        "related_card": 既存カード項目名 or null,
        "scope": "spot"（挿絵）or "theme"（絵全体の世界観。最大1個）,
        "reason": なぜ効くか（Notion本文用。人名可）,
-       "visual": 絵に描く描写。名前を文字で出せるのは「絵に出してOK」なアンカーだけ}
+       "visual": 絵に描く描写。固有名詞OK（「絵に出さない」指定のアンカー名だけ不可）}
     """
     usable = [
         a for a in anchors
@@ -41,7 +41,7 @@ def propose_links(
         return []
     ledger_rows = "\n".join(
         f"| {a.name} | {'/'.join(a.kinds)} | {a.body} | {a.emotion} | {a.connection} |"
-        + (" 名前を絵に出してOK |" if a.image_ok else " 名前は絵に出さない |")
+        + (" 名前は絵に出さない |" if a.no_image else " 名前OK |")
         + (" 使用済み |" if a.used_by else " 未使用 |")
         for a in usable
     )
@@ -73,10 +73,9 @@ def propose_links(
 - scope: 通常は "spot"（ノード脇の挿絵）。**体系アンカーがマップ全体と噛み合うときだけ** "theme" を最大1個
   （node="center"）。theme はマップ全体をそのアンカーの世界観（例: 図鑑風ページ・レース会場風）で描かせる。一番強い
 - reason: なぜこの結線で覚えられるかを1文で（本人だけが読む。固有名詞可）
-- visual: 絵に描く描写。「名前を絵に出してOK」のアンカーだけは名前・世界観の文字を出してよい
-  （例:「ポケモン図鑑風のページ、各タイプにNo.つきモンスター」）。
-  それ以外は**人名・ペット名・固有エピソードの文字は禁止**。一般名詞のイメージだけで書く
-  （例:「吠える柴犬」「頬袋を膨らませたハムスター」）
+- visual: 絵に描く描写。**本人だけが見るギャラリーなので、人名・固有名詞・エピソードの言葉を入れてよい**
+  （例:「ポケモン図鑑風のページ、各タイプにNo.つきモンスター」「頬袋をぱんぱんにしたハムスターのチョコ」）。
+  ただし「名前は絵に出さない」印のアンカーだけは、名前を文字にせずイメージで描く
 - 迷ったら結線しない。無理なこじつけはゼロ個でよい
 
 # 出力形式（このJSONのみをコードフェンスで出力）
@@ -85,12 +84,19 @@ def propose_links(
   "related_card": "既習カード名またはnull", "scope": "spotまたはtheme",
   "reason": "1文", "visual": "描写"}}]}}
 ```"""
-    response = _client().messages.create(
-        model=anthropic_model(),
-        max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    data = _extract_json(_response_text(response))
+    data = None
+    for attempt in range(2):  # 出力JSONの破損（トークン切れ・エスケープ漏れ）は1回だけ再生成
+        response = _client().messages.create(
+            model=anthropic_model(),
+            max_tokens=3000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        try:
+            data = _extract_json(_response_text(response))
+            break
+        except ValueError:
+            if attempt == 1:
+                raise
     links = [x for x in (data.get("links") or []) if isinstance(x, dict)]
     return links[:MAX_LINKS]
 
@@ -106,13 +112,12 @@ def static_check_links(
     labels = {str(b.get("label", "")).strip() for b in mindmap.get("branches") or []}
     labels.add("center")
     card_titles = {c.title for c in other_cards}
-    # 禁止語は種別を問わず**「絵に出してOK」がオフの全アンカー**の名前から集める。
-    # 属性アンカーにもペット名・家族名（例: 「銀ちゃん（柴）」）が登録されるため、
-    # 人物/感情に限定すると固有名が画像プロンプトへ漏れる（CLAUDE.md v3 の静的遮断の約束）。
-    # image_ok は既定オフ・本人がチェックした行だけオン（新規アンカーも自動では絶対にオンにしない）。
+    # 本人決定（2026-07-23）: 本人しか見ないギャラリーのため**固有名詞は絵に出してよいが既定**。
+    # 例外として台帳の「絵に出さない」をチェックした行だけ、名前を画像プロンプトから遮断する。
+    # （機械が新規アンカーにこのチェックを付けたり外したりすることはない）
     forbidden_words: set[str] = set()
     for a in anchors:
-        if a.image_ok:
+        if not a.no_image:
             continue
         for variant in _name_variants(a.name):
             if len(variant) >= 2:
@@ -148,7 +153,7 @@ def static_check_links(
         leaked = [w for w in forbidden_words if w in visual]
         if leaked:
             issues.append(
-                f"結線除外: 「{node}」の挿絵描写に個人的な名前が含まれています（絵はイメージのみ）"
+                f"結線除外: 「{node}」の挿絵描写に「絵に出さない」指定の名前が含まれています"
             )
             continue
         # 既習カードのタイトルが個人語（アンカー名と一致・包含）の場合、結線（relation・本文記録）は
@@ -222,15 +227,15 @@ def verify_link_claims(links: list[dict], center: str) -> tuple[list[dict], list
 
 
 def mindmap_label_leaks(mindmap: dict, anchors: list[Anchor]) -> list[str]:
-    """マップのラベル（中央・枝・子）に「絵に出してはいけない」アンカー名が無いか検査する。
+    """マップのラベル（中央・枝・子）に「絵に出さない」指定のアンカー名が無いか検査する。
 
     build_image_prompt はラベルを一字一句そのまま画像APIへ送るため、素材の汚染などで
-    個人名がラベルに紛れた場合はここで検出し、**作画自体を中止**する（fail-closed）。
+    遮断指定の名前がラベルに紛れた場合はここで検出し、**作画自体を中止**する（fail-closed）。
     static_check_links が守るのは links[].visual / 道標だけで、ラベルはこの関数が守る。
     """
     forbidden: set[str] = set()
     for a in anchors:
-        if a.image_ok:
+        if not a.no_image:
             continue
         for variant in _name_variants(a.name):
             if len(variant) >= 2:

@@ -29,7 +29,8 @@ def build_image_prompt(mindmap: dict, links: list[dict] | None = None) -> str:
     """構造を一字一句埋め込んだ作画指示を決定論的に組み立てる（テスト可能な純関数）。
 
     links の visual は該当ノードの近くの挿絵（spot）、または絵全体の世界観（theme・最大1個）。
-    visual に固有名を書けるのは「絵に出してOK」なアンカーだけ（graph.static_check_links が遮断済み）。
+    visual には固有名詞を書いてよい（本人専用）。「絵に出さない」指定のアンカー名だけは
+    graph.static_check_links / mindmap_label_leaks が遮断済み。
     """
     links = links or []
     theme_link = next((l for l in links if str(l.get("scope") or "") == "theme"), None)

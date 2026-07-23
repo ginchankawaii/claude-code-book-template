@@ -37,6 +37,28 @@ def _load_dotenv(path: str = ".env") -> None:
                 os.environ.setdefault(key, value)
 
 
+def _input(prompt: str) -> str:
+    """input() のラッパ。Windows コンソール（cp932）由来のサロゲート文字を復元する。
+
+    docker compose run の TTY 経由で日本語を打つと、cp932 のバイト列が UTF-8 の
+    surrogateescape で化けて入ることがある（そのまま API へ送ると
+    'surrogates not allowed' で落ちる）。バイト列に戻して cp932 → utf-8 の順で
+    復号を試み、日本語の回答を正しく取り出す。
+    """
+    text = input(prompt)
+    try:
+        text.encode("utf-8")
+        return text
+    except UnicodeEncodeError:
+        raw = text.encode("utf-8", "surrogateescape")
+        for encoding in ("cp932", "utf-8"):
+            try:
+                return raw.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        return raw.decode("utf-8", "replace")
+
+
 def _safe_filename(title: str) -> str:
     name = re.sub(r"[^\w぀-ヿ一-鿿-]+", "_", title).strip("_")
     return (name or "mindmap")[:60]
@@ -72,7 +94,7 @@ def _propose_links(structure: dict, card: MemoryCard, anchors: list,
                 print(f"       {link.get('reason', '')}")
                 print(f"       挿絵: {link.get('visual', '')}")
             if not args.yes and not args.dry_run:
-                answer = input("  この結線を使いますか? [y=使う / n=結線なしで続行] > ").strip().lower()
+                answer = _input("  この結線を使いますか? [y=使う / n=結線なしで続行] > ").strip().lower()
                 if answer != "y":
                     return [], notes
         else:
@@ -107,7 +129,7 @@ def _interview_anchor(notion: NotionClient, structure: dict, card: MemoryCard,
     print(f"  Q. {q['question']}")
     if q.get("hints"):
         print(f"     （例えばこんな方向: {' / '.join(q['hints'])}）")
-    answer = input("  A. 思い浮かんだ体験をひと言（Enterのみ=スキップ） > ").strip()
+    answer = _input("  A. 思い浮かんだ体験をひと言（Enterのみ=スキップ） > ").strip()
     if not answer:
         print("  スキップしました（台帳はそのまま）。")
         return links, []
@@ -126,7 +148,7 @@ def _interview_anchor(notion: NotionClient, structure: dict, card: MemoryCard,
     print(f"    接続先:   {row['connection']}")
     print(f"    結線先:   {q['node']} — {row['reason']}")
     print(f"    挿絵:     {row['visual']}")
-    confirm = input("  この記憶を台帳に追加（状態=採用）して結線しますか? [y/n] > ").strip().lower()
+    confirm = _input("  この記憶を台帳に追加（状態=採用）して結線しますか? [y/n] > ").strip().lower()
     if confirm != "y":
         print("  追加しませんでした。")
         return links, []
@@ -179,7 +201,7 @@ def process_card_mindmap(notion: NotionClient, card: MemoryCard, anchors: list,
     _print_structure(structure)
 
     if not args.yes and not args.dry_run:
-        answer = input("  この構造で作画しますか? [y=作画 / n=スキップ] > ").strip().lower()
+        answer = _input("  この構造で作画しますか? [y=作画 / n=スキップ] > ").strip().lower()
         if answer != "y":
             stats["skipped"] += 1
             print("  スキップしました。")
@@ -210,10 +232,10 @@ def process_card_mindmap(notion: NotionClient, card: MemoryCard, anchors: list,
     leaks = graph.mindmap_label_leaks(structure, anchors)
     if leaks:
         stats["gate_ng"] += 1
-        print("  ✗ マップのラベルに絵に出せない個人的な名前が含まれるため作画を中止します（fail-closed）:")
+        print("  ✗ マップのラベルに「絵に出さない」指定の名前が含まれるため作画を中止します（fail-closed）:")
         for label in leaks:
             print(f"    - {label}")
-        print("    素材から名前を外す（または台帳の「絵に出してOK」をチェックする）と作画できます。")
+        print("    素材から名前を外す（または台帳の「絵に出さない」チェックを外す）と作画できます。")
         return
 
     print(f"  Nano Banana ({render.gemini_image_model()}) で作画中...（数十秒かかります）")
@@ -262,13 +284,13 @@ def process_card_mindmap(notion: NotionClient, card: MemoryCard, anchors: list,
 def _confirm_fact(fact: str) -> str | None:
     print(f"\n  抽出した『覚えたい事実』:\n    {fact}")
     while True:
-        answer = input("  この事実で正しいですか? [y=採用 / e=修正 / n=スキップ] > ").strip().lower()
+        answer = _input("  この事実で正しいですか? [y=採用 / e=修正 / n=スキップ] > ").strip().lower()
         if answer == "y":
             return fact
         if answer == "n":
             return None
         if answer == "e":
-            edited = input("  正しい事実を入力してください > ").strip()
+            edited = _input("  正しい事実を入力してください > ").strip()
             if edited:
                 return edited
 

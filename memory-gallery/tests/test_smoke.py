@@ -226,8 +226,9 @@ class TestGraphLinks(unittest.TestCase):
             Anchor(page_id="g2", name="激痛の記憶", kinds=["感情"], status="採用",
                    used_by=["old-card"]),  # 感情は専有＝使用済みなら不可
             Anchor(page_id="g3", name="新しい怒り", kinds=["感情"], status="採用"),
-            Anchor(page_id="g4", name="タロウ", kinds=["人物"], status="採用"),
-            Anchor(page_id="g5", name="ポチ（柴）", kinds=["属性"], status="採用"),
+            # 既定は固有名詞OK（本人決定）。「絵に出さない」をチェックした行だけ遮断
+            Anchor(page_id="g4", name="タロウ", kinds=["人物"], status="採用", no_image=True),
+            Anchor(page_id="g5", name="ポチ（柴）", kinds=["属性"], status="採用", no_image=True),
         ]
 
     def _cards(self):
@@ -268,13 +269,22 @@ class TestGraphLinks(unittest.TestCase):
         self.assertEqual(valid, [])
         self.assertTrue(any("存在しません" in i for i in issues))
 
-    def test_personal_name_in_visual_rejected(self):
+    def test_no_image_name_in_visual_rejected(self):
         valid, issues = self._check([
             {"node": "枝A", "anchor": "新しい怒り", "reason": "r",
              "visual": "タロウが怒っている絵"},
         ])
         self.assertEqual(valid, [])
-        self.assertTrue(any("個人的な名前" in i for i in issues))
+        self.assertTrue(any("絵に出さない" in i for i in issues))
+
+    def test_unflagged_anchor_name_in_visual_allowed(self):
+        # 本人決定: 「絵に出さない」をチェックしていないアンカー名は絵に出してよい
+        valid, issues = self._check([
+            {"node": "枝A", "anchor": "新しい怒り", "reason": "r",
+             "visual": "新しい怒りで燃える人の絵"},
+        ])
+        self.assertEqual(len(valid), 1)
+        self.assertEqual(issues, [])
 
     def test_related_card_must_exist(self):
         valid, issues = self._check([
@@ -296,13 +306,13 @@ class TestGraphLinks(unittest.TestCase):
         self.assertNotIn("新しい怒り", prompt)  # アンカー名は絵のプロンプトに出さない
 
     def test_attribute_pet_name_in_visual_rejected(self):
-        # 属性アンカーの名前（ペット名等）も禁止語。visual に混入したら除外する
+        # 属性アンカーでも「絵に出さない」指定なら禁止語。visual に混入したら除外する
         valid, issues = self._check([
             {"node": "枝A", "anchor": "ポチ（柴）", "reason": "r",
              "visual": "ポチが走っている絵"},
         ])
         self.assertEqual(valid, [])
-        self.assertTrue(any("個人的な名前" in i for i in issues))
+        self.assertTrue(any("絵に出さない" in i for i in issues))
 
     def test_personal_card_title_signpost_suppressed(self):
         # 個人語タイトルの既習カード: 結線は保持しつつ、絵の道標だけ抑止する
@@ -503,7 +513,7 @@ class TestNotionWrites(unittest.TestCase):
 
 
 class TestImageOkAndTheme(unittest.TestCase):
-    """v3.2: 「絵に出してOK」による遮断の選別と、テーマ結線（世界観）の制約。"""
+    """v3.2: 「絵に出さない」（opt-out）による遮断と、テーマ結線（世界観）の制約。"""
 
     _MAP = {
         "center": "テーマX",
@@ -512,16 +522,16 @@ class TestImageOkAndTheme(unittest.TestCase):
 
     def _ledger(self):
         return [
-            Anchor(page_id="g1", name="番号キャラ", kinds=["属性"], status="採用",
-                   image_ok=True),   # 本人が「絵に出してOK」をチェック済み
-            Anchor(page_id="g4", name="タロウ", kinds=["人物"], status="採用"),  # 既定=遮断
+            Anchor(page_id="g1", name="番号キャラ", kinds=["属性"], status="採用"),  # 既定=名前OK
+            Anchor(page_id="g4", name="タロウ", kinds=["人物"], status="採用",
+                   no_image=True),   # 本人が「絵に出さない」をチェック済み
         ]
 
     def _check(self, links):
         from src.graph import static_check_links
         return static_check_links(links, self._MAP, self._ledger(), [])
 
-    def test_image_ok_anchor_name_allowed_in_visual(self):
+    def test_default_anchor_name_allowed_in_visual(self):
         valid, issues = self._check([
             {"node": "枝A", "anchor": "番号キャラ", "reason": "r",
              "visual": "番号キャラ図鑑風のページ"},
@@ -529,13 +539,13 @@ class TestImageOkAndTheme(unittest.TestCase):
         self.assertEqual(len(valid), 1)
         self.assertEqual(issues, [])
 
-    def test_non_image_ok_name_still_blocked(self):
+    def test_no_image_name_blocked(self):
         valid, issues = self._check([
             {"node": "枝A", "anchor": "番号キャラ", "reason": "r",
              "visual": "タロウと番号キャラの絵"},
         ])
         self.assertEqual(valid, [])
-        self.assertTrue(any("個人的な名前" in i for i in issues))
+        self.assertTrue(any("絵に出さない" in i for i in issues))
 
     def test_second_theme_demoted_to_spot(self):
         valid, issues = self._check([
@@ -666,16 +676,28 @@ class TestInterview(unittest.TestCase):
         self.assertEqual(len(valid), 1)
         self.assertEqual(issues, [])
 
-    def test_interview_link_visual_with_name_rejected(self):
-        """新アンカー名そのものが挿絵描写に混入したら遮断されること。"""
+    def test_interview_link_visual_with_name_allowed_by_default(self):
+        """新アンカー名は既定で挿絵描写に出してよい（本人決定: 固有名詞OK）。"""
         from src import graph
         new_anchor = Anchor(page_id="", name="新アンカー", kinds=["属性"], status="採用")
         link = {"node": "枝X", "anchor": "新アンカー", "related_card": None,
                 "reason": "理由", "visual": "新アンカーが写った挿絵"}
         valid, issues = graph.static_check_links(
             [link], self._mindmap(), _ledger() + [new_anchor], [])
+        self.assertEqual(len(valid), 1)
+        self.assertEqual(issues, [])
+
+    def test_interview_link_visual_with_no_image_name_rejected(self):
+        """「絵に出さない」指定のアンカー名が挿絵描写に混入したら遮断されること。"""
+        from src import graph
+        flagged = Anchor(page_id="", name="遮断アンカー", kinds=["属性"], status="採用",
+                         no_image=True)
+        link = {"node": "枝X", "anchor": "遮断アンカー", "related_card": None,
+                "reason": "理由", "visual": "遮断アンカーが写った挿絵"}
+        valid, issues = graph.static_check_links(
+            [link], self._mindmap(), _ledger() + [flagged], [])
         self.assertEqual(valid, [])
-        self.assertTrue(any("個人的な名前" in i for i in issues))
+        self.assertTrue(any("絵に出さない" in i for i in issues))
 
 
 if __name__ == "__main__":

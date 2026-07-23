@@ -100,7 +100,7 @@ def _parse_anchor(page_json: dict) -> Anchor:
         for r in (_prop(page_json, "使用済み項目").get("relation") or [])
         if isinstance(r, dict) and r.get("id")
     ]
-    image_ok = bool(_prop(page_json, "絵に出してOK").get("checkbox"))
+    no_image = bool(_prop(page_json, "絵に出さない").get("checkbox"))
     return Anchor(
         page_id=page_json.get("id", ""),
         name=title,
@@ -111,7 +111,7 @@ def _parse_anchor(page_json: dict) -> Anchor:
         strength=strength,
         status=status,
         used_by=used_by,
-        image_ok=image_ok,
+        no_image=no_image,
     )
 
 
