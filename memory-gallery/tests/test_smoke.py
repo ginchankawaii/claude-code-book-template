@@ -463,5 +463,98 @@ class TestNotionWrites(unittest.TestCase):
         self.assertIn("タイプ1 | 全ルータ", text)
 
 
+class TestInterview(unittest.TestCase):
+    """v3.1 アンカー発掘インタビューの純関数（LLM呼び出しなし・ダミーデータのみ）。"""
+
+    def _mindmap(self) -> dict:
+        return {"center": "中央T", "branches": [{"label": "枝X"}, {"label": "枝Y"}]}
+
+    def test_parse_question_ok(self):
+        from src.interview import _parse_question
+        q = _parse_question(
+            {"node": "枝X", "question": "質問文?", "hints": ["a", "b", "c", "d"]},
+            self._mindmap(),
+        )
+        self.assertEqual(q["node"], "枝X")
+        self.assertEqual(len(q["hints"]), 3)  # ヒントは最大3個
+
+    def test_parse_question_center_ok(self):
+        from src.interview import _parse_question
+        q = _parse_question({"node": "center", "question": "質問文?"}, self._mindmap())
+        self.assertIsNotNone(q)
+
+    def test_parse_question_unknown_node_rejected(self):
+        from src.interview import _parse_question
+        self.assertIsNone(
+            _parse_question({"node": "存在しない枝", "question": "質問文?"}, self._mindmap())
+        )
+
+    def test_parse_question_missing_question_rejected(self):
+        from src.interview import _parse_question
+        self.assertIsNone(_parse_question({"node": "枝X"}, self._mindmap()))
+
+    def test_parse_anchor_ok(self):
+        from src.interview import _parse_interview_anchor
+        row = _parse_interview_anchor({
+            "ok": True, "name": "見出し", "kinds": ["感情"], "body": "中身",
+            "emotion": "痛み", "connection": "要点", "reason": "理由", "visual": "挿絵",
+        })
+        self.assertEqual(row["name"], "見出し")
+        self.assertEqual(row["kinds"], ["感情"])
+        self.assertEqual(row["emotion"], "痛み")
+
+    def test_parse_anchor_ok_false_rejected(self):
+        from src.interview import _parse_interview_anchor
+        self.assertIsNone(_parse_interview_anchor({"ok": False}))
+
+    def test_parse_anchor_missing_fields_rejected(self):
+        from src.interview import _parse_interview_anchor
+        # visual 欠落 → 絵に入れられないので不成立（fail-closed）
+        self.assertIsNone(_parse_interview_anchor({
+            "ok": True, "name": "見出し", "kinds": ["属性"], "body": "中身",
+            "emotion": "", "connection": "要点", "reason": "理由",
+        }))
+
+    def test_parse_anchor_unknown_values_sanitized(self):
+        from src.interview import _parse_interview_anchor
+        row = _parse_interview_anchor({
+            "ok": True, "name": "見出し", "kinds": ["謎種別"], "body": "中身",
+            "emotion": "喜び", "connection": "要点", "reason": "理由", "visual": "挿絵",
+        })
+        self.assertEqual(row["kinds"], ["属性"])  # 未知種別は属性へ
+        self.assertEqual(row["emotion"], "")      # 台帳にない感情選択肢は作らない
+
+    def test_parse_anchor_emotion_kind_without_label_demoted(self):
+        from src.interview import _parse_interview_anchor
+        # 種別=感情なのに感情ラベルが空 → 専有管理が壊れるため属性へ落とす
+        row = _parse_interview_anchor({
+            "ok": True, "name": "見出し", "kinds": ["感情"], "body": "中身",
+            "emotion": "", "connection": "要点", "reason": "理由", "visual": "挿絵",
+        })
+        self.assertEqual(row["kinds"], ["属性"])
+
+    def test_interview_link_passes_static_check(self):
+        """インタビュー由来の結線が graph.static_check_links を素通りできる形であること。"""
+        from src import graph
+        new_anchor = Anchor(page_id="", name="新アンカー", kinds=["属性"], status="採用")
+        link = {"node": "枝X", "anchor": "新アンカー", "related_card": None,
+                "reason": "理由", "visual": "一般名詞の挿絵"}
+        valid, issues = graph.static_check_links(
+            [link], self._mindmap(), _ledger() + [new_anchor], [])
+        self.assertEqual(len(valid), 1)
+        self.assertEqual(issues, [])
+
+    def test_interview_link_visual_with_name_rejected(self):
+        """新アンカー名そのものが挿絵描写に混入したら遮断されること。"""
+        from src import graph
+        new_anchor = Anchor(page_id="", name="新アンカー", kinds=["属性"], status="採用")
+        link = {"node": "枝X", "anchor": "新アンカー", "related_card": None,
+                "reason": "理由", "visual": "新アンカーが写った挿絵"}
+        valid, issues = graph.static_check_links(
+            [link], self._mindmap(), _ledger() + [new_anchor], [])
+        self.assertEqual(valid, [])
+        self.assertTrue(any("個人的な名前" in i for i in issues))
+
+
 if __name__ == "__main__":
     unittest.main()

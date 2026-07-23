@@ -436,6 +436,46 @@ class NotionClient:
 
     # -- 書き -------------------------------------------------------------
 
+    def create_anchor(self, name: str, kinds: list[str], body: str,
+                      emotion: str, connection: str, status: str = "採用") -> str:
+        """アンカー台帳に1行追加し、作成ページの id を返す（v3.1 インタビュー用）。
+
+        parent は data_source_id（2025-09-03 以降）→ database_id（旧）の順で
+        フォールバックする（_query_all のバージョンラダーと同じ方針）。
+        感情 select は台帳の既存選択肢（報酬/嫌悪/罪悪/痛み/屈辱）だけを渡すこと
+        （interview._parse_interview_anchor が検証済み。未知の値は新選択肢を作ってしまう）。
+        """
+        properties: dict = {
+            "アンカー": {"title": _rich_text(name)},
+            "種別": {"multi_select": [{"name": k} for k in kinds if k]},
+            "中身": {"rich_text": _rich_text(body)},
+            "接続先": {"rich_text": _rich_text(connection)},
+            "状態": {"select": {"name": status}},
+        }
+        if emotion:
+            properties["感情"] = {"select": {"name": emotion}}
+        parents = [
+            {"type": "data_source_id", "data_source_id": ANCHORS_DS_ID},
+            {"type": "database_id", "database_id": ANCHORS_DB_ID},
+        ]
+        last: NotionAPIError | None = None
+        for parent in parents:
+            try:
+                data = self._request(
+                    "POST", "/pages",
+                    json_body={"parent": parent, "properties": properties},
+                )
+                page_id = data.get("id", "")
+                if not page_id:
+                    raise NotionAPIError(0, "/pages", "no_id", "作成ページの id が返りません")
+                return page_id
+            except NotionAPIError as e:
+                last = e
+                if e.status in (400, 404):
+                    continue
+                raise
+        raise last if last else NotionAPIError(0, "/pages", "unreachable")
+
     def write_result(self, card: MemoryCard, fact: str, proposals: list[ChainProposal],
                      mermaids: list[str], gate: GateResult) -> None:
         """カードへ3案を書き戻す（プロパティ更新＋本文追記。状態=一言待ち）。"""

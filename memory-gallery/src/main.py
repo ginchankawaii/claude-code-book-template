@@ -15,8 +15,8 @@ import re
 import sys
 import traceback
 
-from . import chain, gate, graph, mindmap, render, skeleton
-from .models import STATE_ACTIVE, MemoryCard
+from . import chain, gate, graph, interview, mindmap, render, skeleton
+from .models import STATE_ACTIVE, Anchor, MemoryCard
 from .notion import NotionClient
 
 OUT_DIR = "out"
@@ -83,6 +83,79 @@ def _propose_links(structure: dict, card: MemoryCard, anchors: list,
         return [], []
 
 
+def _interview_anchor(notion: NotionClient, structure: dict, card: MemoryCard,
+                      anchors: list, links: list[dict],
+                      args: argparse.Namespace) -> tuple[list[dict], list[str]]:
+    """台帳に効くアンカー結線が無かったとき、本人に質問して新アンカーを引き出す（v3.1）。
+
+    対話モード限定（--yes / --dry-run では発動しない）。本人がその場で語り y 確認した
+    記憶は 状態=採用 で台帳に追加して即結線する（機械の自動提案ではなく本人の口述の
+    ため「候補どまり」規約の対象外）。曖昧な回答・チェックNGは何も書かない（fail-closed）。
+    """
+    if args.yes or args.dry_run:
+        return links, []
+    if any(l.get("anchor") for l in links) or len(links) >= graph.MAX_LINKS:
+        return links, []
+    try:
+        q = interview.propose_question(structure, card, anchors)
+    except Exception as e:  # インタビューは付加機能。失敗してもマップ生成は止めない
+        print(f"  ⚠ インタビューをスキップ: {e}")
+        return links, []
+    if not q:
+        return links, []
+    print("\n  💬 台帳に効くアンカーが見つかりませんでした。あなたの記憶から新アンカーを作れます。")
+    print(f"  Q. {q['question']}")
+    if q.get("hints"):
+        print(f"     （例えばこんな方向: {' / '.join(q['hints'])}）")
+    answer = input("  A. 思い浮かんだ体験をひと言（Enterのみ=スキップ） > ").strip()
+    if not answer:
+        print("  スキップしました（台帳はそのまま）。")
+        return links, []
+    try:
+        row = interview.anchor_from_answer(q["node"], q["question"], answer, card)
+    except Exception as e:
+        print(f"  ⚠ アンカー化に失敗したためスキップ: {e}")
+        return links, []
+    if row is None:
+        print("  回答からアンカーを作れませんでした（曖昧な場合は無理に作りません）。")
+        return links, []
+    print("  新アンカー案:")
+    kinds_label = "/".join(row["kinds"]) + (f" / 感情: {row['emotion']}" if row["emotion"] else "")
+    print(f"    アンカー: {row['name']}（{kinds_label}）")
+    print(f"    中身:     {row['body']}")
+    print(f"    接続先:   {row['connection']}")
+    print(f"    結線先:   {q['node']} — {row['reason']}")
+    print(f"    挿絵:     {row['visual']}")
+    confirm = input("  この記憶を台帳に追加（状態=採用）して結線しますか? [y/n] > ").strip().lower()
+    if confirm != "y":
+        print("  追加しませんでした。")
+        return links, []
+    new_anchor = Anchor(page_id="", name=row["name"], kinds=row["kinds"], body=row["body"],
+                        emotion=row["emotion"], connection=row["connection"], status="採用")
+    link = {"node": q["node"], "anchor": row["name"], "related_card": None,
+            "reason": row["reason"], "visual": row["visual"]}
+    # 新アンカー名込みで静的チェック（挿絵への人名混入をここでも遮断）→ 技術的断定の審査
+    checked, notes = graph.static_check_links([link], structure, anchors + [new_anchor], [])
+    kept, claim_notes = graph.verify_link_claims(checked, structure.get("center", ""))
+    notes += claim_notes
+    if not kept:
+        print("  ✗ チェックNGのため台帳追加も結線も行いません:")
+        for note in notes:
+            print(f"    - {note}")
+        return links, []
+    try:
+        new_anchor.page_id = notion.create_anchor(
+            row["name"], row["kinds"], row["body"], row["emotion"], row["connection"]
+        )
+    except Exception as e:
+        print(f"  ✗ 台帳への追加に失敗したため結線しません（ルール#1: 台帳外は使わない）: {e}")
+        return links, []
+    anchors.append(new_anchor)  # mark_anchors_used と同一バッチ内の専有チェック用
+    notes.append(f"🆕 インタビューで新アンカー「{row['name']}」を台帳に追加（状態=採用）")
+    print(f"  ✓ 台帳に追加しました。この結線を絵に反映します。")
+    return links + kept, notes
+
+
 def process_card_mindmap(notion: NotionClient, card: MemoryCard, anchors: list,
                          all_cards: list, args: argparse.Namespace, stats: dict) -> None:
     card.images = notion.fetch_card_images(card.page_id)
@@ -121,6 +194,8 @@ def process_card_mindmap(notion: NotionClient, card: MemoryCard, anchors: list,
         return
 
     links, link_notes = _propose_links(structure, card, anchors, all_cards, args)
+    links, interview_notes = _interview_anchor(notion, structure, card, anchors, links, args)
+    link_notes += interview_notes
     mermaid = mindmap.to_mermaid_mindmap(structure)
 
     if args.dry_run:
