@@ -33,9 +33,12 @@ def propose_links(
        "reason": なぜ効くか（Notion本文用。人名可）,
        "visual": 絵に描く描写。固有名詞OK（「絵に出さない」指定のアンカー名だけ不可）}
     """
+    # 感情アンカーの1項目専有は「他のカード」に対する専有。使用先が自分自身だけなら
+    # 再結線してよい（v1で使ったカードを mindmap 化し直すケース。例: ゲロ→フラッディング）
     usable = [
         a for a in anchors
-        if a.status == "採用" and not ("感情" in a.kinds and a.used_by)
+        if a.status == "採用"
+        and not ("感情" in a.kinds and any(pid != card.page_id for pid in a.used_by))
     ]
     if not usable and not other_cards:
         return []
@@ -106,6 +109,7 @@ def static_check_links(
     mindmap: dict,
     anchors: list[Anchor],
     other_cards: list[MemoryCard],
+    current_card_id: str = "",
 ) -> tuple[list[dict], list[str]]:
     """結線案の決定論チェック。合格した結線と、除外理由を返す（純関数・テスト可能）。"""
     by_name = {a.name: a for a in anchors}
@@ -142,9 +146,9 @@ def static_check_links(
             if anchor is None:
                 issues.append(f"結線除外: 台帳にないアンカー「{anchor_name}」（ルール#1）")
                 continue
-            if "感情" in anchor.kinds and anchor.used_by:
+            if "感情" in anchor.kinds and any(pid != current_card_id for pid in anchor.used_by):
                 issues.append(
-                    f"結線除外: 感情アンカー「{anchor_name}」は使用済み（1項目専有）"
+                    f"結線除外: 感情アンカー「{anchor_name}」は他カードで使用済み（1項目専有）"
                 )
                 continue
         if related and str(related) not in card_titles:

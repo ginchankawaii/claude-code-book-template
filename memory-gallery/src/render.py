@@ -25,6 +25,31 @@ def gemini_image_model() -> str:
     return os.environ.get("GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview")
 
 
+# 画風プリセット。既定は劇画（本人の要望 2026-07-23:「色鉛筆風より、リアル寄りの劇画風にして」）。
+# .env の MEMORY_GALLERY_ART_STYLE で切替（gekiga / pencil）。
+ART_STYLES: dict[str, list[str]] = {
+    "gekiga": [
+        "- 劇画調の漫画風マインドマップ。太く荒々しいGペンの線、濃いベタとかけあみの陰影",
+        "- 昔のギャグ劇画のように、大げさに歪んだ濃い顔・しわ・筋肉まで描き込む（ギャグとホラーの中間の迫力）",
+        "- 挿絵・キャラはリアル寄りの劇画タッチ。可愛くしない。記憶に焼き付くインパクト最優先",
+        "- 中央から太い枝が放射状に伸びる（枝ごとに色を変えてよいが、全体はやや荒々しい紙面）",
+        "- 余白は少なめ、縦長",
+    ],
+    "pencil": [
+        "- 紙のノートに色ペンで描いたような手描き風マインドマップ",
+        "- 中央から色つきの太い曲線の枝が放射状に伸びる（枝ごとに別の色）",
+        "- 各枝の先に小さなアイコンやイラスト（内容に対応するもの）",
+        "- 明るく記憶に残る配色、余白は少なめ、縦長",
+    ],
+}
+
+
+def art_style() -> str:
+    """使用する画風プリセット名。env で上書き可・未知の値は既定に落とす。"""
+    style = os.environ.get("MEMORY_GALLERY_ART_STYLE", "gekiga")
+    return style if style in ART_STYLES else "gekiga"
+
+
 def build_image_prompt(mindmap: dict, links: list[dict] | None = None) -> str:
     """構造を一字一句埋め込んだ作画指示を決定論的に組み立てる（テスト可能な純関数）。
 
@@ -36,10 +61,10 @@ def build_image_prompt(mindmap: dict, links: list[dict] | None = None) -> str:
     theme_link = next((l for l in links if str(l.get("scope") or "") == "theme"), None)
     spot_links = [l for l in links if l is not theme_link]
     lines = [
-        "以下の構造の「手描き風マインドマップ」のイラストを1枚描いてください。",
+        "以下の構造のマインドマップのイラストを1枚描いてください。",
         "",
         "# 内容（文字は一字一句このまま。内容の追加・変更・省略は禁止）",
-        f"中央: {mindmap.get('center', '')}（{mindmap.get('theme', '')} の可愛いイラストを添える）",
+        f"中央: {mindmap.get('center', '')}（{mindmap.get('theme', '')} のイラストを添える）",
     ]
     for i, branch in enumerate(mindmap.get("branches") or [], 1):
         emoji = str(branch.get("emoji") or "").strip()
@@ -71,13 +96,13 @@ def build_image_prompt(mindmap: dict, links: list[dict] | None = None) -> str:
     lines += [
         "",
         "# スタイル",
-        "- 紙のノートに色ペンで描いたような手描き風マインドマップ",
-        "- 中央から色つきの太い曲線の枝が放射状に伸びる（枝ごとに別の色）",
-        "- 各枝の先に小さなアイコンやイラスト（内容に対応するもの）",
-        "- 文字は読みやすい手書き風の日本語。誤字なく正確に",
-        "- 明るく記憶に残る配色、余白は少なめ、縦長",
+        *ART_STYLES[art_style()],
+        "# 文字（最重要）",
+        "- 文字はすべて日本語として正確に描く。**漢字・かなの字形を絶対に崩さない・省略しない・別の字にしない**",
+        "- 手書き文字に自信のない箇所は、太いゴシック体の活字風に整えて描いてよい（正確さ優先）",
         "# 禁止",
         "- 上記に無い文字・数値・事実を描き足すこと",
+        "- 漢字の崩れ・でたらめな文字・文字化けした看板や書き込み",
     ]
     return "\n".join(lines)
 

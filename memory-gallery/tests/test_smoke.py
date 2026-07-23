@@ -256,6 +256,15 @@ class TestGraphLinks(unittest.TestCase):
         self.assertEqual(valid, [])
         self.assertTrue(any("専有" in i for i in issues))
 
+    def test_emotion_anchor_reusable_on_its_own_card(self):
+        """1項目専有は他カードに対する専有。使用先が自分自身だけなら再結線できる。"""
+        from src.graph import static_check_links
+        valid, issues = static_check_links(
+            [{"node": "枝A", "anchor": "激痛の記憶", "reason": "r", "visual": "転ぶ人"}],
+            self._MAP, self._ledger(), self._cards(), current_card_id="old-card")
+        self.assertEqual(len(valid), 1)
+        self.assertEqual(issues, [])
+
     def test_unused_emotion_anchor_allowed(self):
         valid, _ = self._check([
             {"node": "枝A", "anchor": "新しい怒り", "reason": "r", "visual": "怒りの炎"},

@@ -83,7 +83,8 @@ def _propose_links(structure: dict, card: MemoryCard, anchors: list,
     try:
         others = [c for c in all_cards if c.page_id != card.page_id]  # 自己結線防止
         raw = graph.propose_links(structure, card, anchors, others)
-        links, notes = graph.static_check_links(raw, structure, anchors, others)
+        links, notes = graph.static_check_links(raw, structure, anchors, others,
+                                                current_card_id=card.page_id)
         links, claim_notes = graph.verify_link_claims(links, structure.get("center", ""))
         notes += claim_notes
         if links:
@@ -157,7 +158,8 @@ def _interview_anchor(notion: NotionClient, structure: dict, card: MemoryCard,
     link = {"node": q["node"], "anchor": row["name"], "related_card": None,
             "reason": row["reason"], "visual": row["visual"]}
     # 新アンカー名込みで静的チェック（挿絵への人名混入をここでも遮断）→ 技術的断定の審査
-    checked, notes = graph.static_check_links([link], structure, anchors + [new_anchor], [])
+    checked, notes = graph.static_check_links([link], structure, anchors + [new_anchor], [],
+                                              current_card_id=card.page_id)
     kept, claim_notes = graph.verify_link_claims(checked, structure.get("center", ""))
     notes += claim_notes
     if not kept:
