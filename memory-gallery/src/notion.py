@@ -49,6 +49,8 @@ _TEXT_BLOCK_TYPES = (
 # 自己汚染ループの遮断（本文の素材＝本人が貼ったものだけ、を維持する）。
 _SYSTEM_TEXT_PREFIXES = ("🔗", "🆕", "🗺", "📌")
 _SYSTEM_HEADINGS = ("マインドマップ（検証用の正）", "連想鎖 ")
+# delete_generated_blocks が過去実行の残骸と見なす箇条書きの先頭語
+_GENERATED_BULLET_PREFIXES = ("🔗", "🆕", "結線除外", "道標抑止", "結線の", "結線は最大")
 
 
 class NotionAPIError(RuntimeError):
@@ -453,6 +455,60 @@ class NotionClient:
         return rows
 
     # -- 書き -------------------------------------------------------------
+
+    def delete_generated_blocks(self, card: MemoryCard) -> int:
+        """過去の実行が書き戻したブロックを本文から削除し、削除数を返す。
+
+        --card 再処理のたびに生成画像・Mermaid・🔗 callout が積み上がってページが
+        重くなるのを防ぐ（本人が貼った素材・手書きメモは残す）。生成画像は
+        append_image が caption=カード名 を付けている事実で見分ける。
+        新しい画像の生成に**成功した後**に呼ぶこと（失敗時に旧結果を消さない）。
+        """
+        to_delete: list[str] = []
+        cursor: str | None = None
+        while True:
+            params: dict = {"page_size": 100}
+            if cursor:
+                params["start_cursor"] = cursor
+            data = self._request("GET", f"/blocks/{card.page_id}/children", params=params)
+            for block in data.get("results") or []:
+                btype = block.get("type")
+                block_id = block.get("id")
+                if not block_id:
+                    continue
+                payload = block.get(btype) or {}
+                if btype == "image":
+                    caption = _plain_text(payload.get("caption")).strip()
+                    if caption and caption == card.title.strip():
+                        to_delete.append(block_id)
+                elif btype == "code":
+                    if payload.get("language") == "mermaid":
+                        to_delete.append(block_id)
+                else:
+                    text = _plain_text(payload.get("rich_text")).strip()
+                    if not text:
+                        continue
+                    if btype == "callout" and text.startswith(_SYSTEM_TEXT_PREFIXES):
+                        to_delete.append(block_id)
+                    elif btype in ("heading_1", "heading_2", "heading_3") and \
+                            text.startswith(_SYSTEM_HEADINGS):
+                        to_delete.append(block_id)
+                    elif btype == "bulleted_list_item" and \
+                            text.startswith(_GENERATED_BULLET_PREFIXES):
+                        to_delete.append(block_id)
+            if not data.get("has_more"):
+                break
+            cursor = data.get("next_cursor")
+            if not cursor:
+                break
+        deleted = 0
+        for block_id in to_delete:
+            try:
+                self._request("DELETE", f"/blocks/{block_id}")
+                deleted += 1
+            except NotionAPIError:
+                continue  # 1個の失敗で全体を止めない
+        return deleted
 
     def create_anchor(self, name: str, kinds: list[str], body: str,
                       emotion: str, connection: str, status: str = "採用") -> str:

@@ -511,6 +511,38 @@ class TestNotionWrites(unittest.TestCase):
         patch = next(c for c in calls if c[1] == "/pages/card-1")
         self.assertEqual(patch[2]["properties"]["アンカー"]["rich_text"], [])
 
+    def test_delete_generated_blocks_keeps_material(self):
+        """再処理の掃除: 生成物（caption=カード名の画像・Mermaid・🔗・見出し）だけ消し、素材は残す。"""
+        from src.models import MemoryCard
+        client = self._client()
+        calls = []
+
+        def fake_request(method, path, json_body=None, params=None, version=None):
+            calls.append((method, path))
+            if method == "GET":
+                return {"results": [
+                    {"id": "b1", "type": "image",
+                     "image": {"caption": []}},                        # 素材画像 → 残す
+                    {"id": "b2", "type": "image",
+                     "image": {"caption": [{"plain_text": "カードT"}]}},  # 生成画像 → 消す
+                    {"id": "b3", "type": "code", "code": {"language": "mermaid"}},  # → 消す
+                    {"id": "b4", "type": "callout",
+                     "callout": {"rich_text": [{"plain_text": "🔗 結線の説明"}]}},  # → 消す
+                    {"id": "b5", "type": "heading_2",
+                     "heading_2": {"rich_text": [{"plain_text": "マインドマップ（検証用の正）"}]}},  # → 消す
+                    {"id": "b6", "type": "paragraph",
+                     "paragraph": {"rich_text": [{"plain_text": "本人のメモ"}]}},   # → 残す
+                    {"id": "b7", "type": "bulleted_list_item",
+                     "bulleted_list_item": {"rich_text": [{"plain_text": "結線除外: x"}]}},  # → 消す
+                ], "has_more": False}
+            return {}
+
+        client._request = fake_request
+        deleted = client.delete_generated_blocks(MemoryCard(page_id="p", title="カードT"))
+        self.assertEqual(deleted, 5)
+        deleted_ids = {p.split("/")[-1] for m, p in calls if m == "DELETE"}
+        self.assertEqual(deleted_ids, {"b2", "b3", "b4", "b5", "b7"})
+
 
 class TestImageOkAndTheme(unittest.TestCase):
     """v3.2: 「絵に出さない」（opt-out）による遮断と、テーマ結線（世界観）の制約。"""

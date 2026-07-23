@@ -248,6 +248,11 @@ def process_card_mindmap(notion: NotionClient, card: MemoryCard, anchors: list,
         f.write(image_bytes)
     print(f"  画像を保存: {local_path}")
 
+    # 新しい画像の生成に成功してから、過去実行の残骸（旧生成画像・Mermaid・🔗）を掃除する
+    removed = notion.delete_generated_blocks(card)
+    if removed:
+        print(f"  過去の生成ブロック {removed} 個を削除しました（ページ肥大の防止）")
+
     print("  Notion へアップロード中...")
     upload_id = notion.upload_file(filename, image_bytes, content_type=mime)
     notion.set_cover(card.page_id, upload_id)
