@@ -94,6 +94,7 @@ def _parse_anchor(page_json: dict) -> Anchor:
         for r in (_prop(page_json, "使用済み項目").get("relation") or [])
         if isinstance(r, dict) and r.get("id")
     ]
+    image_ok = bool(_prop(page_json, "絵に出してOK").get("checkbox"))
     return Anchor(
         page_id=page_json.get("id", ""),
         name=title,
@@ -104,6 +105,7 @@ def _parse_anchor(page_json: dict) -> Anchor:
         strength=strength,
         status=status,
         used_by=used_by,
+        image_ok=image_ok,
     )
 
 
@@ -592,14 +594,33 @@ class NotionClient:
         })
 
     def write_mindmap_result(self, card: MemoryCard, mermaid: str, summary: str,
-                             issues: list[str], state: str) -> None:
-        """v2: 処理済みマーカーと Mermaid（検証用の正）を書き戻す。"""
+                             issues: list[str], state: str,
+                             anchor_names: list[str] | None = None,
+                             link_lines: list[str] | None = None,
+                             chain_text: str | None = None) -> None:
+        """v2/v3: 処理結果を「見える場所」に書き戻す。
+
+        - アンカー property = 結線したアンカー名（ギャラリー/DBビューで一目で分かる）
+        - 連想鎖 property = 結線の連想文（chain_text）。結線なしなら構造サマリ
+        - 本文 = 結線の説明 callout（画像の直後・目立つ位置）→ Mermaid → 注記
+        """
         properties = {
-            "連想鎖": {"rich_text": _rich_text(summary[:NOTION_RICH_TEXT_LIMIT])},
+            "連想鎖": {"rich_text": _rich_text((chain_text or summary)[:NOTION_RICH_TEXT_LIMIT])},
             "状態": {"select": {"name": state}},
         }
+        if anchor_names:
+            properties["アンカー"] = {"rich_text": _rich_text(" / ".join(anchor_names))}
         self._request("PATCH", f"/pages/{card.page_id}", json_body={"properties": properties})
-        blocks: list[dict] = [
+        blocks: list[dict] = []
+        if link_lines:
+            blocks.append({
+                "object": "block", "type": "callout",
+                "callout": {
+                    "rich_text": _rich_text("\n".join(link_lines)),
+                    "icon": {"type": "emoji", "emoji": "🔗"},
+                },
+            })
+        blocks += [
             {"object": "block", "type": "heading_2",
              "heading_2": {"rich_text": _rich_text("マインドマップ（検証用の正）")}},
             {"object": "block", "type": "code",

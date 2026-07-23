@@ -29,8 +29,9 @@ def propose_links(
     返り値の各要素:
       {"node": 枝ラベル or "center", "anchor": 台帳名 or null,
        "related_card": 既存カード項目名 or null,
+       "scope": "spot"（挿絵）or "theme"（絵全体の世界観。最大1個）,
        "reason": なぜ効くか（Notion本文用。人名可）,
-       "visual": 絵に描く小さな挿絵の描写（人名・固有エピソード語を含めない）}
+       "visual": 絵に描く描写。名前を文字で出せるのは「絵に出してOK」なアンカーだけ}
     """
     usable = [
         a for a in anchors
@@ -40,6 +41,7 @@ def propose_links(
         return []
     ledger_rows = "\n".join(
         f"| {a.name} | {'/'.join(a.kinds)} | {a.body} | {a.emotion} | {a.connection} |"
+        + (" 名前を絵に出してOK |" if a.image_ok else " 名前は絵に出さない |")
         + (" 使用済み |" if a.used_by else " 未使用 |")
         for a in usable
     )
@@ -56,8 +58,8 @@ def propose_links(
 {branch_labels}
 
 # 本人のアンカー台帳（この表からだけ選ぶ）
-| アンカー | 種別 | 中身 | 感情 | 接続先 | 使用状況 |
-|---|---|---|---|---|---|
+| アンカー | 種別 | 中身 | 感情 | 接続先 | 名前の扱い | 使用状況 |
+|---|---|---|---|---|---|---|
 {ledger_rows}
 
 # 既習カード（関連が強いものがあれば結線できる）
@@ -68,15 +70,20 @@ def propose_links(
 - アンカーは台帳の表記と一字一句同じ名前で指定。台帳外は禁止
 - 種別に「感情」を含むアンカーで「使用済み」のものは使えない（1項目専有）
 - 属性アンカーは再利用可。番号・体系もの（例: タイプ番号）には「番号=属性」系アンカーを体系ごと固定するのが強い
+- scope: 通常は "spot"（ノード脇の挿絵）。**体系アンカーがマップ全体と噛み合うときだけ** "theme" を最大1個
+  （node="center"）。theme はマップ全体をそのアンカーの世界観（例: 図鑑風ページ・レース会場風）で描かせる。一番強い
 - reason: なぜこの結線で覚えられるかを1文で（本人だけが読む。固有名詞可）
-- visual: 絵に描く小さな挿絵の描写。**人名・ペット名・固有エピソードの文字は禁止**。
-  一般名詞のイメージだけで書く（例:「吠える柴犬」「頬袋を膨らませたハムスター」「図鑑風の番号つきモンスター」）
+- visual: 絵に描く描写。「名前を絵に出してOK」のアンカーだけは名前・世界観の文字を出してよい
+  （例:「ポケモン図鑑風のページ、各タイプにNo.つきモンスター」）。
+  それ以外は**人名・ペット名・固有エピソードの文字は禁止**。一般名詞のイメージだけで書く
+  （例:「吠える柴犬」「頬袋を膨らませたハムスター」）
 - 迷ったら結線しない。無理なこじつけはゼロ個でよい
 
 # 出力形式（このJSONのみをコードフェンスで出力）
 ```json
 {{"links": [{{"node": "枝ラベルまたはcenter", "anchor": "台帳名またはnull",
-  "related_card": "既習カード名またはnull", "reason": "1文", "visual": "挿絵の描写"}}]}}
+  "related_card": "既習カード名またはnull", "scope": "spotまたはtheme",
+  "reason": "1文", "visual": "描写"}}]}}
 ```"""
     response = _client().messages.create(
         model=anthropic_model(),
@@ -99,17 +106,21 @@ def static_check_links(
     labels = {str(b.get("label", "")).strip() for b in mindmap.get("branches") or []}
     labels.add("center")
     card_titles = {c.title for c in other_cards}
-    # 禁止語は種別を問わず**全アンカー**の名前から集める。
+    # 禁止語は種別を問わず**「絵に出してOK」がオフの全アンカー**の名前から集める。
     # 属性アンカーにもペット名・家族名（例: 「銀ちゃん（柴）」）が登録されるため、
     # 人物/感情に限定すると固有名が画像プロンプトへ漏れる（CLAUDE.md v3 の静的遮断の約束）。
+    # image_ok は既定オフ・本人がチェックした行だけオン（新規アンカーも自動では絶対にオンにしない）。
     forbidden_words: set[str] = set()
     for a in anchors:
+        if a.image_ok:
+            continue
         for variant in _name_variants(a.name):
             if len(variant) >= 2:
                 forbidden_words.add(variant)
 
     valid: list[dict] = []
     issues: list[str] = []
+    theme_taken = False
     for link in links:
         node = str(link.get("node") or "").strip()
         anchor_name = link.get("anchor") or None
@@ -148,6 +159,13 @@ def static_check_links(
                 f"道標抑止: 「{node}」の関連カード名に個人的な名前が含まれるため、"
                 "絵の道標は描きません（結線は保持）"
             )
+        # theme（絵全体の世界観）は最大1個。2個目以降は spot（挿絵）へ格下げして保持する
+        if str(link.get("scope") or "") == "theme":
+            if theme_taken:
+                link = {**link, "scope": "spot"}
+                issues.append(f"「{node}」の theme 結線は2個目のため挿絵（spot）に格下げしました")
+            else:
+                theme_taken = True
         valid.append(link)
     if len(valid) > MAX_LINKS:
         issues.append(f"結線は最大{MAX_LINKS}個のため超過分を除外しました")

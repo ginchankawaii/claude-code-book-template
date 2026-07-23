@@ -28,8 +28,12 @@ def gemini_image_model() -> str:
 def build_image_prompt(mindmap: dict, links: list[dict] | None = None) -> str:
     """構造を一字一句埋め込んだ作画指示を決定論的に組み立てる（テスト可能な純関数）。
 
-    links の visual（人名を含まない挿絵描写）は該当ノードの近くに描かせる。
+    links の visual は該当ノードの近くの挿絵（spot）、または絵全体の世界観（theme・最大1個）。
+    visual に固有名を書けるのは「絵に出してOK」なアンカーだけ（graph.static_check_links が遮断済み）。
     """
+    links = links or []
+    theme_link = next((l for l in links if str(l.get("scope") or "") == "theme"), None)
+    spot_links = [l for l in links if l is not theme_link]
     lines = [
         "以下の構造の「手描き風マインドマップ」のイラストを1枚描いてください。",
         "",
@@ -41,19 +45,28 @@ def build_image_prompt(mindmap: dict, links: list[dict] | None = None) -> str:
         lines.append(f"枝{i} {emoji}: {branch.get('label', '')}")
         for child in branch.get("children") or []:
             lines.append(f"  - {child.get('label', '')}")
-    if links:
+    if theme_link:
+        lines += [
+            "",
+            "# 世界観（このマップ全体の画風。記憶フックの本命）",
+            f"- マップ全体を「{theme_link.get('visual', '')}」の世界観・デザインで描く",
+            "- ただし上記「内容」の文字・数値は一字一句そのまま維持する（世界観は見た目だけ）",
+        ]
+    if spot_links:
         lines += ["", "# 記憶フックの挿絵（指定ノードのすぐ近くに、目立つ小さな挿絵として描く）"]
-        for link in links:
+        for link in spot_links:
             node = link.get("node")
             place = "中央のすぐ横" if node == "center" else f"「{node}」の枝のすぐ近く"
             lines.append(f"- {place}: {link.get('visual', '')}")
+    if links:
+        for link in links:
             # suppress_signpost: カード名が個人語のとき static_check_links が立てるフラグ。
             # 結線は保持するが、道標（カード名の文字）は画像プロンプトに入れない。
             if link.get("related_card") and not link.get("suppress_signpost"):
                 lines.append(
-                    f"- マップの端、「{node}」寄りに小さな道標: 「関連: {link['related_card']}」"
+                    f"- マップの端、「{link.get('node')}」寄りに小さな道標: 「関連: {link['related_card']}」"
                 )
-        lines.append("※ 挿絵は絵のみで説明文字を書かない（道標の「関連: …」だけは文字可）")
+        lines.append("※ 挿絵・世界観の指定文にある固有名以外の説明文字を描き足さない（道標の「関連: …」は文字可）")
     lines += [
         "",
         "# スタイル",

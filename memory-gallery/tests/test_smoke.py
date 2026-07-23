@@ -463,6 +463,74 @@ class TestNotionWrites(unittest.TestCase):
         self.assertIn("タイプ1 | 全ルータ", text)
 
 
+class TestImageOkAndTheme(unittest.TestCase):
+    """v3.2: 「絵に出してOK」による遮断の選別と、テーマ結線（世界観）の制約。"""
+
+    _MAP = {
+        "center": "テーマX",
+        "branches": [{"label": "枝A"}, {"label": "枝B"}],
+    }
+
+    def _ledger(self):
+        return [
+            Anchor(page_id="g1", name="番号キャラ", kinds=["属性"], status="採用",
+                   image_ok=True),   # 本人が「絵に出してOK」をチェック済み
+            Anchor(page_id="g4", name="タロウ", kinds=["人物"], status="採用"),  # 既定=遮断
+        ]
+
+    def _check(self, links):
+        from src.graph import static_check_links
+        return static_check_links(links, self._MAP, self._ledger(), [])
+
+    def test_image_ok_anchor_name_allowed_in_visual(self):
+        valid, issues = self._check([
+            {"node": "枝A", "anchor": "番号キャラ", "reason": "r",
+             "visual": "番号キャラ図鑑風のページ"},
+        ])
+        self.assertEqual(len(valid), 1)
+        self.assertEqual(issues, [])
+
+    def test_non_image_ok_name_still_blocked(self):
+        valid, issues = self._check([
+            {"node": "枝A", "anchor": "番号キャラ", "reason": "r",
+             "visual": "タロウと番号キャラの絵"},
+        ])
+        self.assertEqual(valid, [])
+        self.assertTrue(any("個人的な名前" in i for i in issues))
+
+    def test_second_theme_demoted_to_spot(self):
+        valid, issues = self._check([
+            {"node": "center", "anchor": "番号キャラ", "scope": "theme",
+             "reason": "r", "visual": "図鑑風の世界観"},
+            {"node": "枝A", "anchor": "番号キャラ", "scope": "theme",
+             "reason": "r", "visual": "図鑑風の挿絵"},
+        ])
+        self.assertEqual(len(valid), 2)
+        self.assertEqual(valid[0].get("scope"), "theme")
+        self.assertEqual(valid[1].get("scope"), "spot")
+        self.assertTrue(any("格下げ" in i for i in issues))
+
+    def test_theme_link_renders_as_worldview(self):
+        from src.render import build_image_prompt
+        prompt = build_image_prompt(self._MAP, [
+            {"node": "center", "anchor": "番号キャラ", "scope": "theme",
+             "reason": "r", "visual": "図鑑風の世界観"},
+            {"node": "枝A", "anchor": "番号キャラ", "scope": "spot",
+             "reason": "r", "visual": "小さな挿絵"},
+        ])
+        self.assertIn("# 世界観", prompt)
+        self.assertIn("図鑑風の世界観", prompt)
+        self.assertIn("一字一句そのまま維持", prompt)
+        self.assertIn("小さな挿絵", prompt)  # spot は挿絵セクションに残る
+
+    def test_no_theme_no_worldview_section(self):
+        from src.render import build_image_prompt
+        prompt = build_image_prompt(self._MAP, [
+            {"node": "枝A", "anchor": "番号キャラ", "reason": "r", "visual": "挿絵"},
+        ])
+        self.assertNotIn("# 世界観", prompt)
+
+
 class TestInterview(unittest.TestCase):
     """v3.1 アンカー発掘インタビューの純関数（LLM呼び出しなし・ダミーデータのみ）。"""
 

@@ -223,12 +223,18 @@ def process_card_mindmap(notion: NotionClient, card: MemoryCard, anchors: list,
     # カバーと本文は同じ file_upload id を使い回せない場合に備え、本文用に再アップロード
     upload_id_body = notion.upload_file(filename, image_bytes, content_type=mime)
     notion.append_image(card.page_id, upload_id_body, caption=card.title)
+    linked_anchor_names = [l["anchor"] for l in links if l.get("anchor")]
+    chain_text = " ／ ".join(
+        str(l.get("reason") or "").strip() for l in links if str(l.get("reason") or "").strip()
+    )
     notion.write_mindmap_result(
         card, mermaid, mindmap.summary_line(structure),
-        issues=graph.links_body_lines(links) + link_notes, state=STATE_ACTIVE,
+        issues=link_notes, state=STATE_ACTIVE,
+        anchor_names=linked_anchor_names,
+        link_lines=graph.links_body_lines(links),
+        chain_text=chain_text or None,
     )
     if links:
-        linked_anchor_names = [l["anchor"] for l in links if l.get("anchor")]
         if linked_anchor_names:
             notion.mark_anchors_used(linked_anchor_names, card, anchors)
         related_ids = [
