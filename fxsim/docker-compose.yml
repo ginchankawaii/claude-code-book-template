@@ -1,0 +1,83 @@
+# Run the whole Python "brain" in clean containers — no Windows Python needed.
+#
+#   docker compose up -d --build      # start dashboard + FX trader
+#   docker compose logs -f fx         # watch the FX decisions
+#   docker compose run --rm app python -m scripts.run_monitor   # one-off PDCA check
+#
+# MT5 (the EA) keeps running natively on Windows; the FX container talks to it
+# through MT5's shared "Common\Files" folder, mounted in via MT5_COMMON_FILES_HOST
+# (set it in .env). See docs/DOCKER.md.
+
+services:
+  # --- monitoring dashboard (http://localhost:8000/live) ---
+  dashboard:
+    build: .
+    image: fxsim:latest
+    command: python -m app.server
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MT5_COMMON_FILES: /mt5common
+      KABU_HOST: http://host.docker.internal:18081/kabusapi   # kabuステーション検証環境(stocks)
+    volumes:
+      - ./:/app
+      - ${MT5_COMMON_FILES_HOST:-./.mt5common}:/mt5common
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # --- FX live trader (trend + Opus veto -> MT5 file bridge) ---
+  fx:
+    build: .
+    image: fxsim:latest
+    command: python -m scripts.run_ai_bridge --calendar-mode anthropic
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MT5_COMMON_FILES: /mt5common
+      # Decision model for the Opus veto. Sonnet keeps the AI overlay in the
+      # black even on a small (¥300k-class) account. Override via .env if needed.
+      FXSIM_DECISION_MODEL: ${FXSIM_DECISION_MODEL:-claude-sonnet-4-6}
+    volumes:
+      - ./:/app
+      - ${MT5_COMMON_FILES_HOST:-./.mt5common}:/mt5common
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # --- optional: expose the dashboard to the internet via Cloudflare Tunnel ---
+  # 外出先からダッシュボードを見るための公開トンネル（ルーターのポート開放不要）。
+  #  1) 先に .env で FXSIM_DASH_PASS を設定（公開前のパスワード保護＝必須）
+  #  2) Cloudflare Zero Trust → Networks → Tunnels → Create でトークン取得
+  #  3) .env に CLOUDFLARE_TUNNEL_TOKEN=... を貼る
+  #  4) トンネルの Public Hostname で Service = http://dashboard:8000 を指定
+  #  5) 起動:  docker compose --profile tunnel up -d tunnel
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on: [dashboard]
+    restart: unless-stopped
+    profiles: ["tunnel"]
+
+  # --- generic one-off runner: monitor / stock sim / tests ---
+  # `docker compose run --rm app python -m scripts.run_monitor`
+  # `docker compose run --rm app python -m scripts.run_stock_ai --sim --sim-steps 8`
+  app:
+    build: .
+    image: fxsim:latest
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MT5_COMMON_FILES: /mt5common
+      KABU_HOST: http://host.docker.internal:18081/kabusapi
+    volumes:
+      - ./:/app
+      - ${MT5_COMMON_FILES_HOST:-./.mt5common}:/mt5common
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    profiles: ["tools"]   # only runs via `docker compose run`, not `up`
