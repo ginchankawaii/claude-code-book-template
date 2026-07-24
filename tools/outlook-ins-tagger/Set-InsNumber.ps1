@@ -83,7 +83,8 @@ $items.IncludeRecurrences = $true
 $rangeStart = $Date.Date
 $rangeEnd = $rangeStart.AddDays($Days)
 # Restrictの日付書式はOSロケール依存のため、カルチャ準拠の 'g' 書式を使う
-$filter = "[Start] >= '{0}' AND [Start] < '{1}'" -f `
+# 開始・終了の両方で絞り、範囲に重なる予定(前日夜から跨ぐ会議など)も拾う
+$filter = "[Start] < '{1}' AND [End] > '{0}'" -f `
     $rangeStart.ToString('g'), $rangeEnd.ToString('g')
 $appointments = @($items.Restrict($filter))
 
@@ -109,7 +110,7 @@ foreach ($appt in $appointments) {
     $hours = [Math]::Round(([DateTime]$appt.End - [DateTime]$appt.Start).TotalHours, 2)
 
     $checkText = if ($Target -eq 'Category') { [string]$appt.Categories } else { $subject }
-    $existingMatch = [regex]::Match($checkText, $existingPattern)
+    $existingMatch = [regex]::Match($checkText, $existingPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
 
     $entry = [PSCustomObject]@{
         Start   = [DateTime]$appt.Start

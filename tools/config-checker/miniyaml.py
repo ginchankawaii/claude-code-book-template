@@ -6,10 +6,17 @@ pipが使えない業務端末などPyYAMLが入っていない環境でも rule
 優先される（checker.py参照）。
 
 対応: ネストしたマップ / リスト / スカラー / "引用符" / # コメント /
-      1行フローリスト [a, b, c]
-非対応: 複数行スカラー(| や >) / アンカー・エイリアス / フローマップ /
-        タブインデント / 引用符内のエスケープシーケンス
+      1行フローリスト [a, "b,c", 1] / 先頭の --- と末尾の ... /
+      yes,no,on,off の真偽値(YAML 1.1互換)
+非対応(明確なエラーになる): 複数行スカラー(| や >) / アンカー・エイリアス /
+      フローマップ {a: 1} / ネストしたフロー形式 / タブインデント /
+      引用符内のエスケープシーケンス(\\n等) / 複数ドキュメント
+既知の差異: 0始まりの整数(010)は8進数ではなく10進数として読む。
 """
+
+# 引用符が「開き引用符」とみなされるのは、直前がこれらの文字のときだけ。
+# (Bob's のような語中のアポストロフィを引用符と誤認しないため)
+_QUOTE_OPENERS = " \t:,-["
 
 
 class MiniYamlError(ValueError):
@@ -22,6 +29,13 @@ class MiniYamlError(ValueError):
 def load(text):
     """YAMLサブセットのテキストをPythonオブジェクトにして返す。"""
     lines = _significant_lines(text)
+    if lines and lines[0][0] == 0 and lines[0][1] == "---":
+        lines = lines[1:]
+    if lines and lines[-1][0] == 0 and lines[-1][1] == "...":
+        lines = lines[:-1]
+    for _ind, content, lineno in lines:
+        if content == "---":
+            raise MiniYamlError("複数ドキュメントには対応していません", lineno)
     if not lines:
         return None
     value, next_i = _parse_block(lines, 0, lines[0][0])
@@ -52,7 +66,7 @@ def _strip_comment(line):
         if quote:
             if ch == quote:
                 quote = None
-        elif ch in ("'", '"'):
+        elif ch in ("'", '"') and (i == 0 or line[i - 1] in _QUOTE_OPENERS):
             quote = ch
         elif ch == "#" and (i == 0 or line[i - 1] in " \t"):
             return line[:i]
@@ -144,7 +158,7 @@ def _split_key(s):
         if quote:
             if ch == quote:
                 quote = None
-        elif ch in ("'", '"'):
+        elif ch in ("'", '"') and (i == 0 or s[i - 1] in _QUOTE_OPENERS):
             quote = ch
         elif ch == ":":
             if i + 1 == len(s):
@@ -156,21 +170,36 @@ def _split_key(s):
 
 def _parse_scalar(s, lineno=None):
     s = s.strip()
-    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
-        return s[1:-1]
-    if s.startswith("[") and s.endswith("]"):
-        inner = s[1:-1].strip()
-        if not inner:
-            return []
-        return [_parse_scalar(part, lineno) for part in inner.split(",")]
-    if s == "{}":
-        return {}
+    if not s:
+        return None
+    first = s[0]
+    if first in ("'", '"'):
+        end = s.find(first, 1)
+        if end == -1:
+            raise MiniYamlError("引用符が閉じていません: %s" % s, lineno)
+        if end != len(s) - 1:
+            raise MiniYamlError("引用符の後に余分な文字があります: %s" % s, lineno)
+        inner = s[1:-1]
+        if first == '"' and "\\" in inner:
+            raise MiniYamlError(
+                "引用符内のエスケープシーケンス(\\)には対応していません", lineno)
+        return inner
+    if first == "[":
+        if not s.endswith("]"):
+            raise MiniYamlError("フローリストが閉じていません: %s" % s, lineno)
+        return _parse_flow_list(s[1:-1], lineno)
+    if first == "{":
+        if s == "{}":
+            return {}
+        raise MiniYamlError("フローマップ({a: 1}形式)には対応していません", lineno)
+    if first in ("&", "*"):
+        raise MiniYamlError("アンカー/エイリアス(& *)には対応していません", lineno)
     low = s.lower()
     if low in ("null", "~"):
         return None
-    if low == "true":
+    if low in ("true", "yes", "on"):
         return True
-    if low == "false":
+    if low in ("false", "no", "off"):
         return False
     try:
         return int(s)
@@ -181,3 +210,31 @@ def _parse_scalar(s, lineno=None):
     except ValueError:
         pass
     return s
+
+
+def _parse_flow_list(inner, lineno=None):
+    inner = inner.strip()
+    if not inner:
+        return []
+    items = []
+    buf = []
+    quote = None
+    for ch in inner:
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"') and not "".join(buf).strip():
+            buf.append(ch)
+            quote = ch
+        elif ch in "[{":
+            raise MiniYamlError("ネストしたフロー形式には対応していません", lineno)
+        elif ch == ",":
+            items.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    if quote:
+        raise MiniYamlError("引用符が閉じていません", lineno)
+    items.append("".join(buf))
+    return [_parse_scalar(item.strip(), lineno) for item in items]

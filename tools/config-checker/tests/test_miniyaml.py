@@ -73,6 +73,38 @@ class MiniYamlTest(unittest.TestCase):
         with self.assertRaises(miniyaml.MiniYamlError):
             miniyaml.load("a: 1\na: 2\n")
 
+    def test_plain_scalar_with_apostrophe_and_comment(self):
+        """語中のアポストロフィを引用符と誤認してコメントを取り込まないこと。"""
+        self.assertEqual(
+            miniyaml.load("note: Bob's rule # comment"),
+            {"note": "Bob's rule"})
+
+    def test_flow_list_with_quoted_comma(self):
+        self.assertEqual(
+            miniyaml.load('tags: ["a,b", c]'), {"tags": ["a,b", "c"]})
+
+    def test_document_markers(self):
+        self.assertEqual(miniyaml.load("---\na: 1\n...\n"), {"a": 1})
+
+    def test_yaml11_booleans(self):
+        self.assertEqual(
+            miniyaml.load("a: yes\nb: off\n"), {"a": True, "b": False})
+
+    def test_unsupported_constructs_raise(self):
+        """非対応構文は黙って誤解釈せず、明確なエラーになること。"""
+        docs = (
+            "m: {a: 1}",            # フローマップ
+            "a: &x v",              # アンカー
+            "a: *x",                # エイリアス
+            's: "a\\nb"',           # エスケープシーケンス
+            "l: [[1], 2]",          # ネストしたフロー形式
+            "v: 'a' and 'b'",       # 引用符の後に余分な文字
+            "d1: 1\n---\nd2: 2\n",  # 複数ドキュメント
+        )
+        for doc in docs:
+            with self.assertRaises(miniyaml.MiniYamlError):
+                miniyaml.load(doc)
+
 
 if __name__ == "__main__":
     unittest.main()

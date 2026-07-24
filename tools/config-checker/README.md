@@ -32,7 +32,8 @@ python checker.py 見積.csv --no-header             # ヘッダー無し(型番
 python checker.py 見積.csv --rules 別のルール.yaml  # ルールファイルを差し替え
 ```
 
-- 文字コードはUTF-8/CP932(Excel保存のShift-JIS)を自動判定
+- 文字コードはUTF-8/CP932(Excel保存のShift-JIS)/UTF-16(Excelの「Unicodeテキスト」
+  保存・タブ区切り)を自動判定
 - ヘッダー行は先頭30行から自動検出(Part Number / Product ID / 型番 / 数量 等)。
   CCWの実際のエクスポートと列名が合わない場合は `--col-part` 等で指定
 - 全角の型番・数量も自動で半角に正規化
