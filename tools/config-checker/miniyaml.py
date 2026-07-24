@@ -1,0 +1,183 @@
+# -*- coding: utf-8 -*-
+"""ごく小さなYAMLサブセットローダー。
+
+pipが使えない業務端末などPyYAMLが入っていない環境でも rules.yaml を
+読めるようにするための予備パーサー。PyYAMLがある環境ではそちらが
+優先される（checker.py参照）。
+
+対応: ネストしたマップ / リスト / スカラー / "引用符" / # コメント /
+      1行フローリスト [a, b, c]
+非対応: 複数行スカラー(| や >) / アンカー・エイリアス / フローマップ /
+        タブインデント / 引用符内のエスケープシーケンス
+"""
+
+
+class MiniYamlError(ValueError):
+    def __init__(self, message, lineno=None):
+        if lineno is not None:
+            message = "%d行目: %s" % (lineno, message)
+        super().__init__(message)
+
+
+def load(text):
+    """YAMLサブセットのテキストをPythonオブジェクトにして返す。"""
+    lines = _significant_lines(text)
+    if not lines:
+        return None
+    value, next_i = _parse_block(lines, 0, lines[0][0])
+    if next_i != len(lines):
+        raise MiniYamlError("インデント構造が不正です", lines[next_i][2])
+    return value
+
+
+def _significant_lines(text):
+    """(インデント幅, 中身, 行番号) のリストに正規化する。"""
+    out = []
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        leading = raw[: len(raw) - len(raw.lstrip())]
+        if "\t" in leading:
+            raise MiniYamlError("インデントにタブは使えません", lineno)
+        line = _strip_comment(raw).rstrip()
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        out.append((indent, line.strip(), lineno))
+    return out
+
+
+def _strip_comment(line):
+    """引用符の外にある ' #' 以降を落とす。"""
+    quote = None
+    for i, ch in enumerate(line):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch == "#" and (i == 0 or line[i - 1] in " \t"):
+            return line[:i]
+    return line
+
+
+def _parse_block(lines, i, indent):
+    content = lines[i][1]
+    if content == "-" or content.startswith("- "):
+        return _parse_list(lines, i, indent)
+    return _parse_map(lines, i, indent)
+
+
+def _parse_list(lines, i, indent):
+    result = []
+    while i < len(lines):
+        ind, content, lineno = lines[i]
+        if ind < indent:
+            break
+        if ind > indent:
+            raise MiniYamlError("リスト項目のインデントが揃っていません", lineno)
+        if not (content == "-" or content.startswith("- ")):
+            break
+        rest = content[1:].lstrip()
+        if rest == "":
+            # 「-」単独: 次行以降のネストブロックが項目の値
+            if i + 1 < len(lines) and lines[i + 1][0] > indent:
+                value, i = _parse_block(lines, i + 1, lines[i + 1][0])
+                result.append(value)
+            else:
+                result.append(None)
+                i += 1
+        elif _split_key(rest) is not None:
+            # 「- key: ...」: マップ項目。仮想インデントを立てて部分パース
+            offset = len(content) - len(rest)
+            virtual = ind + offset
+            sub = [(virtual, rest, lineno)]
+            i += 1
+            while i < len(lines) and lines[i][0] >= virtual:
+                sub.append(lines[i])
+                i += 1
+            value, consumed = _parse_map(sub, 0, virtual)
+            if consumed != len(sub):
+                raise MiniYamlError("リスト項目内のインデントが不正です", sub[consumed][2])
+            result.append(value)
+        else:
+            result.append(_parse_scalar(rest, lineno))
+            i += 1
+    return result, i
+
+
+def _parse_map(lines, i, indent):
+    result = {}
+    while i < len(lines):
+        ind, content, lineno = lines[i]
+        if ind < indent:
+            break
+        if ind > indent:
+            raise MiniYamlError("インデントが揃っていません", lineno)
+        if content == "-" or content.startswith("- "):
+            raise MiniYamlError("マップの中にリスト項目が直接現れました", lineno)
+        kv = _split_key(content)
+        if kv is None:
+            raise MiniYamlError("'key: value' 形式ではありません: %s" % content, lineno)
+        key, val = kv
+        if len(key) >= 2 and key[0] == key[-1] and key[0] in ("'", '"'):
+            key = key[1:-1]
+        if key in result:
+            raise MiniYamlError("キーが重複しています: %s" % key, lineno)
+        if val == "":
+            if i + 1 < len(lines) and lines[i + 1][0] > ind:
+                value, i = _parse_block(lines, i + 1, lines[i + 1][0])
+                result[key] = value
+            else:
+                result[key] = None
+                i += 1
+        else:
+            if val in ("|", "|-", "|+", ">", ">-", ">+"):
+                raise MiniYamlError("複数行スカラー(| / >)には対応していません", lineno)
+            result[key] = _parse_scalar(val, lineno)
+            i += 1
+    return result, i
+
+
+def _split_key(s):
+    """引用符の外にある「: 」または行末の「:」でキーと値に分ける。"""
+    quote = None
+    for i, ch in enumerate(s):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch == ":":
+            if i + 1 == len(s):
+                return s[:i].strip(), ""
+            if s[i + 1] == " ":
+                return s[:i].strip(), s[i + 2 :].strip()
+    return None
+
+
+def _parse_scalar(s, lineno=None):
+    s = s.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
+        return s[1:-1]
+    if s.startswith("[") and s.endswith("]"):
+        inner = s[1:-1].strip()
+        if not inner:
+            return []
+        return [_parse_scalar(part, lineno) for part in inner.split(",")]
+    if s == "{}":
+        return {}
+    low = s.lower()
+    if low in ("null", "~"):
+        return None
+    if low == "true":
+        return True
+    if low == "false":
+        return False
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    return s

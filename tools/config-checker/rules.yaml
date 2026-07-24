@@ -1,0 +1,126 @@
+# =====================================================================
+# 構成チェッカー ルールDB
+#
+# このファイルが「支店の落とし穴知識」の本体であり、最も価値のある資産。
+# チェッカー本体(checker.py)は使い捨てできるが、このDBは育てるもの。
+#
+# 運用ルール:
+#   - status: confirmed = 有識者レビュー済みの公認ルール
+#   - status: draft     = 赤入れ待ちのドラフト(参考指摘として表示される)
+#   - 追加原価が発生したら、必ず対応するルールを1件追加してから清算する
+#     (ソフトウェア開発の「バグには必ず回帰テストを書く」文化の移植)
+#   - patterns の正規表現(SKUの型番パターン)こそベテランの赤入れ対象
+#
+# ルールは2種類:
+#   type: check    = 判定型。BOM内で完結して白黒つくもの
+#   type: question = 質問型。BOMのパターンから「既存環境の確認」を強制するもの
+#                    (「そこに無いもの」を検出する。回答は前提条件として提出)
+# =====================================================================
+
+patterns:
+  # --- 無線 ---
+  ap_models:
+    - "^AIR-AP[0-9]"        # AIR-AP1852 等 (AIR-AP-BRACKET等の部材は除外)
+    - "^AIR-CAP[0-9]"
+    - "^C91[0-9]{2}AX"      # Catalyst 9105/9115/9120/9130 等
+    - "^CW91[0-9]{2}"       # CW9162/9164/9166 等
+  wlc_models:
+    - "^AIR-CT[0-9]{4}"     # AireOS WLC (2504/3504/5520/8540)
+    - "^C9800-"             # Catalyst 9800 (-40/-80/-L/-CL)
+  wlc_ap_licenses:
+    - "^LIC-CT"             # AireOS AP追加ライセンス
+    - "^AIR-DNA"            # 無線DNAサブスクリプション
+    - "^D-AIR"
+
+  # --- セキュリティ ---
+  asa_hardware:
+    - "^ASA55[0-9]{2}"      # ASA5506-X/5508/5516 等
+  asa_licenses:
+    - "^L-ASA"
+
+  # --- スイッチ・共通部材 ---
+  switch_models:
+    - "^WS-C[0-9]{4}"       # Catalyst 2960/3650/3850 等
+    - "^C9[0-9]{3}L?-[0-9]" # C9200L-24T / C9300-48P 等 (DNAライセンスやNMモジュールは除外)
+  optics:
+    - "^SFP-"
+    - "^GLC-"
+    - "^QSFP-"
+  support_contracts:
+    - "^CON-"               # SmartNet等の保守SKU
+  hardware_any:
+    - "^AIR-AP[0-9]"
+    - "^AIR-CAP[0-9]"
+    - "^C91[0-9]{2}AX"
+    - "^CW91[0-9]{2}"
+    - "^AIR-CT[0-9]{4}"
+    - "^C9800-"
+    - "^ASA55[0-9]{2}"
+    - "^WS-C[0-9]{4}"
+    - "^C9[0-9]{3}L?-[0-9]"
+
+rules:
+  # -------------------------------------------------------------------
+  # 承認済みルール (2026-07-24 支店公認 第1号・第2号)
+  # -------------------------------------------------------------------
+  - id: WLC-001
+    name: 既存WLC収容時のライセンス・性能確認
+    type: question
+    status: confirmed
+    trigger:
+      present: [ap_models]
+      absent: [wlc_models, wlc_ap_licenses]
+    questions:
+      - "収容先の既存WLCの機種と、現在の収容AP数は？"
+      - "追加後の合計AP数は、ライセンス上限・性能上限に収まるか？"
+      - "収まらない場合、増分ライセンスは本見積に含めたか？"
+    rationale: "APは必ずどこかのWLCに収容される。BOMにWLCが無い＝既存収容が前提。"
+    incident: "20XX年○○案件(追加原価 約XX万円) ※実際の年・案件・金額に差し替えること"
+
+  - id: ASA-001
+    name: ASA HA構成のライセンス数量チェック
+    type: check
+    status: confirmed
+    trigger:
+      present: [asa_hardware]
+      min_qty:
+        asa_hardware: 2
+    check:
+      qty_at_least:
+        group: asa_licenses
+        reference: asa_hardware
+    message: "ASA本体 {qty:asa_hardware} 台に対し、ASAライセンスが {qty:asa_licenses} 本しかありません。HA構成では両号機に同等のライセンスが必要です。"
+    questions:
+      - "本構成はHA(冗長化)前提か？前提なら不足分のライセンスを見積に追加したか？"
+    rationale: "HAペアには両号機分のライセンスが必要。不足するとHAが組めない。"
+    incident: "20XX年△△案件(追加原価 約XX万円) ※実際の年・案件・金額に差し替えること"
+
+  # -------------------------------------------------------------------
+  # ドラフトルール (赤入れ募集中 — 的外れなら直すか消してください)
+  # -------------------------------------------------------------------
+  - id: OPT-001
+    name: 光モジュールの計上漏れ
+    type: question
+    status: draft
+    trigger:
+      present: [switch_models]
+      absent: [optics]
+    questions:
+      - "アップリンク/対向機器との接続方式は？光接続なら光モジュールはどこで計上したか？"
+      - "対向側(既存機器・他社機器)の光モジュールは誰が用意するか？"
+      - "既存流用の場合、規格(SR/LR・速度)は一致しているか？"
+    rationale: "スイッチ本体だけ見積り、光モジュールと対向側を落とすのは定番の穴。"
+    incident: "(事例待ち)"
+
+  - id: SNT-001
+    name: 保守契約の計上漏れ
+    type: question
+    status: draft
+    trigger:
+      present: [hardware_any]
+      absent: [support_contracts]
+    questions:
+      - "保守(SmartNet等)は本見積に含めるか、別契約か？"
+      - "別契約の場合、その旨を前提条件に明記したか？"
+    rationale: "ハードウェアがあるのに保守SKU(CON-)が1行も無い場合、含め忘れの可能性がある。"
+    incident: "(事例待ち)"

@@ -1,1 +1,5 @@
 * text=auto eol=lf
+
+# Windows(PowerShell 5.1 / Excel)向け配布物はBOM付きUTF-8+CRLFを維持する
+*.ps1 text eol=crlf
+tools/outlook-ins-tagger/*.csv text eol=crlf
