@@ -69,6 +69,7 @@ INS    合計時間  件数
 |---|---|---|
 | `-Date` | 昨日 | 対象開始日 |
 | `-Days` | 1 | 対象日数 |
+| `-DictionaryPath` | スクリプトと同じ場所の `ins_dictionary.csv` | キーワード辞書のパス |
 | `-Target` | `Category` | `Category`=分類に付与 / `SubjectPrefix`=件名の先頭に付与 |
 | `-InsFormat` | `INS:{0}` | 付与する文字列の書式 |
 | `-Apply` | なし | 付けたときだけ実際に書き込む(既定はドライラン) |

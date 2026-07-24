@@ -27,8 +27,9 @@ Python 3.8以上があれば動きます。**追加ライブラリ不要**
 ```
 python checker.py 見積.csv
 python checker.py 見積.csv --out report.md        # レポートをファイルに保存
-python checker.py 見積.csv --col-part "Part Number" --col-qty "Qty"
+python checker.py 見積.csv --col-part "Part Number" --col-qty "Qty" --col-desc "Description"
 python checker.py 見積.csv --no-header             # ヘッダー無し(型番,説明,数量の列順)
+python checker.py 見積.csv --rules 別のルール.yaml  # ルールファイルを差し替え
 ```
 
 - 文字コードはUTF-8/CP932(Excel保存のShift-JIS)を自動判定
@@ -80,7 +81,7 @@ samples/ の2つの incident ファイルは過去の失敗事例を模したも
     qty_at_least:
       group: 対象グループ
       reference: 比較先グループ   # または min: 固定値
-  message: "警告文。{qty:グループ名} で数量を埋め込める"
+  message: "警告文。{qty:グループ名} で数量を埋め込める(グループ名は半角英数字)"
   questions:             # 出力する質問(質問型は必須)
     - "質問文"
   rationale: なぜこのルールがあるか
@@ -88,6 +89,7 @@ samples/ の2つの incident ファイルは過去の失敗事例を模したも
 ```
 
 グループ(型番の正規表現リスト)は `patterns:` に定義します。
+グループ名は半角英数字とアンダースコアで付けてください。
 
 ## テスト
 
