@@ -292,6 +292,7 @@ def cmd_bet(args):
         "id": (max((b["id"] for b in bets), default=0) + 1),
         "date": args.date or date.today().isoformat(),
         "race": args.race,
+        "race_id": args.race_id,   # あると run.py settle が自動決済できる
         "type": args.type,
         "sel": args.sel,
         "odds": args.odds,
@@ -382,6 +383,8 @@ def main():
 
     b = sub.add_parser("bet", help="ベットを記帳する（購入前に実行）")
     b.add_argument("--race", required=True)
+    b.add_argument("--race-id", default=None,
+                   help="netkeibaのrace_id。入れておくと run.py settle が自動決済する")
     b.add_argument("--type", required=True, help="単勝 / 複勝 / 馬連 など")
     b.add_argument("--sel", required=True, help="買い目（馬番など）")
     b.add_argument("--odds", type=float, required=True)
