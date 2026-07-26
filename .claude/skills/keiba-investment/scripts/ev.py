@@ -241,6 +241,46 @@ def cmd_market(args):
                   "オッズが全出走馬分そろっているか確認してください")
 
 
+def cmd_threshold(args):
+    """各馬について「賭けるために必要な確信の水準」を出す。
+
+    オッズしか手元に無い段階で唯一できる、意味のある作業がこれ。
+    自分の確率を市場から作ることはできない（それでは期待値が控除率の分だけ
+    必ずマイナスになる）が、「どこまで強気になれば買えるか」という
+    判断の敷居は、オッズだけから確定的に決まる。
+
+    必要確率 = min_ev / オッズ。
+    これを市場の暗黙確率と比べた倍率は
+        必要確率 / 市場確率 = min_ev × Σ(1/オッズ)
+    となり、実は全馬で同じ値になる。控除率と要求期待値だけで決まるためで、
+    「どの馬を選ぶか」以前に、市場よりどれだけ強気である必要があるかが
+    この一つの数字に集約される。
+    """
+    odds = args.odds
+    labels = args.labels or [f"{i+1}" for i in range(len(odds))]
+    if len(labels) != len(odds):
+        raise ValueError("--labels の数が --odds と一致しません")
+    market, to = implied_probs(odds)
+    booksum = sum(1.0 / o for o in odds)
+    ratio = args.min_ev * booksum
+
+    print(f"要求期待値 {args.min_ev*100:.0f}%  /  実効控除率 {to*100:.1f}%")
+    print(f"→ どの馬でも、市場の見立ての {ratio:.2f}倍 の勝率を確信できなければ買えない")
+    print()
+    print(pad("馬", 22) + pad("オッズ", 8, True) + pad("市場確率", 10, True)
+          + pad("必要確率", 10, True))
+    print("-" * 50)
+    order = sorted(range(len(odds)), key=lambda i: odds[i])
+    for i in order:
+        need = args.min_ev / odds[i]
+        print(pad(labels[i], 22) + pad(f"{odds[i]:.1f}", 8, True)
+              + pad(f"{market[i]*100:.1f}%", 10, True)
+              + pad(f"{need*100:.1f}%", 10, True))
+    print("-" * 50)
+    print("※ 必要確率は「賭けてよい下限」であって、予測値ではない。")
+    print("  市場を見ずに出した自分の確率がこれを超えた馬だけが買い目になる。")
+
+
 def cmd_quick(args):
     ev = args.p * args.odds
     f = kelly_single(args.p, args.odds) * args.fraction
@@ -273,6 +313,12 @@ def main():
     m.add_argument("--tau", type=float, default=1.0, help="本命-大穴バイアス補正指数（既定1.0=補正なし）")
     m.set_defaults(func=cmd_market)
 
+    t = sub.add_parser("threshold", help="各馬を買うために必要な確率の下限を出す")
+    t.add_argument("--odds", type=float, nargs="+", required=True)
+    t.add_argument("--labels", nargs="+", default=None)
+    t.add_argument("--min-ev", dest="min_ev", type=float, default=1.10)
+    t.set_defaults(func=cmd_threshold)
+
     q = sub.add_parser("quick", help="単発の期待値とケリー")
     q.add_argument("--p", type=float, required=True, help="自分の的中確率（0〜1）")
     q.add_argument("--odds", type=float, required=True)
@@ -295,3 +341,9 @@ if __name__ == "__main__":
     except (ValueError, KeyError, FileNotFoundError) as e:
         print(f"エラー: {e}", file=sys.stderr)
         sys.exit(1)
+    except BrokenPipeError:
+        # `| head` などで出力を打ち切られた場合。異常ではない
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)
