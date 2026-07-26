@@ -45,6 +45,15 @@ CCNP ENCOR(350-401)に**2026年9月(上期末)合格**するための、ギャ�
 - [docs/study-plan.md](docs/study-plan.md) — 7〜9月の週次学習計画・1日のルーチン・if-thenルール・モチベーション維持の仕組み
 - [docs/simulation.md](docs/simulation.md) — ENCORシミュレーション(ラボ)問題の対策メモ・頻出設定テーマ・本番の立ち回り
 
+## 🐎 おまけ: Claude Code スキル
+
+学習アプリとは別に、このリポジトリには Claude Code 用のスキルが同梱されています。
+
+- [.claude/skills/keiba-investment](.claude/skills/keiba-investment/SKILL.md) — 競馬を期待値と資金管理で運用するためのスキル。
+  Claudeが自分の資金（仮想）を持ち、レースごとに勝率を見積もって市場オッズと比較し、
+  優位性がある時だけ賭け、全ベットを台帳に記録して回収率・キャリブレーションを検証し続けます。
+  このリポジトリを開いた Claude Code セッションで自動的に読み込まれます。
+
 ## 🗺️ 合格までのロードマップ
 
 ```
