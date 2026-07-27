@@ -1,0 +1,58 @@
+# 手入力用のテンプレート。使うときは portfolio.yaml にコピーして書き換える。
+# CSVで取れない銘柄の補完と、CSVに載らない保証金情報の入力に使う。
+# CSVと同じフォルダに置けば自動でマージされる（同じ銘柄を両方に書くと二重計上になるので注意）。
+
+asof: 2026-07-24
+
+# 証券総合口座の現金（預り金）
+cash: 523400
+
+# 信用取引の保証金。iSPEED の「信用建余力」画面か、
+# 楽天証券Webの「信用取引 > 保証金状況」で確認して入れる。
+# ここが空だと委託保証金維持率が計算できない。
+margin_account:
+  cash_deposit: 800000        # 保証金現金
+  substitute_value: 1200000   # 代用有価証券の時価（掛目適用前）
+  substitute_haircut: 0.8     # 楽天証券の代用掛目は原則80%
+
+# 現物ポジション
+spot:
+  - symbol: "7203"
+    name: トヨタ自動車
+    account: 特定          # 特定 / 一般 / NISA成長投資枠 / NISAつみたて投資枠
+    quantity: 300
+    avg_cost: 2850
+    last_price: 3120       # 省略すると stooq から取得を試みる
+  - symbol: "9432"
+    name: 日本電信電話
+    account: NISA成長投資枠
+    quantity: 2000
+    avg_cost: 152
+  - symbol: AAPL
+    name: Apple Inc.
+    asset_class: us_stock  # 米国株はドル建てで書く（自動で円換算する）
+    account: 特定
+    quantity: 20
+    avg_cost: 214.5
+    currency: USD
+
+# 信用建玉
+margin:
+  - symbol: "6758"
+    name: ソニーグループ
+    side: 買建            # 買建 / 売建
+    kind: 制度            # 制度 / 一般 / いちにち
+    open_date: 2026-04-10
+    quantity: 200
+    open_price: 3200
+    last_price: 3050
+    accrued_cost: 1250    # 金利・貸株料などの累計
+  - symbol: "9984"
+    name: ソフトバンクグループ
+    side: 売建
+    kind: 制度
+    open_date: 2026-07-01
+    quantity: 100
+    open_price: 11200
+    last_price: 11850
+    accrued_cost: 2100

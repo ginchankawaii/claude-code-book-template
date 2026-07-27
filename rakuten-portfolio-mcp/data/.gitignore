@@ -1,0 +1,6 @@
+# 実際の口座データは絶対にコミットしない。
+# 追跡するのは .example. 付きのテンプレートとこのファイルだけ。
+*
+!.gitignore
+!*.example.yaml
+!*.example.json
