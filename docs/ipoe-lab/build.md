@@ -1,0 +1,117 @@
+# 構築手順
+
+各 VM は Ubuntu Server 24.04(OpenWrt-CE のみ OpenWrt x86/64)。NIC 割当は eth0=管理、eth1 以降を [README.md](README.md) のトポロジ図どおりに接続してください。
+設定ファイルとスクリプトは [`lab/ipoe/`](../../lab/ipoe/) にあります。各 VM にディレクトリごとコピーして実行する想定です。
+
+> 構築が終わったら**必ず全 VM のスナップショットを取得**してください。障害注入や壊す系の検証後に数秒で初期状態へ戻せることが、このラボの価値の半分です。
+
+## 1. NGN-SIM(NGN 網模擬)
+
+```bash
+sudo lab/ipoe/ngn/setup-ngn.sh ra   # ひかり電話なし相当: RA 方式 (/64)
+sudo lab/ipoe/ngn/setup-ngn.sh pd   # ひかり電話あり相当: DHCPv6-PD 方式 (/56)
+```
+
+- `ra` モード: radvd([`ngn/radvd.conf`](../../lab/ipoe/ngn/radvd.conf))が `2001:db8:1000:1::/64` を RA(A/O フラグ)+ RDNSS で配布
+- `pd` モード: kea([`ngn/kea-dhcp6.conf`](../../lab/ipoe/ngn/kea-dhcp6.conf))が `2001:db8:100a:0500::/56` を PD で委譲し、radvd はデフォルト経路広報のみ(M/O フラグ、A なし)
+- どちらのモードでも NGN-SIM がアクセス網のデフォルトルータとなり、ユーザ宛プレフィックスと VNE(BR/AFTR)間をルーティングします
+- **プレフィックス変更トラブルの再現**(ひかり電話契約変更相当)は、モードを `ra`→`pd` に切り替えて CPE の追従を見るだけです
+
+## 2. BRAS(PPPoE 終端)
+
+```bash
+sudo lab/ipoe/bras/setup-bras.sh
+```
+
+- accel-ppp([`bras/accel-ppp.conf`](../../lab/ipoe/bras/accel-ppp.conf))が eth1 上で PPPoE を終端。認証は [`bras/chap-secrets`](../../lab/ipoe/bras/chap-secrets)(`user1@isp-a.example` / `pass1` など)
+- MTU/MRU 1454、プール `100.64.1.0/24`、上流は eth2 → INET-SIM 経由で NAT
+- セッション操作(残留セッションの再現・強制切断):
+
+```bash
+accel-cmd show sessions
+accel-cmd terminate username user1@isp-a.example
+```
+
+## 3. VNE(MAP-E BR + DS-Lite AFTR)
+
+```bash
+sudo lab/ipoe/vne/setup-map-br.sh   # MAP-E 検証時
+sudo lab/ipoe/vne/setup-aftr.sh    # DS-Lite 検証時(両方同時起動も可)
+```
+
+- MAP-E BR: CE の MAP アドレス(既定 `2001:db8:100a:500:0:c633:640a:5`)との ip6tnl を張り、共有 IPv4 `198.51.100.10` を復路ルーティング。CE 側 NAT なので BR では NAT しません
+- AFTR: CE の WAN アドレスとの ip6tnl + nftables masquerade(RFC 6333 の `192.0.0.1/192.0.2` を使用)。**ポート開放不可の再現はこの構成そのもの**です
+- MAP ルール(CPE に設定する値):
+
+| パラメータ | 値 |
+|---|---|
+| rule-ipv6-prefix | `2001:db8:1000::/40` |
+| rule-ipv4-prefix | `198.51.100.0/24` |
+| ea-len / psid-offset | 16 / 4 |
+| BR アドレス | `2001:db8:9999::1` |
+
+PD `2001:db8:100a:0500::/56` からの計算結果: IPv4 = `198.51.100.10`、PSID = 5(利用可能ポートは `0x1050-0x105F`(4176-4191)など 16 ポート × 15 ブロック = 240 ポート)。CPE の自動計算値がこれと一致するかが最初の確認ポイントです。
+
+## 4. INET-SIM(模擬インターネット)
+
+```bash
+sudo lab/ipoe/inet/setup-inet.sh
+```
+
+- nginx が `http://203.0.113.80` / `http://[2001:db8:cafe::80]` で応答(応答ページに接続元アドレスを表示 → CPE がどの方式で出てきたか一目で判別可能)
+- dnsmasq が `www.lab.example` の A/AAAA を返答
+- 障害注入ヘルパ(DNS フォールバックや MTU ブラックホール再現に使用):
+
+```bash
+sudo lab/ipoe/inet/setup-inet.sh break-v6     # IPv6 だけ死んだサイトを再現
+sudo lab/ipoe/inet/setup-inet.sh restore
+```
+
+## 5. OpenWrt-CE(リファレンス CPE)
+
+OpenWrt x86/64 を VM 化し、WAN を PG-ACCESS、LAN を検証クライアント用 PG へ。`map` / `ds-lite` / `ppp-mod-pppoe` パッケージを導入します。
+
+```bash
+opkg update && opkg install map ds-lite
+```
+
+`/etc/config/network` の要点(方式ごとに wan セクションを切替):
+
+```
+# PPPoE
+config interface 'wan'
+        option proto 'pppoe'
+        option username 'user1@isp-a.example'
+        option password 'pass1'
+
+# MAP-E(値は上の MAP ルール表のとおり)
+config interface 'wanmap'
+        option proto 'map'
+        option maptype 'map-e'
+        option peeraddr '2001:db8:9999::1'
+        option ipaddr '198.51.100.0'
+        option ip4prefixlen '24'
+        option ip6prefix '2001:db8:1000::'
+        option ip6prefixlen '40'
+        option ealen '16'
+        option offset '4'
+        option tunlink 'wan6'
+
+# DS-Lite
+config interface 'wandsl'
+        option proto 'dslite'
+        option peeraddr '2001:db8:8888::1'
+        option tunlink 'wan6'
+```
+
+実機 CPE(お客様と同型機)を検証する場合は、ESXi ホストの空き物理 NIC を PG-ACCESS のアップリンクにして接続します(PG のセキュリティ 3 項目を「承諾」にしておくこと)。
+
+## 6. 動作確認
+
+CPE 配下のクライアント(Linux)で:
+
+```bash
+lab/ipoe/tests/run-checks.sh
+```
+
+IPv6 取得 → v4/v6 疎通 → DNS(A/AAAA)→ MTU 実測 → HTTP 到達性 を PASS/FAIL で判定します。結果はそのまま切替前後のエビデンスとして保存できます。
