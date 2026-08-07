@@ -8,6 +8,10 @@ set -euo pipefail
 MODE="${1:?usage: $0 ra|pd}"
 LABDIR="$(cd "$(dirname "$0")" && pwd)"
 
+# NIC名は環境変数で上書き可 (Ubuntu 24.04のpredictable namingでは ens18/ens19 等になる)
+ACCESS_IF="${ACCESS_IF:-eth1}"
+CORE_IF="${CORE_IF:-eth2}"
+
 CORE_SELF="2001:db8:ff00::1/64"
 CORE_VNE="2001:db8:ff00::2"
 
@@ -21,34 +25,38 @@ EOF
 sysctl --system >/dev/null
 
 # アドレス付与
-ip -6 addr replace 2001:db8:1000:1::1/64 dev eth1   # アクセス網側 (RA 方式の GW)
-ip -6 addr replace ${CORE_SELF} dev eth2
-ip link set eth1 up; ip link set eth2 up
+ip -6 addr replace 2001:db8:1014:300::1/64 dev "${ACCESS_IF}"   # アクセス網側 (RA 方式の GW)
+ip -6 addr replace ${CORE_SELF} dev "${CORE_IF}"
+ip link set "${ACCESS_IF}" up; ip link set "${CORE_IF}" up
 
 # 網内ルーティング: BR/AFTR と外向き v6 は VNE 経由
 ip -6 route replace 2001:db8:9999::/64 via ${CORE_VNE}
 ip -6 route replace 2001:db8:8888::/64 via ${CORE_VNE}
 ip -6 route replace 2001:db8:cafe::/64 via ${CORE_VNE}
-# PD 方式時、委譲プレフィックスの復路はアクセス網側リンクへ (CE の LL 宛は NDP で解決
-# できないため、簡易的に on-link 扱いにする。CE 実機の WAN GUA 宛 via 指定でも可)
-ip -6 route replace 2001:db8:100a:500::/56 dev eth1
+# PD 方式時、委譲プレフィックスの復路はアクセス網側リンクへ簡易的に on-link 扱い。
+# 注意: CE が MAP アドレス宛の NS に WAN 側で応答しない実装だと復路が死ぬ。
+# その場合は on-link をやめ、CE の WAN GUA を next-hop に指定する:
+#   ip -6 route replace 2001:db8:100a:500::/56 via <CEのWAN GUA> dev ${ACCESS_IF}
+ip -6 route replace 2001:db8:100a:500::/56 dev "${ACCESS_IF}"
 
 case "$MODE" in
   ra)
-    install -m 644 "${LABDIR}/radvd.conf" /etc/radvd.conf
+    sed "s/^interface eth1/interface ${ACCESS_IF}/" "${LABDIR}/radvd.conf" > /etc/radvd.conf
     systemctl disable --now kea-dhcp6-server 2>/dev/null || true
     systemctl enable --now radvd
     systemctl restart radvd
-    echo "[NGN-SIM] RA モード (ひかり電話なし相当, 2001:db8:1000:1::/64)"
+    echo "[NGN-SIM] RA モード (ひかり電話なし相当, 2001:db8:1014:300::/64)"
+    echo "  この /64 での MAP-E 期待値: 共有IPv4=198.51.100.20, PSID=3"
     ;;
   pd)
     # RA は経路広報 + M/O フラグのみ (プレフィックスは配らず PD で委譲)
-    sed '/prefix 2001/,/};/d; s/AdvManagedFlag off/AdvManagedFlag on/' \
+    sed "/prefix 2001/,/};/d; s/AdvManagedFlag off/AdvManagedFlag on/; s/^interface eth1/interface ${ACCESS_IF}/" \
         "${LABDIR}/radvd.conf" > /etc/radvd.conf
-    install -m 644 "${LABDIR}/kea-dhcp6.conf" /etc/kea/kea-dhcp6.conf
+    sed "s/\"eth1\"/\"${ACCESS_IF}\"/" "${LABDIR}/kea-dhcp6.conf" > /etc/kea/kea-dhcp6.conf
     systemctl enable --now radvd kea-dhcp6-server
     systemctl restart radvd kea-dhcp6-server
     echo "[NGN-SIM] PD モード (ひかり電話あり相当, 2001:db8:100a:500::/56 を委譲)"
+    echo "  この /56 での MAP-E 期待値: 共有IPv4=198.51.100.10, PSID=5"
     ;;
   *) echo "usage: $0 ra|pd" >&2; exit 1 ;;
 esac

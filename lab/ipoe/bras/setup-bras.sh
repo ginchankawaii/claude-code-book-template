@@ -4,6 +4,8 @@
 set -euo pipefail
 LABDIR="$(cd "$(dirname "$0")" && pwd)"
 
+ACCESS_IF="${ACCESS_IF:-eth1}"
+INET_IF="${INET_IF:-eth2}"
 INET_SELF="203.0.113.2/24"
 
 apt-get update
@@ -40,21 +42,23 @@ net.ipv4.ip_forward=1
 EOF
 sysctl --system >/dev/null
 
-ip link set eth1 up
-ip addr replace ${INET_SELF} dev eth2
-ip link set eth2 up
-ip route replace default via 203.0.113.80   # 模擬インターネット側は INET-SIM を上流とみなす
+ip link set "${ACCESS_IF}" up
+ip addr replace ${INET_SELF} dev "${INET_IF}"
+ip link set "${INET_IF}" up
+# 注意: INET-SIM はパケット転送しない終端ホスト。この default はプールNAT後の
+# 通信が同一セグメントの INET-SIM に届くための形式的なルート(先に網はない)
+ip route replace default via 203.0.113.80
 
 mkdir -p /var/log/accel-ppp
-install -m 644 "${LABDIR}/accel-ppp.conf" /etc/accel-ppp.conf
+sed "s/^interface=eth1/interface=${ACCESS_IF}/" "${LABDIR}/accel-ppp.conf" > /etc/accel-ppp.conf
 install -m 600 "${LABDIR}/chap-secrets" /etc/ppp/chap-secrets
 
 # PPPoE プールを INET へ NAT (実網の ISP NAT なし構成を再現するなら削ること)
-nft -f - <<'EOF'
+nft -f - <<EOF
 table ip bras-nat {
   chain postrouting {
     type nat hook postrouting priority srcnat;
-    ip saddr 100.64.1.0/24 oifname "eth2" masquerade
+    ip saddr 100.64.1.0/24 oifname "${INET_IF}" masquerade
   }
 }
 EOF

@@ -66,17 +66,27 @@ Ubuntu Server 24.04 の VM を 3 台作り、NIC を次のとおり割当てま�
 
 各 VM に `lab/ipoe/` をコピーして実行:
 
-```bash
-# NGN-SIM
-sudo lab/ipoe/ngn/setup-ngn.sh ra        # まずはひかり電話なし相当から
+NIC 名は各スクリプトとも環境変数で上書きできます(Ubuntu 24.04 の既定は `ens18` 等になるため。[build.md](build.md) 冒頭参照)。
 
-# VNE+INET(同一VMで両方実行。INET側スクリプトはeth2想定なのでNIC名に注意)
-sudo lab/ipoe/vne/setup-map-br.sh
+```bash
+# NGN-SIM(まずは PD モード=ひかり電話あり相当から。MAP-E の既定値と揃っていて迷わない)
+sudo lab/ipoe/ngn/setup-ngn.sh pd
+
+# VNE+INET(同一VMで両方実行)
+sudo lab/ipoe/vne/setup-map-br.sh        # PD モードの既定値のまま
 sudo lab/ipoe/vne/setup-aftr.sh
-sudo lab/ipoe/inet/setup-inet.sh
+sudo INET_IF=eth2 lab/ipoe/inet/setup-inet.sh   # 同居時は INET 側 NIC 名を指定
 
 # BRAS(PPPoE切替前状態の再現が必要になったら)
 sudo lab/ipoe/bras/setup-bras.sh
+```
+
+RA モード(ひかり電話なし相当)を試す時は **NGN-SIM と BR の値をセットで**切り替えます([build.md §3](build.md) の対応表参照):
+
+```bash
+sudo lab/ipoe/ngn/setup-ngn.sh ra
+sudo CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 \
+     lab/ipoe/vne/setup-map-br.sh
 ```
 
 > VNE+INET 同居時の注意: setup-inet.sh 内の「復路ルート(via 203.0.113.1 / 2001:db8:cafe::1)」は同居により自分自身を指すため不要になります。エラーになっても無視して構いません。

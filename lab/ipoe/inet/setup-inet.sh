@@ -34,14 +34,16 @@ EOF
     echo "[INET-SIM] 復旧済み"; exit 0 ;;
 esac
 
+INET_IF="${INET_IF:-eth1}"
+
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y nginx dnsmasq nftables
 
-ip addr replace 203.0.113.80/24 dev eth1
-ip addr replace 203.0.113.53/24 dev eth1
-ip -6 addr replace 2001:db8:cafe::80/64 dev eth1
-ip -6 addr replace 2001:db8:cafe::53/64 dev eth1
-ip link set eth1 up
+ip addr replace 203.0.113.80/24 dev "${INET_IF}"
+ip addr replace 203.0.113.53/24 dev "${INET_IF}"
+ip -6 addr replace 2001:db8:cafe::80/64 dev "${INET_IF}"
+ip -6 addr replace 2001:db8:cafe::53/64 dev "${INET_IF}"
+ip link set "${INET_IF}" up
 ip route replace 100.64.0.0/10 via 203.0.113.2      # PPPoE プールの復路 → BRAS
 ip route replace 198.51.100.0/24 via 203.0.113.1    # MAP-E 共有 IPv4 の復路 → VNE
 ip -6 route replace default via 2001:db8:cafe::1    # v6 の戻りは VNE 経由
@@ -59,9 +61,9 @@ server {
 EOF
 systemctl enable --now nginx && systemctl restart nginx
 
-cat > /etc/dnsmasq.d/lab.conf <<'EOF'
+cat > /etc/dnsmasq.d/lab.conf <<EOF
 no-resolv
-interface=eth1
+interface=${INET_IF}
 bind-interfaces
 address=/www.lab.example/203.0.113.80
 address=/www.lab.example/2001:db8:cafe::80

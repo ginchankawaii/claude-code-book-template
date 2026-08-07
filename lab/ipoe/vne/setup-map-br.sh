@@ -6,13 +6,18 @@
 #
 # MAP ルール (CPE に設定する値):
 #   rule-ipv6-prefix 2001:db8:1000::/40 / rule-ipv4-prefix 198.51.100.0/24
-#   ea-len 16 / psid-offset 4  → PD 2001:db8:100a:500::/56 の CE は
-#   IPv4=198.51.100.10, PSID=5 (240ポート)
+#   ea-len 16 / psid-offset 4
+# モード別の既定値 (NGN-SIM の配布プレフィックスと整合):
+#   PD 方式 (/56 = 2001:db8:100a:500::/56): IPv4=198.51.100.10, PSID=5 → そのまま実行
+#   RA 方式 (/64 = 2001:db8:1014:300::/64): IPv4=198.51.100.20, PSID=3 →
+#     CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 $0
 set -euo pipefail
 
 BR_ADDR="2001:db8:9999::1"
 CE_MAP_ADDR="${CE_MAP_ADDR:-2001:db8:100a:500:0:c633:640a:5}"  # RFC7597 IID: 0000:IPv4:PSID
-CE_SHARED_V4="198.51.100.10"
+CE_SHARED_V4="${CE_SHARED_V4:-198.51.100.10}"
+CORE_IF="${CORE_IF:-eth1}"
+INET_IF="${INET_IF:-eth2}"
 CORE_SELF="2001:db8:ff00::2/64"
 CORE_NGN="2001:db8:ff00::1"
 INET_SELF="203.0.113.1/24"
@@ -24,10 +29,10 @@ net.ipv6.conf.all.forwarding=1
 EOF
 sysctl --system >/dev/null
 
-ip -6 addr replace ${CORE_SELF} dev eth1
-ip addr replace ${INET_SELF} dev eth2
-ip -6 addr replace ${INET_SELF6} dev eth2
-ip link set eth1 up; ip link set eth2 up
+ip -6 addr replace ${CORE_SELF} dev "${CORE_IF}"
+ip addr replace ${INET_SELF} dev "${INET_IF}"
+ip -6 addr replace ${INET_SELF6} dev "${INET_IF}"
+ip link set "${CORE_IF}" up; ip link set "${INET_IF}" up
 
 # BR アドレスと、ユーザプレフィックス帯の復路 (NGN 経由)
 ip -6 addr replace ${BR_ADDR}/128 dev lo
