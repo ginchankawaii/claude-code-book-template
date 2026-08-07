@@ -36,6 +36,22 @@ esac
 
 INET_IF="${INET_IF:-eth1}"
 
+# dnsmasq は systemd-resolved のスタブ (127.0.0.53:53) と衝突しインストール直後の起動に
+# 失敗することがあるため、先に設定を置き resolved のスタブを止めてから導入する
+mkdir -p /etc/systemd/resolved.conf.d
+printf '[Resolve]\nDNSStubListener=no\n' > /etc/systemd/resolved.conf.d/lab.conf
+systemctl restart systemd-resolved || true
+mkdir -p /etc/dnsmasq.d
+cat > /etc/dnsmasq.d/lab.conf <<EOF
+no-resolv
+interface=${INET_IF}
+bind-interfaces
+local-ttl=3600
+address=/www.lab.example/203.0.113.80
+address=/www.lab.example/2001:db8:cafe::80
+address=/v4only.lab.example/203.0.113.80
+EOF
+
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y nginx dnsmasq nftables
 
@@ -44,31 +60,30 @@ ip addr replace 203.0.113.53/24 dev "${INET_IF}"
 ip -6 addr replace 2001:db8:cafe::80/64 dev "${INET_IF}"
 ip -6 addr replace 2001:db8:cafe::53/64 dev "${INET_IF}"
 ip link set "${INET_IF}" up
-ip route replace 100.64.0.0/10 via 203.0.113.2      # PPPoE プールの復路 → BRAS
-ip route replace 198.51.100.0/24 via 203.0.113.1    # MAP-E 共有 IPv4 の復路 → VNE
-ip -6 route replace default via 2001:db8:cafe::1    # v6 の戻りは VNE 経由
+# 復路 (VNE と同居している場合は自アドレス宛 via となり失敗するが、その時は経路自体不要)
+ip route replace 100.64.0.0/10 via 203.0.113.2 || true    # PPPoE プールの復路 → BRAS
+ip route replace 198.51.100.0/24 via 203.0.113.1 || true  # MAP-E 共有 IPv4 の復路 → VNE
+ip -6 route replace default via 2001:db8:cafe::1 || true  # v6 の戻りは VNE 経由
 
-# 接続元アドレスを表示する確認ページ (CPE がどの方式・アドレスで出てきたか一目で分かる)
+# 接続元アドレスを表示する確認ページ + MTU/MSS 検証用の大サイズファイル
+mkdir -p /var/www/html
+head -c 5M /dev/urandom > /var/www/html/big.bin
 cat > /etc/nginx/sites-available/default <<'EOF'
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
-    location / {
+    root /var/www/html;
+    location = / {
         default_type text/plain;
         return 200 "lab-inet OK\nsrc: $remote_addr\nhost: $host\n";
+    }
+    location / {
+        try_files $uri =404;
     }
 }
 EOF
 systemctl enable --now nginx && systemctl restart nginx
-
-cat > /etc/dnsmasq.d/lab.conf <<EOF
-no-resolv
-interface=${INET_IF}
-bind-interfaces
-address=/www.lab.example/203.0.113.80
-address=/www.lab.example/2001:db8:cafe::80
-address=/v4only.lab.example/203.0.113.80
-EOF
 systemctl enable --now dnsmasq && systemctl restart dnsmasq
 
 echo "[INET-SIM] http://203.0.113.80 / http://[2001:db8:cafe::80] / DNS 203.0.113.53"
+echo "  MTU/MSS 検証用: /big.bin (5MB)"

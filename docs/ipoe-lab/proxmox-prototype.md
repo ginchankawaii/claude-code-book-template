@@ -89,7 +89,7 @@ sudo CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 \
      lab/ipoe/vne/setup-map-br.sh
 ```
 
-> VNE+INET 同居時の注意: setup-inet.sh 内の「復路ルート(via 203.0.113.1 / 2001:db8:cafe::1)」は同居により自分自身を指すため不要になります。エラーになっても無視して構いません。
+> VNE+INET 同居時の注意: setup-inet.sh 内の「復路ルート(via 203.0.113.1 / 2001:db8:cafe::1)」は同居により自分自身を指すため不要になります(スクリプトはこの場合エラーを無視して先へ進むようにしてあります)。
 
 ## 3. OpenWrt-CE VM の作成(定番手順)
 
@@ -99,7 +99,8 @@ wget https://downloads.openwrt.org/releases/24.10.0/targets/x86/64/openwrt-24.10
 gunzip openwrt-*.img.gz
 qemu-img resize -f raw openwrt-*.img 2G      # 元イメージは~100MBなので先に拡張
 qm create 200 --name openwrt-ce --memory 512 --cores 1 \
-  --net0 virtio,bridge=vmbr1 --net1 virtio,bridge=vmbr0 --bios ovmf --machine q35
+  --net0 virtio,bridge=vmbr1 --net1 virtio,bridge=vmbr0 \
+  --bios ovmf --efidisk0 local-lvm:0,efitype=4m --machine q35
 qm importdisk 200 openwrt-*.img local-lvm    # PVE 8.2以降は qm disk import
 # GUI: インポートされたディスクをscsi0としてアタッチ → ブート順に追加 → 起動
 ```
@@ -145,6 +146,16 @@ interface Tunnel0
 !
 ip route 0.0.0.0 0.0.0.0 Tunnel0     ! NATは網側(AFTR)なのでルータでのNAT44不要
 ```
+
+**重要: AFTR 側のトンネル対向合わせ。** RA 方式(`autoconfig`)の 892FJ の WAN アドレスは EUI-64 で決まるため事前に分かりません。ラボの AFTR は対向不一致の decap を破棄するので、892FJ 起動後に実アドレスを確認して AFTR を再実行します:
+
+```bash
+# 892FJ 側: show ipv6 interface gi8 で GUA を確認(または VNE 側で実測):
+# VNE 側: tcpdump -ni eth1 'ip6 proto 4' で encap の送信元を見る
+sudo CE_WAN6=<確認した GUA> lab/ipoe/vne/setup-aftr.sh
+```
+
+また classic IOS は PMTUD 頼みだと MTU 黒穴を踏みやすいため、LAN 側インターフェースに `ip tcp adjust-mss 1420` を入れておくのが実務でも定石です。
 
 これで「892FJ を PPPoE で BRAS に繋いだ状態 → DS-Lite へ切替 → 切戻し」という切替リハーサルの一連が、自宅で実機込みで練習できます。
 注意: classic IOS の IPv4 over IPv6 転送は CEF に乗らず低速になりがち+800 系はサポート終了済みのため、**あくまで練習台**。案件の実機検証は顧客と同型機で。

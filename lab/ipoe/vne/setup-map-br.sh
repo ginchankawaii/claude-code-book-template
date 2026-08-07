@@ -38,10 +38,10 @@ ip link set "${CORE_IF}" up; ip link set "${INET_IF}" up
 ip -6 addr replace ${BR_ADDR}/128 dev lo
 ip -6 route replace 2001:db8:1000::/40 via ${CORE_NGN}
 
-# MAP-E トンネル (BR⇔CE)。inner IPv4 MTU 1460
+# MAP-E トンネル (BR⇔CE)。IPv4-in-IPv6 なので mode は ipip6。inner IPv4 MTU 1460
 modprobe ip6_tunnel
 ip -6 tunnel del map0 2>/dev/null || true
-ip -6 tunnel add map0 mode ip6tnl local ${BR_ADDR} remote ${CE_MAP_ADDR} encaplimit none
+ip -6 tunnel add map0 mode ipip6 local ${BR_ADDR} remote ${CE_MAP_ADDR} encaplimit none
 ip link set map0 up mtu 1460
 ip route replace ${CE_SHARED_V4}/32 dev map0   # 共有 IPv4 宛の復路をトンネルへ
 

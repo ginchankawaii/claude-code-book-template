@@ -42,9 +42,11 @@ ip -6 route replace 2001:db8:100a:500::/56 dev "${ACCESS_IF}"
 case "$MODE" in
   ra)
     sed "s/^interface eth1/interface ${ACCESS_IF}/" "${LABDIR}/radvd.conf" > /etc/radvd.conf
-    systemctl disable --now kea-dhcp6-server 2>/dev/null || true
-    systemctl enable --now radvd
-    systemctl restart radvd
+    # 実網同様、RA 方式でもステートレス DHCPv6 (Information-Request への DNS 応答) は動かす
+    # (RDNSS 非対応 CPE の「v6 は付くのに名前解決できない」を防ぐ/検証するため)
+    sed "s/\"eth1\"/\"${ACCESS_IF}\"/" "${LABDIR}/kea-dhcp6-stateless.conf" > /etc/kea/kea-dhcp6.conf
+    systemctl enable --now radvd kea-dhcp6-server
+    systemctl restart radvd kea-dhcp6-server
     echo "[NGN-SIM] RA モード (ひかり電話なし相当, 2001:db8:1014:300::/64)"
     echo "  この /64 での MAP-E 期待値: 共有IPv4=198.51.100.20, PSID=3"
     ;;
@@ -53,6 +55,9 @@ case "$MODE" in
     sed "/prefix 2001/,/};/d; s/AdvManagedFlag off/AdvManagedFlag on/; s/^interface eth1/interface ${ACCESS_IF}/" \
         "${LABDIR}/radvd.conf" > /etc/radvd.conf
     sed "s/\"eth1\"/\"${ACCESS_IF}\"/" "${LABDIR}/kea-dhcp6.conf" > /etc/kea/kea-dhcp6.conf
+    # PD リース時に復路経路 (via CE) を自動投入するフックスクリプトを配置
+    sed "s/__ACCESS_IF__/${ACCESS_IF}/" "${LABDIR}/kea-pd-route.sh" > /usr/local/sbin/kea-pd-route.sh
+    chmod +x /usr/local/sbin/kea-pd-route.sh
     systemctl enable --now radvd kea-dhcp6-server
     systemctl restart radvd kea-dhcp6-server
     echo "[NGN-SIM] PD モード (ひかり電話あり相当, 2001:db8:100a:500::/56 を委譲)"

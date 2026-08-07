@@ -6,6 +6,8 @@
 設定ファイルとスクリプトは [`lab/ipoe/`](../../lab/ipoe/) にあります。各 VM にディレクトリごとコピーして実行する想定です。
 
 > 構築が終わったら**必ず全 VM のスナップショットを取得**してください。障害注入や壊す系の検証後に数秒で初期状態へ戻せることが、このラボの価値の半分です。
+>
+> **永続性の注意**: setup スクリプトが投入するアドレス・経路・トンネル・nft はランタイム設定です(永続なのは sysctl と systemd unit のみ)。スナップショットは**メモリ込み**で取得し、電源 OFF からの復元や再起動後は該当 VM の setup スクリプトを再実行してください(全スクリプト冪等なので再実行で復旧します)。
 
 ## 1. NGN-SIM(NGN 網模擬)
 
@@ -18,7 +20,7 @@ sudo lab/ipoe/ngn/setup-ngn.sh pd   # ひかり電話あり相当: DHCPv6-PD 方
 - `pd` モード: kea([`ngn/kea-dhcp6.conf`](../../lab/ipoe/ngn/kea-dhcp6.conf))が `2001:db8:100a:0500::/56` を PD で委譲し、radvd はデフォルト経路広報のみ(M/O フラグ、A なし)
 - どちらのモードでも NGN-SIM がアクセス網のデフォルトルータとなり、ユーザ宛プレフィックスと VNE(BR/AFTR)間をルーティングします
 - **実網 NGN の癖を再現**: Kea は DUID-LL(タイプ 0003)の Solicit にしか応答しません(実網 NGN と同じ挙動。DUID-LLT/EN の CPE は「無応答」でハマる — これが実網で頻発する事故の再現です)。この癖を外すには kea-dhcp6.conf の `client-class` 行を削除
-- PD モードの委譲プレフィックス復路は簡易的に on-link 扱いです。CE 実機が MAP アドレス宛の NS に WAN 側で応答しない場合は復路が落ちるため、その際は setup-ngn.sh 内のコメントに従い CE の WAN GUA を next-hop に指定してください
+- PD モードの委譲プレフィックス復路は、**Kea の run_script フック(kea-pd-route.sh)が PD リース時に「要求元 CE 宛の via 経路」を自動投入**します(実網の delegating router と同じ動き。on-link 経路だと CE が NS に応答せず復路が死ぬため)。フックが動いているかは `journalctl -t kea-pd-route` で確認できます
 - **プレフィックス変更トラブルの再現**(ひかり電話契約変更相当)は、モードを `ra`→`pd` に切り替えて CPE の追従を見るだけです
 
 ## 2. BRAS(PPPoE 終端)
@@ -27,7 +29,7 @@ sudo lab/ipoe/ngn/setup-ngn.sh pd   # ひかり電話あり相当: DHCPv6-PD 方
 sudo lab/ipoe/bras/setup-bras.sh
 ```
 
-- accel-ppp([`bras/accel-ppp.conf`](../../lab/ipoe/bras/accel-ppp.conf))が eth1 上で PPPoE を終端。認証は [`bras/chap-secrets`](../../lab/ipoe/bras/chap-secrets)(`user1@isp-a.example` / `pass1` など)
+- accel-ppp([`bras/accel-ppp.conf`](../../lab/ipoe/bras/accel-ppp.conf))が eth1 上で PPPoE を終端。認証は [`bras/chap-secrets`](../../lab/ipoe/bras/chap-secrets)(`user1@isp-a.example` / `pass1` など)。CPE 側でサービス名の入力を求められたら `lab-isp`(空欄でも接続可)
 - **accel-ppp は Debian/Ubuntu 公式リポジトリに無い**ため、setup-bras.sh はソースからビルドします(数分)。素早く済ませたい場合の代替は VyOS の `set service pppoe-server`(中身は accel-ppp)
 - MTU/MRU 1454(フレッツ実網値。1492 で組むと実網の MSS 詰まりが再現できない)、プール `100.64.1.0/24`、上流は eth2 → INET-SIM 経由で NAT
 - PPPoE で断続的なパケットロスが出たら、まず ACCESS 側 NIC のオフロードを無効化(`ethtool -K eth1 tso off gso off gro off`)。virtio オフロードと PPPoE の相性問題が定番原因
@@ -118,6 +120,7 @@ config interface 'wanmap'
         option psidlen '8'
         option offset '4'
         option encaplimit 'ignore'
+        option mtu '1460'
         option tunlink 'wan6'
 # 注意(調査で判明した定番ミス):
 #  - MAP-E/DS-Lite のインターフェースを fw4 の wan ゾーンに入れ忘れると全断
@@ -130,7 +133,19 @@ config interface 'wanmap'
 config interface 'wandsl'
         option proto 'dslite'
         option peeraddr '2001:db8:8888::1'
+        option mtu '1460'
         option tunlink 'wan6'
+```
+
+**MTU 注意**: OpenWrt の map.sh / ds-lite は `option mtu` 未指定だと **1280** に設定します(上記サンプルの `option mtu '1460'` は必須。設定後 `ip link` で確認)。
+
+**RA 方式(ひかり電話なし)のときの LAN 側 IPv6**: /64 が 1 本しか無く PD が無いため、通常のルータ設定のままでは LAN 側に IPv6 を配れません(市販ルータが「IPv6 ブリッジ/パススルー」で対処している部分)。OpenWrt では odhcpd のリレーモードを使います:
+
+```bash
+uci set dhcp.wan6.master='1'
+uci set dhcp.wan6.ra='relay';  uci set dhcp.wan6.dhcpv6='relay';  uci set dhcp.wan6.ndp='relay'
+uci set dhcp.lan.ra='relay';   uci set dhcp.lan.dhcpv6='relay';   uci set dhcp.lan.ndp='relay'
+uci commit dhcp && /etc/init.d/odhcpd restart
 ```
 
 ## 5.5 実機 CPE の接続(物理スイッチ経由)

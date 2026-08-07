@@ -3,7 +3,22 @@
 #   CE(B4) との ip6tnl + 網側 NAT (masquerade)。ポート開放不可はこの構成の仕様どおり。
 #   NIC: eth1=PG-CORE, eth2=PG-INET
 #   usage: CE_WAN6=<CEのWAN IPv6> setup-aftr.sh   (省略時は PD 方式の CE 想定値)
+#          setup-aftr.sh break-pmtu    … R5: MTUブラックホール再現 (ICMPv4 frag-needed を落とす)
+#          setup-aftr.sh restore-pmtu  … R5 復旧
 set -euo pipefail
+
+case "${1:-}" in
+  break-pmtu)
+    # このラボの外側パケットは 1460+40=1500 で全リンクに収まるため、落とすべきは
+    # VNE 自身がトンネル MTU 超過の inner IPv4(DF) に対して生成する Frag-Needed (output方向)
+    nft add table ip pmtu-break 2>/dev/null || true
+    nft 'add chain ip pmtu-break out { type filter hook output priority 0; }' 2>/dev/null || true
+    nft add rule ip pmtu-break out icmp type destination-unreachable icmp code frag-needed drop
+    echo "[VNE] ICMPv4 Fragmentation-Needed を遮断中 (大きい転送だけ固まる状態)"; exit 0 ;;
+  restore-pmtu)
+    nft delete table ip pmtu-break 2>/dev/null || true
+    echo "[VNE] PMTU 復旧済み"; exit 0 ;;
+esac
 
 AFTR_ADDR="2001:db8:8888::1"
 CE_WAN6="${CE_WAN6:-2001:db8:100a:500::1}"   # B4 側トンネル終点 (CE の WAN/LAN 側 GUA)
@@ -31,22 +46,28 @@ ip -6 route replace 2001:db8:1000::/40 via ${CORE_NGN}
 
 modprobe ip6_tunnel
 ip -6 tunnel del dslite0 2>/dev/null || true
-ip -6 tunnel add dslite0 mode ip6tnl local ${AFTR_ADDR} remote ${CE_WAN6} encaplimit none
+# IPv4-in-IPv6 なので mode は ipip6
+ip -6 tunnel add dslite0 mode ipip6 local ${AFTR_ADDR} remote ${CE_WAN6} encaplimit none
 ip link set dslite0 up mtu 1460
 ip addr replace 192.0.0.1/29 dev dslite0      # RFC 6333: AFTR=192.0.0.1, B4=192.0.0.2
 ip route replace 192.0.0.2/32 dev dslite0
+# DS-Lite の B4 は NAT しない (inner IPv4 の src は CE 配下の私設アドレスのまま届く) ため、
+# conntrack 逆変換後の復路をトンネルへ向ける経路が必須
+ip route replace 10.0.0.0/8     dev dslite0
+ip route replace 172.16.0.0/12  dev dslite0
+ip route replace 192.168.0.0/16 dev dslite0
 
-# 網側 NAT: B4 からの RFC1918/共有アドレス空間を INET へ masquerade
+# 網側 NAT: DS-Lite 経由の私設アドレスのみ masquerade する。
+# 全量 masquerade にすると MAP-E 併用時に共有 IPv4 (198.51.100.x) まで NAT され、
+# 出口アドレス確認・ポート制限検証が無意味になるので送信元を限定する
 nft -f - <<EOF
 table ip aftr-nat {
   chain postrouting {
     type nat hook postrouting priority srcnat;
-    oifname "${INET_IF}" masquerade
+    ip saddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 192.0.0.0/29 } oifname "${INET_IF}" masquerade
   }
 }
 EOF
 
 echo "[VNE] DS-Lite AFTR 起動: AFTR=${AFTR_ADDR}, B4=${CE_WAN6}"
-echo "      MTU ブラックホール再現 (R5): $0 とは別に以下を実行"
-echo "        nft add table ip6 pmtu-break; nft 'add chain ip6 pmtu-break fwd { type filter hook forward priority 0; }'"
-echo "        nft add rule ip6 pmtu-break fwd icmpv6 type packet-too-big drop"
+echo "      MTU ブラックホール再現 (R5): $0 break-pmtu / 復旧: $0 restore-pmtu"

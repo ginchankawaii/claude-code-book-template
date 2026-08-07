@@ -14,11 +14,11 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y nftables tcpdump
 # accel-ppp は Debian/Ubuntu 公式リポジトリに無いためソースからビルドする
 if ! command -v accel-pppd >/dev/null 2>&1; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential cmake git \
-    libpcre2-dev libssl-dev liblua5.1-0-dev linux-headers-generic
+    libpcre2-dev libssl-dev linux-headers-generic
   git clone --depth 1 https://github.com/accel-ppp/accel-ppp.git /usr/local/src/accel-ppp
   cmake -S /usr/local/src/accel-ppp -B /usr/local/src/accel-ppp/build \
     -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_IPOE_DRIVER=FALSE -DBUILD_VLAN_MON_DRIVER=FALSE \
-    -DCPACK_TYPE=Ubuntu24 -DRADIUS=TRUE -DSHAPER=FALSE
+    -DRADIUS=TRUE -DSHAPER=FALSE
   make -C /usr/local/src/accel-ppp/build -j"$(nproc)"
   make -C /usr/local/src/accel-ppp/build install
   cat > /etc/systemd/system/accel-ppp.service <<'EOF'
@@ -65,4 +65,7 @@ EOF
 
 systemctl enable --now accel-ppp
 systemctl restart accel-ppp
-echo "[BRAS] PPPoE 待受開始 (eth1, AC=LAB-BRAS)。セッション確認: accel-cmd show sessions"
+echo "[BRAS] PPPoE 待受開始 (${ACCESS_IF}, AC=LAB-BRAS)。セッション確認: accel-cmd show sessions"
+echo "  MSS clamp を BNG 側で行う ISP を模擬する場合 (検証変数。既定は clamp なし):"
+echo "    nft 'add chain ip bras-nat fwd { type filter hook forward priority 0; }'"
+echo "    nft add rule ip bras-nat fwd tcp flags syn tcp option maxseg size set rt mtu"

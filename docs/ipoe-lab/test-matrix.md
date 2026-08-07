@@ -46,7 +46,8 @@
 2. CPE の PPPoE 設定を無効化 → **BRAS 側でセッションが正常切断されたことを確認**(残留していれば再現レシピ R2)
 3. IPoE / IPv4 over IPv6 設定を投入(MAP-E なら自動計算値がラボの期待値と一致するか確認)
 4. IPv6 → IPv4 over IPv6 の順に上がることを確認
-5. PD 方式の場合、CPE が送る DHCPv6 の **DUID 種別を tcpdump で確認**(実網 NGN は DUID-LL しか受理せず、DUID-LLT/EN だと Solicit が無視され「無応答でハマる」— 独立した複数の報告がある実網の癖。ラボの Kea は受理してしまうため、ここだけは目視確認が必要)
+5. PD 方式の場合、CPE が送る DHCPv6 の **DUID 種別を確認**(実網 NGN は DUID-LL しか受理せず、DUID-LLT/EN だと Solicit が無視され「無応答でハマる」— 独立した複数の報告がある実網の癖。ラボの Kea も同じ挙動に設定済みなので、**ラボで PD が取れない CPE は実網でも取れない**と判断してよい)
+6. 切替作業中の**常時接続セッションの断時間を計測**(SSH / VPN / VoIP 相当。PPPoE 断でいつ切れ、IPoE 側でいつ張り直せるか。お客様への「何分止まるか」回答の根拠になる)
 
 ### Phase 2: 切替後確認
 
@@ -73,10 +74,10 @@
 - 再現: CPE の電源断で PPPoE を切断(正常切断させない)→ 即座に再接続 or IPoE 切替
 - 症状: 再接続失敗(BRAS は `single-session=deny` 設定のため実網 ISP 同様に二重セッションを拒否)、切替後も課金/セッションが残る
 - 切り分け: BRAS の `accel-cmd show sessions`。実案件では ISP へのセッション強制切断依頼が必要と判断できる
-- 注意: BRAS の LCP エコー設定(20 秒 × 3 回)により残留セッションは**約 60 秒で自然消滅**する。即時再接続で拒否 → 1 分待つと復旧、という時間感覚ごと体験しておくこと(実網 ISP のタイムアウトはもっと長い場合がある)
+- 注意: BRAS の LCP エコー設定(20 秒 × 3 回)により残留セッションは**約 60 秒で自然消滅**する。即時再接続で拒否 → 1 分待つと復旧、という時間感覚ごと体験しておくこと(実網 ISP のタイムアウトはもっと長い場合がある。残留を長く観察したい場合は accel-ppp.conf の `lcp-echo-failure` を増やす)
 
 ### R3: MAP-E ポート制限
-- 再現: map-br 構成で、配下から 240 を超える同時セッションを張る(`for i in $(seq 300); do curl -s http://203.0.113.80 & done` 等)、または well-known ポートの開放を試みる
+- 再現: map-br 構成で、配下から 240 を超える**滞留する**同時セッションを張る(`for i in $(seq 250); do curl -s --limit-rate 1k -m 60 http://203.0.113.80/big.bin -o /dev/null & done` 等。即クローズする curl 連打では NAT テーブルが 240 に達しないことがある)、または well-known ポートの開放を試みる
 - 症状: セッション超過時に新規接続断続失敗。80/443 等の待受公開は不可
 - 切り分け: CPE の NAT テーブル使用数。ポート要件がある案件は DS-Lite でなく MAP-E でも不可 → 固定 IP 系か PPPoE 併用を提案
 - 注意: ラボの BR はポート制限を**強制しない**(制限は CE の NAT 実装依存)ため、CE の実装が甘いと症状が出ないことがある。網側で強制して確実に再現したい場合は BR(VNE)に次を追加: `nft add table ip map-enforce; nft 'add chain ip map-enforce fwd { type filter hook forward priority 0; }'; nft 'add rule ip map-enforce fwd iifname "map0" ip saddr 198.51.100.10 tcp sport != { 4176-4191 } drop'`(許可ブロックの数だけ範囲を追記。UDP も同様)
@@ -87,9 +88,9 @@
 - 切り分け: 仕様であることをエビデンス付きで説明できるようにしておく
 
 ### R5: MTU ブラックホール
-- 再現: VNE で ICMPv4 Fragmentation-Needed / ICMPv6 Too-Big を drop(`nft add rule ip6 filter forward icmpv6 type packet-too-big drop` 相当。setup スクリプトの `break-pmtu` 参照)
-- 症状: 小さいページは開くが大きいページ・ファイルダウンロードだけ固まる(切替後問い合わせの定番)
-- 切り分け: `ping -M do -s 1432` は通るが `-s 1472` が通らない、TCP MSS 調整で回復
+- 再現: VNE で `setup-aftr.sh break-pmtu` を実行(VNE 自身が生成する ICMPv4 Fragmentation-Needed を drop する。このラボの外側パケットは 1500 に収まるため ICMPv6 Too-Big は発生せず、落とすべきは inner IPv4 側)。復旧は `restore-pmtu`
+- 症状: `run-checks.sh` で小さいページ・ping は PASS するのに **TCP 5MB 転送だけ FAIL**(切替後問い合わせの定番「表示が固まる」)
+- 切り分け: `ping -M do -s 1432` は通るが `-s 1472` が通らない、TCP MSS 調整(clamp)で回復
 
 ### R6: DNS フォールバック遅延
 - 再現: `setup-inet.sh break-v6`(AAAA は返るが v6 到達不可)
@@ -107,7 +108,7 @@
 - 切り分け: NGN 網内(NGN-SIM)へは ping が通るが AFTR/BR に届かない → 契約状態の確認へ誘導
 
 ### R9: プレフィックス変更で LAN 側が追従しない
-- 再現: 接続中に NGN-SIM を `ra`→`pd`(または kea の委譲プレフィックスを変更)して再起動
+- 再現: 接続中に NGN-SIM を `ra`→`pd`(または kea の委譲プレフィックスを変更)して再起動。**kea のリースファイルを消してから再起動すること**(`systemctl stop kea-dhcp6-server && rm /var/lib/kea/kea-leases6.csv && systemctl start kea-dhcp6-server`。残っていると Renew に旧プレフィックスで応答してしまい変更が反映されない)
 - 症状: WAN は新プレフィックスだが LAN 内端末が旧アドレスを保持し通信断
 - 切り分け: CPE の再起動または RA の有効期限切れ待ちが必要か、機種ごとの挙動を記録
 
@@ -124,7 +125,12 @@
 ### R12: ポートセット非連続を無視した NAT 設定(調査反映)
 - 再現: MAP-E 構成で CE の SNAT を連続レンジ(例: 4176-4191 のみ)に固定
 - 症状: 同時セッションが 16 で頭打ち/「一部サイトだけ画像が欠ける・繋がらない」系の症状
-- 切り分け: MAP-E のポートは 16 ポート × N ブロックの**飛び飛び**。市販ルータでも分散実装の差が症状差になる。JANOG の相互接続試験ではフラグメント処理のバグも出た領域のため、UDP フラグメント(大きい DNS 応答等)も検証項目に入れる
+- 切り分け: MAP-E のポートは 16 ポート × N ブロックの**飛び飛び**。市販ルータでも分散実装の差が症状差になる。JANOG の相互接続試験ではフラグメント処理のバグも出た領域のため、UDP フラグメント(大きい DNS 応答等)も検証項目に入れる(`run-checks.sh` のフラグメントチェックが機械判定する)
+
+### R13: IPoE 化による外→内 IPv6 直接着信(セキュリティ確認)
+- 再現: 切替後、INET-SIM から CPE 配下クライアントの GUA へ直接アクセスを試みる(`ping -6 <クライアントGUA>`、`nc -6 <クライアントGUA> 22` 等)
+- 症状(確認点): PPPoE(IPv4 NAT)時代は存在しなかった「LAN 端末がグローバル IPv6 を持ち外から直接届き得る」状態になる。**CPE の IPv6 ファイアウォール/SPI が有効かは切替時の定番セキュリティ確認項目**
+- 切り分け: 着信できてしまう場合は CPE の IPv6 フィルタ設定を確認。機種によっては既定で素通しのものがある
 
 ## 5. 結果の記録と維持運用
 

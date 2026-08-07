@@ -37,6 +37,14 @@ curl -6 -s --connect-timeout 5 "http://[${V6_TARGET}]/" || echo "FAIL: HTTP v6"
 check "HTTP over IPv4"                curl -4 -s --connect-timeout 5 -o /dev/null "http://${V4_TARGET}/"
 check "HTTP over IPv6"                curl -6 -s --connect-timeout 5 -o /dev/null "http://[${V6_TARGET}]/"
 
+echo "--- 大サイズ TCP 転送 (MSS/PMTUD 黒穴は小さいページだけ通る。ICMP の MTU 実測では見逃す) ---"
+check "TCP 5MB over IPv4"             curl -4 -s -m 30 -o /dev/null "http://${V4_TARGET}/big.bin"
+check "TCP 5MB over IPv6"             curl -6 -s -m 30 -o /dev/null "http://[${V6_TARGET}]/big.bin"
+
+echo "--- フラグメント (DF なし大 ICMP。相互接続試験で実装バグが出た領域) ---"
+check "IPv4 fragment (2000B)"         ping -c2 -W2 -s 2000 "$V4_TARGET"
+check "IPv6 fragment (2000B)"         ping -c2 -W2 -s 2000 "$V6_TARGET"
+
 echo "--- MTU 実測 (DF 付き ping, payload = MTU-28) ---"
 for size in 1472 1432 1426; do   # 1500 / 1460(MAP-E,DS-Lite) / 1454(PPPoE)
   if ping -c1 -W2 -M do -s "$size" "$V4_TARGET" >/dev/null 2>&1; then

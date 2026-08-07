@@ -90,6 +90,8 @@ NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネッ�
 | MAP-E 共有 IPv4 / PSID | `198.51.100.10` / PSID=5(offset=4, psid-len=8 → 240 ポート、v6プラス相当) |
 | PPPoE プール | `100.64.1.0/24`(GW `100.64.0.1`) |
 | 模擬インターネット | `203.0.113.0/24`、`2001:db8:cafe::/64`(INET-SIM は `.80` / `::80`、DNS は `.53` / `::53`) |
+| VNE の INET 側 | `203.0.113.1` / `2001:db8:cafe::1`(MAP-E 共有 IPv4・v6 の復路 next-hop) |
+| BRAS の INET 側 | `203.0.113.2`(PPPoE プールの復路 next-hop) |
 
 ## 7. 使い方の流れ
 
