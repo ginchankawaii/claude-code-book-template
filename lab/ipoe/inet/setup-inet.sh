@@ -4,10 +4,21 @@
 #   usage: setup-inet.sh            … 初期構築
 #          setup-inet.sh break-v6   … IPv6 だけ死んだサイトを再現 (R6: DNSフォールバック)
 #          setup-inet.sh restore    … 復旧
+#          setup-inet.sh spoof-aftr … 市販ルータのDS-Lite自動設定向けに transix系AFTRの
+#                                     FQDNをラボAFTRへ向ける (ラボ内DNSのみの偽装)
 set -euo pipefail
 MODE="${1:-install}"
 
 case "$MODE" in
+  spoof-aftr)
+    cat > /etc/dnsmasq.d/lab-aftr-spoof.conf <<'EOF'
+# 市販ルータのAFTR自動発見をラボAFTRへ誘導 (transix / クロスパス相当)
+address=/gw.transix.jp/2001:db8:8888::1
+address=/dgw.xpass.jp/2001:db8:8888::1
+EOF
+    systemctl restart dnsmasq
+    echo "[INET-SIM] AFTR FQDN 偽装を有効化 (解除: rm /etc/dnsmasq.d/lab-aftr-spoof.conf && systemctl restart dnsmasq)"
+    exit 0 ;;
   break-v6)
     nft -f - <<'EOF'
 table ip6 break-v6 {

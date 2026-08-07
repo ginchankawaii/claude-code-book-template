@@ -5,6 +5,8 @@ NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネッ�
 
 - 構築手順: [build.md](build.md)
 - 検証マトリクス・切替シナリオ・トラブル再現レシピ: [test-matrix.md](test-matrix.md)
+- **Proxmox プロトタイプ手順(自宅検証用)**: [proxmox-prototype.md](proxmox-prototype.md)
+- 事例調査ノート(実例・失敗談と設計への反映): [research-notes.md](research-notes.md)
 - 設定ファイル・スクリプト: リポジトリの [`lab/ipoe/`](../../lab/ipoe/)
 
 ## 1. 背景と目的
@@ -25,7 +27,7 @@ NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネッ�
 | 方式 | IPv4 の通り方 | NAT の場所 | ポート開放 | IPv4 MTU 目安 |
 |---|---|---|---|---|
 | PPPoE | PPP セッション(BRAS 終端) | CPE | 可 | 1454 |
-| MAP-E | IPv4-in-IPv6 カプセル化。CE が共有 IPv4 + 制限ポート(240〜1008 程度、方式による)で NAT | CPE(CE) | 制限ポートのみ可 | 1460 |
+| MAP-E | IPv4-in-IPv6 カプセル化。CE が共有 IPv4 + 制限ポート(v6プラス=240、OCNバーチャルコネクト=1008)で NAT | CPE(CE) | 制限ポートのみ可 | 1460 |
 | DS-Lite | IPv4-in-IPv6 カプセル化。NAT は網側 AFTR | 網側(AFTR) | 不可 | 1460 |
 
 トラブルの大半はこの差分(ポート制限、NAT 位置、MTU、払い出し方式とルータ設定の不整合、PPPoE セッション残留)に起因します。
@@ -118,6 +120,7 @@ NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネッ�
 | 実 VNE(v6プラス、transix 等)の本物の装置の癖 | BR/AFTR は Linux による模擬。実装固有の挙動は実網でしか分からない |
 | ISP 側の開通処理・認証・契約状態 | 開通タイミングや「IPoE 開通で PPPoE が止まる」の実際の発動は ISP 依存 |
 | NTT 網固有の挙動 | v6オプションの開通反映、網内エラー、フレッツ・ジョイントの自動設定配信など |
+| **市販ルータの MAP-E「自動設定」** | 自動判定は VNE のルール配布サーバ依存(方式が乱立、[research-notes.md §1](research-notes.md) JANOG53)。手動設定 UI がない機種はラボで MAP-E 接続できない場合がある。DS-Lite は AFTR を DNS で発見する仕様のため、ラボ DNS の FQDN 模擬で自動設定機種も動く可能性あり(build.md §4) |
 | 性能・帯域・輻輳の測定 | ラボの帯域は実網と無関係。**機能・手順・切り分けの検証専用** |
 
 ### 網羅性の担保は「運用」で行う

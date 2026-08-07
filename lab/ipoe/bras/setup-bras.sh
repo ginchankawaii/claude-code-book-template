@@ -7,10 +7,33 @@ LABDIR="$(cd "$(dirname "$0")" && pwd)"
 INET_SELF="203.0.113.2/24"
 
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y accel-ppp nftables tcpdump || {
-  echo "accel-ppp がリポジトリにない場合: https://github.com/accel-ppp/accel-ppp を参照しビルド" >&2
-  exit 1
-}
+DEBIAN_FRONTEND=noninteractive apt-get install -y nftables tcpdump
+
+# accel-ppp は Debian/Ubuntu 公式リポジトリに無いためソースからビルドする
+if ! command -v accel-pppd >/dev/null 2>&1; then
+  DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential cmake git \
+    libpcre2-dev libssl-dev liblua5.1-0-dev linux-headers-generic
+  git clone --depth 1 https://github.com/accel-ppp/accel-ppp.git /usr/local/src/accel-ppp
+  cmake -S /usr/local/src/accel-ppp -B /usr/local/src/accel-ppp/build \
+    -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_IPOE_DRIVER=FALSE -DBUILD_VLAN_MON_DRIVER=FALSE \
+    -DCPACK_TYPE=Ubuntu24 -DRADIUS=TRUE -DSHAPER=FALSE
+  make -C /usr/local/src/accel-ppp/build -j"$(nproc)"
+  make -C /usr/local/src/accel-ppp/build install
+  cat > /etc/systemd/system/accel-ppp.service <<'EOF'
+[Unit]
+Description=accel-ppp (lab BRAS)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/accel-pppd -c /etc/accel-ppp.conf
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+fi
 
 cat > /etc/sysctl.d/90-bras.conf <<'EOF'
 net.ipv4.ip_forward=1

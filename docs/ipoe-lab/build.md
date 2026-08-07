@@ -24,7 +24,9 @@ sudo lab/ipoe/bras/setup-bras.sh
 ```
 
 - accel-ppp([`bras/accel-ppp.conf`](../../lab/ipoe/bras/accel-ppp.conf))が eth1 上で PPPoE を終端。認証は [`bras/chap-secrets`](../../lab/ipoe/bras/chap-secrets)(`user1@isp-a.example` / `pass1` など)
-- MTU/MRU 1454、プール `100.64.1.0/24`、上流は eth2 → INET-SIM 経由で NAT
+- **accel-ppp は Debian/Ubuntu 公式リポジトリに無い**ため、setup-bras.sh はソースからビルドします(数分)。素早く済ませたい場合の代替は VyOS の `set service pppoe-server`(中身は accel-ppp)
+- MTU/MRU 1454(フレッツ実網値。1492 で組むと実網の MSS 詰まりが再現できない)、プール `100.64.1.0/24`、上流は eth2 → INET-SIM 経由で NAT
+- PPPoE で断続的なパケットロスが出たら、まず ACCESS 側 NIC のオフロードを無効化(`ethtool -K eth1 tso off gso off gro off`)。virtio オフロードと PPPoE の相性問題が定番原因
 - セッション操作(残留セッションの再現・強制切断):
 
 ```bash
@@ -67,6 +69,14 @@ sudo lab/ipoe/inet/setup-inet.sh break-v6     # IPv6 だけ死んだサイトを
 sudo lab/ipoe/inet/setup-inet.sh restore
 ```
 
+**市販ルータの DS-Lite 自動設定を試すオプション**: transix 系の市販ルータ・自動設定は AFTR を FQDN(`gw.transix.jp`)の DNS 解決で発見する仕様のため、ラボ DNS がこの名前をラボ AFTR に向ければ自動設定機種が動く可能性があります(MAP-E の自動設定は VNE のルール配布サーバ依存のため模擬不可 — README「できないこと」参照)。
+
+```bash
+sudo lab/ipoe/inet/setup-inet.sh spoof-aftr   # gw.transix.jp 等 → 2001:db8:8888::1 を返す
+```
+
+※ラボ内 DNS だけの偽装であり、ラボ外に影響はありません。CPE の DNS がラボ DNS(203.0.113.53 / 2001:db8:cafe::53)を向いていることが前提。
+
 ## 5. OpenWrt-CE(リファレンス CPE)
 
 OpenWrt x86/64 を VM 化し、WAN を PG-ACCESS、LAN を検証クライアント用 PG へ。`map` / `ds-lite` / `ppp-mod-pppoe` パッケージを導入します。
@@ -94,8 +104,16 @@ config interface 'wanmap'
         option ip6prefix '2001:db8:1000::'
         option ip6prefixlen '40'
         option ealen '16'
+        option psidlen '8'
         option offset '4'
+        option encaplimit 'ignore'
         option tunlink 'wan6'
+# 注意(調査で判明した定番ミス):
+#  - MAP-E/DS-Lite のインターフェースを fw4 の wan ゾーンに入れ忘れると全断
+#  - トンネル MTU が 1280 のままだと低速・画像欠け → `ip link` で 1460 を確認
+#  - 実サービス(v6プラス等)のリハーサル時のみ option legacymap '1' を追加
+#    (日本の VNE は draft-03 互換。ラボ既定ルールは RFC7597 で自己完結)
+#  - PSID の自動計算(mapcalc)は 64bit 環境でバグ報告あり。手動値が確実
 
 # DS-Lite
 config interface 'wandsl'
