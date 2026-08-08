@@ -40,11 +40,12 @@ esac
 
 INET_IF="${INET_IF:-eth1}"
 
-# dnsmasq は systemd-resolved のスタブ (127.0.0.53:53) と衝突しインストール直後の起動に
-# 失敗することがあるため、先に設定を置き resolved のスタブを止めてから導入する
-mkdir -p /etc/systemd/resolved.conf.d
-printf '[Resolve]\nDNSStubListener=no\n' > /etc/systemd/resolved.conf.d/lab.conf
-systemctl restart systemd-resolved || true
+# dnsmasq は systemd-resolved のスタブ (127.0.0.53:53) と衝突してインストール直後の
+# 起動に失敗しうるため、設定を **先に** 置いてから導入する。
+# interface= + bind-interfaces により dnsmasq は INET 側 NIC にしか bind しないので、
+# これだけで 127.0.0.53 との衝突は回避できる。
+# (DNSStubListener=no はしない: /etc/resolv.conf が stub-resolv.conf のままだと
+#  この直後の apt-get が名前解決できず失敗する)
 mkdir -p /etc/dnsmasq.d
 cat > /etc/dnsmasq.d/lab.conf <<EOF
 no-resolv

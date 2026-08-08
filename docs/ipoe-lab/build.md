@@ -19,8 +19,9 @@ sudo lab/ipoe/ngn/setup-ngn.sh pd   # ひかり電話あり相当: DHCPv6-PD 方
 - `ra` モード: radvd([`ngn/radvd.conf`](../../lab/ipoe/ngn/radvd.conf))が `2001:db8:1014:300::/64` を RA(A/O フラグ)+ RDNSS で配布
 - `pd` モード: kea([`ngn/kea-dhcp6.conf`](../../lab/ipoe/ngn/kea-dhcp6.conf))が `2001:db8:100a:0500::/56` を PD で委譲し、radvd はデフォルト経路広報のみ(M/O フラグ、A なし)
 - どちらのモードでも NGN-SIM がアクセス網のデフォルトルータとなり、ユーザ宛プレフィックスと VNE(BR/AFTR)間をルーティングします
-- **実網 NGN の癖を再現**: Kea は DUID-LL(タイプ 0003)の Solicit にしか応答しません(実網 NGN と同じ挙動。DUID-LLT/EN の CPE は「無応答」でハマる — これが実網で頻発する事故の再現です)。この癖を外すには kea-dhcp6.conf の `client-class` 行を削除
-- PD モードの委譲プレフィックス復路は、**Kea の run_script フック(kea-pd-route.sh)が PD リース時に「要求元 CE 宛の via 経路」を自動投入**します(実網の delegating router と同じ動き。on-link 経路だと CE が NS に応答せず復路が死ぬため)。フックが動いているかは `journalctl -t kea-pd-route` で確認できます
+- **実網 NGN の癖(DUID-LL 限定)は既定で無効**です。有効化すると DUID-LL(タイプ 0003)以外の Solicit を**無応答で破棄**し、実網と同じ「無応答でハマる」を再現します。ラボが一度通ったあとに `kea-dhcp6.conf` の `client-classes`(DROP クラス)のコメントを外してください([test-matrix.md](test-matrix.md) §3 Phase 1 手順 5)
+- **PD の復路経路は Kea のフックが自動投入**します。フックが動くには AppArmor の実行許可と `CAP_NET_ADMIN` の両方が必要で、`setup-ngn.sh` が両方設定します。動作確認は `journalctl -t kea-pd-route`(何も出ない場合は `dmesg | grep -i apparmor.*kea` を確認)
+- PD モードの委譲プレフィックス復路は、**Kea の run_script フック(kea-pd-route.sh)が PD リース時に「要求元 CE 宛の via 経路」を自動投入**します(実網の delegating router と同じ動き。on-link 経路だと CE が NS に応答せず復路が死ぬため)。初回割当は `leases6_committed` で捕まえています(`lease6_select` というフックポイントは存在しないため、そこに書くと renew まで経路が入りません)
 - **プレフィックス変更トラブルの再現**(ひかり電話契約変更相当)は、モードを `ra`→`pd` に切り替えて CPE の追従を見るだけです
 
 ## 2. BRAS(PPPoE 終端)
@@ -29,9 +30,9 @@ sudo lab/ipoe/ngn/setup-ngn.sh pd   # ひかり電話あり相当: DHCPv6-PD 方
 sudo lab/ipoe/bras/setup-bras.sh
 ```
 
-- accel-ppp([`bras/accel-ppp.conf`](../../lab/ipoe/bras/accel-ppp.conf))が eth1 上で PPPoE を終端。認証は [`bras/chap-secrets`](../../lab/ipoe/bras/chap-secrets)(`user1@isp-a.example` / `pass1` など)。CPE 側でサービス名の入力を求められたら `lab-isp`(空欄でも接続可)
+- accel-ppp([`bras/accel-ppp.conf`](../../lab/ipoe/bras/accel-ppp.conf))が eth1 上で PPPoE を終端。認証は [`bras/chap-secrets`](../../lab/ipoe/bras/chap-secrets)(`user1@isp-a.example` / `pass1` など)。CPE 側でサービス名の入力を求められたら `lab-isp`。**空欄でも接続できます**(`accept-blank-service=1` を入れてあるため。これがないと空の Service-Name を送る CPE の PADI が破棄され「応答しない」事故になります)
 - **accel-ppp は Debian/Ubuntu 公式リポジトリに無い**ため、setup-bras.sh はソースからビルドします(数分)。素早く済ませたい場合の代替は VyOS の `set service pppoe-server`(中身は accel-ppp)
-- MTU/MRU 1454(フレッツ実網値。1492 で組むと実網の MSS 詰まりが再現できない)、プール `100.64.1.0/24`、上流は eth2 → INET-SIM 経由で NAT
+- MTU/MRU 1454(フレッツ実網値。1492 で組むと実網の MSS 詰まりが再現できない)、動的プール `100.64.1.0/25` + 固定 IP `100.64.1.200`(`kotei@isp-a.example` 用。プールと重複させないため /25 にしている)、上流は eth2 → INET-SIM 経由で NAT
 - PPPoE で断続的なパケットロスが出たら、まず ACCESS 側 NIC のオフロードを無効化(`ethtool -K eth1 tso off gso off gro off`)。virtio オフロードと PPPoE の相性問題が定番原因
 - セッション操作(残留セッションの再現・強制切断):
 

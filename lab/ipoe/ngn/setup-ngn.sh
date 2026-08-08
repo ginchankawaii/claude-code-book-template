@@ -48,6 +48,9 @@ case "$MODE" in
     # 実網同様、RA 方式でもステートレス DHCPv6 (Information-Request への DNS 応答) は動かす
     # (RDNSS 非対応 CPE の「v6 は付くのに名前解決できない」を防ぐ/検証するため)
     sed "s/\"eth1\"/\"${ACCESS_IF}\"/" "${LABDIR}/kea-dhcp6-stateless.conf" > /etc/kea/kea-dhcp6.conf
+    install -d -o _kea -g _kea /var/log/kea 2>/dev/null || mkdir -p /var/log/kea
+    kea-dhcp6 -t /etc/kea/kea-dhcp6.conf || {
+      echo "ERROR: kea-dhcp6.conf の構文検証に失敗しました" >&2; exit 1; }
     systemctl enable --now radvd kea-dhcp6-server
     systemctl restart radvd kea-dhcp6-server
     echo "[NGN-SIM] RA モード (ひかり電話なし相当, 2001:db8:1014:300::/64)"
@@ -61,6 +64,30 @@ case "$MODE" in
     # PD リース時に復路経路 (via CE) を自動投入するフックスクリプトを配置
     sed "s/__ACCESS_IF__/${ACCESS_IF}/" "${LABDIR}/kea-pd-route.sh" > /usr/local/sbin/kea-pd-route.sh
     chmod +x /usr/local/sbin/kea-pd-route.sh
+
+    # フックが実際に動くための 2 つの前提を整える (どちらか欠けると経路が入らない)
+    #  1) AppArmor: kea-dhcp6 のプロファイルはフックスクリプトの実行を許可していない
+    #  2) 権限: User=_kea かつ CAP_NET_BIND_SERVICE のみなので ip route が EPERM になる
+    if [ -d /etc/apparmor.d ]; then
+      mkdir -p /etc/apparmor.d/local
+      touch /etc/apparmor.d/local/usr.sbin.kea-dhcp6
+      grep -q 'kea-pd-route.sh' /etc/apparmor.d/local/usr.sbin.kea-dhcp6 || \
+        echo '/usr/local/sbin/kea-pd-route.sh Ux,' >> /etc/apparmor.d/local/usr.sbin.kea-dhcp6
+      [ -f /etc/apparmor.d/usr.sbin.kea-dhcp6 ] && \
+        apparmor_parser -r -T -W /etc/apparmor.d/usr.sbin.kea-dhcp6 2>/dev/null || true
+    fi
+    mkdir -p /etc/systemd/system/kea-dhcp6-server.service.d
+    printf '[Service]\nAmbientCapabilities=CAP_NET_ADMIN\n' \
+      > /etc/systemd/system/kea-dhcp6-server.service.d/pd-route.conf
+    systemctl daemon-reload
+
+    # ログ出力先 (/var/log/kea は unit の LogsDirectory で作られるが念のため)
+    install -d -o _kea -g _kea /var/log/kea 2>/dev/null || mkdir -p /var/log/kea
+
+    # 設定の構文を先に検証してから起動する (ロード失敗を早期に気づくため)
+    kea-dhcp6 -t /etc/kea/kea-dhcp6.conf || {
+      echo "ERROR: kea-dhcp6.conf の構文検証に失敗しました" >&2; exit 1; }
+
     systemctl enable --now radvd kea-dhcp6-server
     systemctl restart radvd kea-dhcp6-server
     echo "[NGN-SIM] PD モード (ひかり電話あり相当, 2001:db8:100a:500::/56 を委譲)"
