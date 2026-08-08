@@ -70,6 +70,18 @@ Web上の実際の構築事例・失敗談を調査し、本ラボ設計に反�
 
 **結論: 892FJ系はIPv6非対応ではない。**「IPoE(RA/PD)+DS-LiteのCE」および「PPPoEクライアント/サーバ」としてラボで現役に使える。MAP-EのCEだけはOpenWrt等で補う。
 
+### 4.1 IOS XE なら MAP-E も可能(2026-08 追加調査)
+
+**IOS XE は MAP-E に対応しており、しかも日本の VNE 向けプロビジョニングモードを持っています。**
+
+- Cisco は 2022 年 3 月に **OCN バーチャルコネクト(IPoE / MAP-E)対応**を公式アナウンス([Cisco News](https://news-blogs.cisco.com/apjc/ja/2022/03/01/cisco-ios-xe%E3%83%AB%E3%83%BC%E3%82%BF%E3%80%81%E3%80%8Cocn%E3%83%90%E3%83%BC%E3%83%81%E3%83%A3%E3%83%AB%E3%82%B3%E3%83%8D%E3%82%AF%E3%83%88%E3%82%B5%E3%83%BC%E3%83%93%E3%82%B9%EF%BC%88ipoe%EF%BC%89/) / [INTERNET Watch](https://internet.watch.impress.co.jp/docs/news/1393035.html))
+- MAP-E の日本向けモード(jp01)は **`draft-ietf-softwire-map-03`** を指定する — **§2 で判明した「日本の VNE は draft-03 互換」という事実と一致**しており、OpenWrt の `legacymap` に相当する扱いが IOS XE にも実装されている
+- 設定例・生成ツール: [MY TECH BLOG: IOS XE の MAP-E / DS-Lite 設定](https://mytech-blog.com/cisco-ipoe/)、[IOS XE IPoE Config Generator](https://ipoe.ioslab.jp/)、[DS-Lite での IOS XE 設定例](https://candm-network.hatenadiary.jp/entry/CiscoIP0E)
+
+**未確認(要ラボ検証)**: この MAP-E 機能が **仮想ルータ(CSR1000v / Catalyst 8000V)でも使えるか**。物理の ISR 1100 / C1111 での事例は見つかるが、仮想プラットフォームでの可否とライセンス要件を示す一次情報に到達できていない(該当サイトが調査環境から egress ブロック)。**CML 上で `tunnel mode ?` / `softwire ?` を叩いて CLI の有無を見るのが最速の検証**(手順は [proxmox-prototype.md §4.1](proxmox-prototype.md))。
+
+使えた場合の意味: 892FJ では埋まらない **MAP-E の CE 役を「Cisco 実装」で検証できる**ようになり、参照 CE(OpenWrt)だけに依存していた検証マトリクス No.1〜2 に実装の多様性が入る。
+
 ## 5. 取り込まなかったもの(理由付き)
 
 - **PPPoE→L2TP中継(網終端装置の再現)**: BBSakura事例のとおりaccel-ppp改造が必要な深さ。切替検証の目的には「PPPoEが終端されIPv4が出る」ことの再現で十分と判断。将来必要ならVyOSの[LAC/LNS公式レシピ](https://docs.vyos.io/en/stable/configexamples/lac-lns.html)から入る

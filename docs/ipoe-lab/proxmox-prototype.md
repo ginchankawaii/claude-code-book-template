@@ -189,6 +189,38 @@ sudo CE_WAN6=<確認した GUA> lab/ipoe/vne/setup-aftr.sh
 これで「892FJ を PPPoE で BRAS に繋いだ状態 → DS-Lite へ切替 → 切戻し」という切替リハーサルの一連が、自宅で実機込みで練習できます。
 注意: classic IOS の IPv4 over IPv6 転送は CEF に乗らず低速になりがち+800 系はサポート終了済みのため、**あくまで練習台**。案件の実機検証は顧客と同型機で。
 
+## 4.1 CML の IOS XE を MAP-E の CE として使う(要検証)
+
+892FJ で埋まらない MAP-E の CE 役を、**CML 上の Catalyst 8000V / CSR1000v(IOS XE)で代替できる可能性があります**([research-notes.md §4.1](research-notes.md))。IOS XE は日本向け MAP-E(`draft-ietf-softwire-map-03` = jp01 モード)に対応していますが、**仮想プラットフォームで使えるかは未確認**です。
+
+### まず CLI の有無を確認する(5分)
+
+CML で Cat8000v を 1 台起動し、コンソールで:
+
+```
+show version                     ! IOS XE のバージョンとプラットフォーム名
+show license summary             ! ライセンス状態(機能制限の有無)
+
+configure terminal
+ softwire ?                      ! softwire 関連 CLI が実装されているか
+ interface Tunnel1
+  tunnel mode ?                  ! MAP-E / softwire 系のモードが候補に出るか
+```
+
+`tunnel mode ?` の候補に MAP-E / softwire 系が出れば実装あり、`ipv6ip` 系しか出なければ DS-Lite までです。**結果によって次が変わります**:
+
+| 結果 | ラボでの役割 |
+|---|---|
+| MAP-E CLI **あり** | Cat8000v を **MAP-E の CE** として検証マトリクス No.1〜2 に投入。OpenWrt と Cisco の 2 実装で比較でき、実装差に起因するトラブル(ポート分散・encaplimit 等)を実機ライクに観測できる |
+| MAP-E CLI **なし** | DS-Lite の CE として使う(892FJ と同じ役)。MAP-E は OpenWrt が担当のまま |
+
+### CML ノードをラボの L2 に繋ぐ
+
+CML の **External Connector** を使ってアクセス網(vmbr1)に足を出します。CML の設置形態で経路が変わります:
+
+- **CML が Proxmox 上の VM の場合**(推奨・簡単): CML VM に vNIC を 1 枚追加して `vmbr1` に接続 → CML 側でその NIC に紐づく External Connector を定義 → Cat8000v の WAN 側インターフェースをそれに接続
+- **CML が別筐体の場合**: CML ホストの NIC → 物理スイッチ → Proxmox ホストの物理 NIC(`ACCESS_UPLINK` に指定した NIC)。実機 892FJ を繋ぐのと同じ構成([build.md §5.5](build.md))なので、物理スイッチに両方ぶら下げれば同じ L2 に乗ります
+
 ## 5. 動作確認と壊す練習
 
 1. OpenWrt-CE の LAN 側に検証クライアントを繋ぎ `lab/ipoe/tests/run-checks.sh`
