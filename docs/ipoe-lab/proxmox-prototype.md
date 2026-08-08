@@ -9,10 +9,13 @@
 
 | VM | 役割 | 目安スペック |
 |---|---|---|
-| NGN-SIM | RA / DHCPv6-PD 配布、網内ルーティング | 1vCPU / 1GB |
-| VNE+INET | MAP-E BR + DS-Lite AFTR + Web/DNS(スクリプトを同一 VM で順に実行) | 1vCPU / 1GB |
-| BRAS | PPPoE 終端(PPPoE の切替前状態が不要なら後回しでよい) | 1vCPU / 1GB |
+| NGN-SIM | RA / DHCPv6-PD 配布、網内ルーティング | 2vCPU / 2GB |
+| VNE+INET | MAP-E BR + DS-Lite AFTR + Web/DNS(スクリプトを同一 VM で順に実行) | 2vCPU / 2GB |
+| BRAS | PPPoE 終端(accel-ppp をソースビルドするため 2GB 推奨) | 2vCPU / 2GB |
+| lab-client | CPE 配下の検証クライアント(`run-checks.sh` 実行用) | 1vCPU / 1GB |
 | OpenWrt-CE | リファレンス CPE(MAP-E / DS-Lite / PPPoE を切替) | 1vCPU / 512MB |
+
+合計 7vCPU / 7.5GB 程度(`provision.sh` の割当値と一致させています)。
 | 実機 CPE | Cisco 892FJ 系(後述。物理 NIC 経由) | — |
 
 ## 0.5 いちばん早い方法: 自動構築スクリプト
@@ -21,21 +24,35 @@
 
 ```bash
 # Proxmox ホスト上で(リポジトリを clone した場所で)
-sudo STORAGE=local-lvm SSHKEY=~/.ssh/id_rsa.pub lab/ipoe/proxmox/provision.sh
+
+# ① まず環境確認だけ。何も変更せず、PVE版数・ストレージ種別・VMID衝突・
+#    既存ブリッジ・スナップショット可否を報告して終わる
+sudo lab/ipoe/proxmox/provision.sh preflight
+
+# ② 問題なければ本実行(STORAGE は省略すると自動検出する)
+sudo lab/ipoe/proxmox/provision.sh
+sudo STORAGE=<pvesm status で見た名前> lab/ipoe/proxmox/provision.sh   # 明示する場合
 
 # 実機 892FJ を繋ぐ場合は物理NICを指定(vmbr1 にアップリンクされる)
-sudo STORAGE=local-lvm ACCESS_UPLINK=enp3s0 lab/ipoe/proxmox/provision.sh
+sudo ACCESS_UPLINK=enp3s0 lab/ipoe/proxmox/provision.sh
 
 # ブリッジだけ作る / 作った VM を消してやり直す
 sudo lab/ipoe/proxmox/provision.sh bridges
 sudo lab/ipoe/proxmox/provision.sh destroy
 ```
 
+> **`preflight` から始めてください。** 本実行の前に必ず同じ検証が走りますが、`preflight` なら
+> 何も変更せずに環境だけ報告します。
+>
+> **公開鍵**: `sudo` 実行なので既定は `/root/.ssh/id_rsa.pub` です。呼び出しユーザの鍵を使うなら
+> `sudo SSHKEY=~/.ssh/id_rsa.pub ...` と明示してください(チルダは呼び出し側で展開されます)。
+
 やっていること:
 
 | 手順 | 内容 |
 |---|---|
-| ブリッジ作成 | vmbr1(ACCESS)/ vmbr2(CORE)/ vmbr3(INET)/ vmbr4(CPE配下LAN)を `bridge-mcsnoop 0` 付きで追加 |
+| **事前検証** | PVE 版数・ストレージ種別とスナップショット可否・VMID 9001-9010 の衝突・既存 vmbr1-4 の用途・公開鍵・GUI 未適用のネットワーク変更をチェックし、危険なら中断 |
+| ブリッジ作成 | vmbr1(ACCESS)/ vmbr2(CORE)/ vmbr3(INET)/ vmbr4(CPE配下LAN)を `bridge-mcsnoop 0` 付きで追加。**既存の別用途ブリッジには触らず中断する**(CML の External Connector 等を汚さないため) |
 | イメージ取得 | Ubuntu 24.04 クラウドイメージと OpenWrt をダウンロード(2 回目以降はキャッシュ) |
 | VM 作成 | 9001 ngn-sim / 9002 vne-inet / 9003 bras / 9004 lab-client / 9010 openwrt-ce。cloud-init でユーザ・SSH 鍵・DHCP を設定 |
 | NIC 割当 | 役割ごとに**固定 MAC** を付与(`02:AC:*`=アクセス網、`02:C0:*`=NGN網内、`02:1E:*`=模擬インターネット) |
@@ -104,7 +121,7 @@ sudo lab/ipoe/ngn/setup-ngn.sh pd
 # VNE+INET(同一VMで両方実行)
 sudo lab/ipoe/vne/setup-map-br.sh        # PD モードの既定値のまま
 sudo lab/ipoe/vne/setup-aftr.sh
-sudo INET_IF=eth2 lab/ipoe/inet/setup-inet.sh   # 同居時は INET 側 NIC 名を指定
+sudo lab/ipoe/inet/setup-inet.sh                # NIC は MAC から自動解決される
 
 # BRAS(PPPoE切替前状態の再現が必要になったら)
 sudo lab/ipoe/bras/setup-bras.sh
@@ -120,21 +137,32 @@ sudo CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 \
 
 > VNE+INET 同居時の注意: setup-inet.sh 内の「復路ルート(via 203.0.113.1 / 2001:db8:cafe::1)」は同居により自分自身を指すため不要になります(スクリプトはこの場合エラーを無視して先へ進むようにしてあります)。
 
-## 3. OpenWrt-CE VM の作成(定番手順)
+## 3. OpenWrt-CE VM の作成
+
+**[§0.5](#05-いちばん早い方法-自動構築スクリプト) の provision.sh を使った場合は VMID 9010 として作成済みです。** 手動で作る場合のみ以下を実行してください。
+
+> ⚠️ **NIC の順番を間違えないこと。** OpenWrt x86/64 の既定は **eth0 = LAN / eth1 = WAN** です。
+> したがって **1 枚目(net0)を LAN 側(vmbr4)、2 枚目(net1)を WAN 側(vmbr1)** に割り当てます。
+> 逆にすると初回ブートで WAN 側 NIC に `192.168.1.1` の LAN が立ち上がり、アクセス網を汚します。
 
 ```bash
-# Proxmoxホスト上で
-wget https://downloads.openwrt.org/releases/24.10.0/targets/x86/64/openwrt-24.10.0-x86-64-generic-ext4-combined-efi.img.gz
+# Proxmoxホスト上で (provision.sh と同じ非EFIイメージ + SeaBIOS で揃えている)
+wget https://downloads.openwrt.org/releases/24.10.0/targets/x86/64/openwrt-24.10.0-x86-64-generic-ext4-combined.img.gz
 gunzip openwrt-*.img.gz
-qemu-img resize -f raw openwrt-*.img 2G      # 元イメージは~100MBなので先に拡張
-qm create 200 --name openwrt-ce --memory 512 --cores 1 \
-  --net0 virtio,bridge=vmbr1 --net1 virtio,bridge=vmbr0 \
-  --bios ovmf --efidisk0 local-lvm:0,efitype=4m --machine q35
-qm importdisk 200 openwrt-*.img local-lvm    # PVE 8.2以降は qm disk import
-# GUI: インポートされたディスクをscsi0としてアタッチ → ブート順に追加 → 起動
+qemu-img resize -f raw openwrt-*.img 2G      # 空き領域の予約 (rootfs拡張はOpenWrt側で別途)
+
+qm create 9010 --name openwrt-ce --memory 512 --cores 1 --ostype l26 \
+  --scsihw virtio-scsi-single --serial0 socket \
+  --net0 virtio,bridge=vmbr4 \
+  --net1 virtio=02:AC:00:00:00:10,bridge=vmbr1
+qm set 9010 --scsi0 "<STORAGE>:0,import-from=$PWD/openwrt-24.10.0-x86-64-generic-ext4-combined.img"
+qm set 9010 --boot order=scsi0
+qm start 9010
 ```
 
-net0(vmbr1)を WAN、net1 を LAN 側にし、`opkg update && opkg install map ds-lite` の上で [build.md §5](build.md) の設定を投入します。
+`<STORAGE>` は `pvesm status` で確認した名前に置き換えてください(PVE 7.2 未満では `import-from` が使えないため `qm importdisk 9010 <img> <STORAGE>` → `qm set 9010 --scsi0 <unused0の値>` の 2 段になります)。
+
+起動後、`opkg update && opkg install map ds-lite` の上で [build.md §5](build.md) の設定を投入します。
 
 **OpenWrt の MAP-E で追加すべき設定(調査反映)**:
 

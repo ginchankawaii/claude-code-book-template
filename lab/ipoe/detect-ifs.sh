@@ -15,7 +15,8 @@
 for _labif_d in /sys/class/net/*; do
   [ -e "${_labif_d}/address" ] || continue
   _labif_n=$(basename "${_labif_d}")
-  case "$(cat "${_labif_d}/address")" in
+  # sysfs は小文字で返すが、念のため明示的に小文字化してから判定する
+  case "$(tr 'A-F' 'a-f' < "${_labif_d}/address")" in
     02:ac:*) ACCESS_IF="${ACCESS_IF:-${_labif_n}}" ;;
     02:c0:*) CORE_IF="${CORE_IF:-${_labif_n}}" ;;
     02:1e:*) INET_IF="${INET_IF:-${_labif_n}}" ;;
