@@ -13,6 +13,9 @@
 #     CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 $0
 set -euo pipefail
 
+# 役割別 MAC から NIC 名を自動解決 (provision.sh で作った VM 向け。未設定の変数だけ埋める)
+if [ -f "$(dirname "$0")/../detect-ifs.sh" ]; then . "$(dirname "$0")/../detect-ifs.sh"; fi
+
 BR_ADDR="2001:db8:9999::1"
 CE_MAP_ADDR="${CE_MAP_ADDR:-2001:db8:100a:500:0:c633:640a:5}"  # RFC7597 IID: 0000:IPv4:PSID
 CE_SHARED_V4="${CE_SHARED_V4:-198.51.100.10}"

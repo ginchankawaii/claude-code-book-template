@@ -15,6 +15,35 @@
 | OpenWrt-CE | リファレンス CPE(MAP-E / DS-Lite / PPPoE を切替) | 1vCPU / 512MB |
 | 実機 CPE | Cisco 892FJ 系(後述。物理 NIC 経由) | — |
 
+## 0.5 いちばん早い方法: 自動構築スクリプト
+
+以下の §1〜§3 を手作業でやる代わりに、**Proxmox ホスト上で 1 コマンド**打てば「ブリッジ 4 本 + VM 5 台」が数分で立ち上がります。中身は §1〜§3 とまったく同じことをしているので、手順を理解したい場合は先に §1 以降を読んでください。
+
+```bash
+# Proxmox ホスト上で(リポジトリを clone した場所で)
+sudo STORAGE=local-lvm SSHKEY=~/.ssh/id_rsa.pub lab/ipoe/proxmox/provision.sh
+
+# 実機 892FJ を繋ぐ場合は物理NICを指定(vmbr1 にアップリンクされる)
+sudo STORAGE=local-lvm ACCESS_UPLINK=enp3s0 lab/ipoe/proxmox/provision.sh
+
+# ブリッジだけ作る / 作った VM を消してやり直す
+sudo lab/ipoe/proxmox/provision.sh bridges
+sudo lab/ipoe/proxmox/provision.sh destroy
+```
+
+やっていること:
+
+| 手順 | 内容 |
+|---|---|
+| ブリッジ作成 | vmbr1(ACCESS)/ vmbr2(CORE)/ vmbr3(INET)/ vmbr4(CPE配下LAN)を `bridge-mcsnoop 0` 付きで追加 |
+| イメージ取得 | Ubuntu 24.04 クラウドイメージと OpenWrt をダウンロード(2 回目以降はキャッシュ) |
+| VM 作成 | 9001 ngn-sim / 9002 vne-inet / 9003 bras / 9004 lab-client / 9010 openwrt-ce。cloud-init でユーザ・SSH 鍵・DHCP を設定 |
+| NIC 割当 | 役割ごとに**固定 MAC** を付与(`02:AC:*`=アクセス網、`02:C0:*`=NGN網内、`02:1E:*`=模擬インターネット) |
+
+**固定 MAC がなぜ効くか**: 各 setup スクリプトは [`lab/ipoe/detect-ifs.sh`](../../lab/ipoe/detect-ifs.sh) を読み込み、**MAC から役割を判別して NIC 名を自動で埋めます**。Ubuntu の NIC 名が `ens18` でも `eth1` でも、そのまま `sudo ./setup-ngn.sh pd` で動きます(VMware 側でも同じ MAC を手で設定すれば同じ仕組みが使えます)。
+
+VM が上がったら、各 VM に `lab/ipoe` をコピーして [§2](#2-vm-の構築) 末尾の setup コマンドを実行してください(NIC 名の指定は不要です)。
+
 ## 1. Proxmox 側のネットワーク準備
 
 アップリンクなしの Linux ブリッジを 2 本(アクセス網・網内/模擬インターネット)作ります。プロトタイプでは PG-CORE と PG-INET を 1 本に集約してもよいですが、本番と同じ 3 本にしておくと VMware 移行時に迷いません。
@@ -66,7 +95,7 @@ Ubuntu Server 24.04 の VM を 3 台作り、NIC を次のとおり割当てま�
 
 各 VM に `lab/ipoe/` をコピーして実行:
 
-NIC 名は各スクリプトとも環境変数で上書きできます(Ubuntu 24.04 の既定は `ens18` 等になるため。[build.md](build.md) 冒頭参照)。
+§0.5 の provision.sh で VM を作った場合、NIC 名は `detect-ifs.sh` が MAC から自動解決するので**環境変数の指定は不要**です。手動で VM を作った場合は各スクリプトの環境変数で上書きできます(Ubuntu 24.04 の既定は `ens18` 等になるため。[build.md](build.md) 冒頭参照)。
 
 ```bash
 # NGN-SIM(まずは PD モード=ひかり電話あり相当から。MAP-E の既定値と揃っていて迷わない)

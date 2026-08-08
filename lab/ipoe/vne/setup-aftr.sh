@@ -7,6 +7,9 @@
 #          setup-aftr.sh restore-pmtu  … R5 復旧
 set -euo pipefail
 
+# 役割別 MAC から NIC 名を自動解決 (provision.sh で作った VM 向け。未設定の変数だけ埋める)
+if [ -f "$(dirname "$0")/../detect-ifs.sh" ]; then . "$(dirname "$0")/../detect-ifs.sh"; fi
+
 case "${1:-}" in
   break-pmtu)
     # このラボの外側パケットは 1460+40=1500 で全リンクに収まるため、落とすべきは

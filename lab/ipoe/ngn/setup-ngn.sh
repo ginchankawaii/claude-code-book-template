@@ -5,6 +5,9 @@
 #   NIC: eth1=PG-ACCESS, eth2=PG-CORE
 set -euo pipefail
 
+# 役割別 MAC から NIC 名を自動解決 (provision.sh で作った VM 向け。未設定の変数だけ埋める)
+if [ -f "$(dirname "$0")/../detect-ifs.sh" ]; then . "$(dirname "$0")/../detect-ifs.sh"; fi
+
 MODE="${1:?usage: $0 ra|pd}"
 LABDIR="$(cd "$(dirname "$0")" && pwd)"
 

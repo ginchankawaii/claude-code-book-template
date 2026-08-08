@@ -7,6 +7,10 @@
 #          setup-inet.sh spoof-aftr … 市販ルータのDS-Lite自動設定向けに transix系AFTRの
 #                                     FQDNをラボAFTRへ向ける (ラボ内DNSのみの偽装)
 set -euo pipefail
+
+# 役割別 MAC から NIC 名を自動解決 (provision.sh で作った VM 向け。未設定の変数だけ埋める)
+if [ -f "$(dirname "$0")/../detect-ifs.sh" ]; then . "$(dirname "$0")/../detect-ifs.sh"; fi
+
 MODE="${1:-install}"
 
 case "$MODE" in

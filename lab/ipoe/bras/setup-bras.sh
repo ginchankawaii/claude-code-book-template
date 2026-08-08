@@ -4,6 +4,9 @@
 set -euo pipefail
 LABDIR="$(cd "$(dirname "$0")" && pwd)"
 
+# 役割別 MAC から NIC 名を自動解決 (provision.sh で作った VM 向け。未設定の変数だけ埋める)
+if [ -f "${LABDIR}/../detect-ifs.sh" ]; then . "${LABDIR}/../detect-ifs.sh"; fi
+
 ACCESS_IF="${ACCESS_IF:-eth1}"
 INET_IF="${INET_IF:-eth2}"
 INET_SELF="203.0.113.2/24"
