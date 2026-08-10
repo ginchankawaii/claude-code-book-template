@@ -14,6 +14,8 @@
 #     SSHKEY=/root/.ssh/id_rsa.pub  VM に登録する公開鍵 (sudo 実行なので既定は root の鍵)
 #     CIUSER=labadmin           VM のログインユーザ名
 #     WITH_CLIENT=1 / WITH_OPENWRT=1   検証クライアント / OpenWrt CE も作る (既定: 作る)
+#     SPLIT_INET=1                     INET-SIM を 9005 に分離する (既定: 0 = 9002 に同居)
+#                                      DS-Lite の網側 NAT / ポート開放不可 (R4) を検証するなら必須
 #     OPENWRT_MGMT=1            OpenWrt に管理NIC (net2) を足す。既定 0。
 #                               map / ds-lite パッケージは既定イメージに入っておらず、
 #                               ラボ内にインターネットが無いため opkg できない。
@@ -39,6 +41,7 @@ SSHKEY="${SSHKEY:-/root/.ssh/id_rsa.pub}"
 CIUSER="${CIUSER:-labadmin}"
 WITH_CLIENT="${WITH_CLIENT:-1}"
 WITH_OPENWRT="${WITH_OPENWRT:-1}"
+SPLIT_INET="${SPLIT_INET:-0}"   # 1 で INET-SIM を 9005 として分離 (R4 の検証に必要)
 OPENWRT_MGMT="${OPENWRT_MGMT:-0}"   # 1 にすると OpenWrt に管理NICを足す (opkg 用)
 ALLOW_NO_SNAPSHOT="${ALLOW_NO_SNAPSHOT:-0}"
 
@@ -51,12 +54,12 @@ OPENWRT_URL="https://downloads.openwrt.org/releases/${OPENWRT_VER}/targets/x86/6
 
 BRIDGE_TAG="IPoEラボ"          # 自分が作ったブリッジの目印 (コメント行に埋め込む)
 LAB_TAG="ipoe-lab"             # 自分が作った VM の目印 (Proxmox のタグ)
-VMIDS=(9001 9002 9003 9004 9010)
+VMIDS=(9001 9002 9003 9004 9005 9010)
 # VMID -> このスクリプトが付ける VM 名 (所有者判定に使う)
 lab_name_of() {
   case "$1" in
     9001) echo ngn-sim ;;  9002) echo vne-inet ;;  9003) echo bras ;;
-    9004) echo lab-client ;; 9010) echo openwrt-ce ;; *) echo "" ;;
+    9004) echo lab-client ;; 9005) echo inet-sim ;; 9010) echo openwrt-ce ;; *) echo "" ;;
   esac
 }
 
@@ -462,6 +465,12 @@ create_ubuntu_vm 9002 vne-inet 2048 2 \
 create_ubuntu_vm 9003 bras     2048 2 \
   "virtio=02:AC:00:00:00:03,bridge=vmbr1" "virtio=02:1E:00:00:00:03,bridge=vmbr3"
 [ "$WITH_CLIENT" = "1" ] && create_ubuntu_vm 9004 lab-client 1024 1 "virtio=02:C1:00:00:00:04,bridge=vmbr4"
+# SPLIT_INET=1 で INET-SIM を別 VM (9005) に分ける。
+# **DS-Lite のポート開放不可 (test-matrix R4) を検証するなら必須。**
+# 同居 (9002 に相乗り) だと、INET-SIM 宛がローカル配送になり AFTR の
+# masquerade (oifname 条件) が当たらず、網側 NAT が効かない。
+# 「PASS するのに出口がクライアントの私設アドレスのまま」という形で現れる。
+[ "$SPLIT_INET" = "1" ] && create_ubuntu_vm 9005 inet-sim 1024 1 "virtio=02:1E:00:00:00:05,bridge=vmbr3"
 
 if [ "$WITH_OPENWRT" = "1" ]; then
   if qm status 9010 >/dev/null 2>&1; then

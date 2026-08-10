@@ -5,7 +5,12 @@
 
 ## 0. プロトタイプの構成(Linux 4 VM + CPE)
 
-理解が目的なので、VNE と INET-SIM を 1 VM に同居させて VM 数を減らします。
+理解が目的なので、既定では VNE と INET-SIM を 1 VM に同居させて VM 数を減らします。
+
+> ⚠️ **DS-Lite の網側 NAT を検証するなら `SPLIT_INET=1` で分離してください。** 同居させると
+> AFTR の masquerade が当たらず、**ポート開放不可 (R4) が逆の結果になります**。
+> `SPLIT_INET=1 ./provision.sh` で 9005 `inet-sim` が追加され、実測で網側 NAT の成立を
+> 確認済みです([build-log.md §3.3-A](build-log.md))。
 
 | VM | 役割 | 目安スペック |
 |---|---|---|
