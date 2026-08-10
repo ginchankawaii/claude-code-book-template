@@ -8,6 +8,8 @@ NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネッ�
 - **Proxmox プロトタイプ手順(自宅検証用)**: [proxmox-prototype.md](proxmox-prototype.md)
 - **会社 VMware 構築ランブック(手動作業用・構築と並行して執筆)**: [runbook-vmware.md](runbook-vmware.md)
 - 事例調査ノート(実例・失敗談と設計への反映): [research-notes.md](research-notes.md)
+- **勉強会「虎の巻」(教科書 × ラボ 連動学習ガイド)**: [study-guide.md](study-guide.md)
+  / スライド生成: [`slides/build-toranomaki.py`](slides/build-toranomaki.py) → `slides/toranomaki.pptx`
 - 設定ファイル・スクリプト: リポジトリの [`lab/ipoe/`](../../lab/ipoe/)
 
 ## 1. 背景と目的
