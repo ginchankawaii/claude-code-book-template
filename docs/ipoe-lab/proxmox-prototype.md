@@ -229,17 +229,35 @@ sudo CE_WAN6=<確認した GUA> lab/ipoe/vne/setup-aftr.sh
 
 CML で Cat8000v を 1 台起動し、コンソールで:
 
+IOS XE の MAP-E は **トンネルインタフェースではなく `nat64` 配下**で設定します
+(`tunnel mode ?` や `softwire ?` では出てきません)。叩くのは次の 3 つです。
+
 ```
 show version                     ! IOS XE のバージョンとプラットフォーム名
-show license summary             ! ライセンス状態(機能制限の有無)
+show license boot level          ! ブートレベル(機能制限の有無。下の表で判定)
 
 configure terminal
- softwire ?                      ! softwire 関連 CLI が実装されているか
- interface Tunnel1
-  tunnel mode ?                  ! MAP-E / softwire 系のモードが候補に出るか
+ nat64 ?                         ! map-e / provisioning が候補に出るか
+ nat64 map-e ?                   ! domain が出るか
+ nat64 provisioning ?            ! mode(jp01)が出るか
 ```
 
-`tunnel mode ?` の候補に MAP-E / softwire 系が出れば実装あり、`ipv6ip` 系しか出なければ DS-Lite までです。**結果によって次が変わります**:
+**判定**:
+
+| 見えたもの | 意味 |
+|---|---|
+| `nat64 map-e domain` と `nat64 provisioning mode jp01` が両方通る | **MAP-E 実装あり**。CE 役に使える |
+| `nat64` はあるが `map-e` が出ない | NAT64 のみ。MAP-E は不可(DS-Lite 止まり) |
+| `nat64` 自体が無い | ライセンスかイメージ種別の問題。`show license boot level` を確認 |
+
+ライセンスは 3 段階で切り分けます: ① `show license boot level` が `network-essentials` なら
+`license boot level network-advantage` に上げて再起動して再確認 → ② それでも出なければ
+イメージ種別(no-payload-encryption 版など)を確認 → ③ それでも出なければ仮想では非対応と結論。
+
+> **タイムボックス: 合計 30 分**。ここで詰まっても本題(ラボ一巡)は進むので、
+> 30 分で結論が出なければ「仮想では未確認」として先に進み、会社の物理 IOS XE 機で確認してください。
+
+**結果によって次が変わります**:
 
 | 結果 | ラボでの役割 |
 |---|---|

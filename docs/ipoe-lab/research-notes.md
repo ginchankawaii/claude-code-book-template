@@ -78,7 +78,7 @@ Web上の実際の構築事例・失敗談を調査し、本ラボ設計に反�
 - MAP-E の日本向けモード(jp01)は **`draft-ietf-softwire-map-03`** を指定する — **§2 で判明した「日本の VNE は draft-03 互換」という事実と一致**しており、OpenWrt の `legacymap` に相当する扱いが IOS XE にも実装されている
 - 設定例・生成ツール: [MY TECH BLOG: IOS XE の MAP-E / DS-Lite 設定](https://mytech-blog.com/cisco-ipoe/)、[IOS XE IPoE Config Generator](https://ipoe.ioslab.jp/)、[DS-Lite での IOS XE 設定例](https://candm-network.hatenadiary.jp/entry/CiscoIP0E)
 
-**未確認(要ラボ検証)**: この MAP-E 機能が **仮想ルータ(CSR1000v / Catalyst 8000V)でも使えるか**。物理の ISR 1100 / C1111 での事例は見つかるが、仮想プラットフォームでの可否とライセンス要件を示す一次情報に到達できていない(該当サイトが調査環境から egress ブロック)。**CML 上で `tunnel mode ?` / `softwire ?` を叩いて CLI の有無を見るのが最速の検証**(手順は [proxmox-prototype.md §4.1](proxmox-prototype.md))。
+**未確認(要ラボ検証)**: この MAP-E 機能が **仮想ルータ(CSR1000v / Catalyst 8000V)でも使えるか**。物理の ISR 1100 / C1111 での事例は見つかるが、仮想プラットフォームでの可否とライセンス要件を示す一次情報に到達できていない(該当サイトが調査環境から egress ブロック)。**CML 上で `nat64 ?` / `nat64 map-e ?` / `nat64 provisioning ?` を叩いて CLI の有無を見るのが最速の検証**(IOS XE の MAP-E はトンネルインタフェースではなく `nat64` 配下にある。`tunnel mode ?` では出てこない)(手順は [proxmox-prototype.md §4.1](proxmox-prototype.md))。
 
 使えた場合の意味: 892FJ では埋まらない **MAP-E の CE 役を「Cisco 実装」で検証できる**ようになり、参照 CE(OpenWrt)だけに依存していた検証マトリクス No.1〜2 に実装の多様性が入る。
 
