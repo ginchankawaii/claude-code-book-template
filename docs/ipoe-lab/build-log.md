@@ -31,7 +31,7 @@
 
 | # | 目的 | 状態 | 所要 | 主な学び |
 |---|---|---|---|---|
-| 1 | Proxmox に 5 VM を作って起動する | **未着手** | — | — |
+| 1 | Proxmox に 5 VM を作って起動する | **進行中**(preflight 合格) | — | メモリ 251GB / ディスク 975GB で余裕。CML と同時稼働可。持ち込みは tar 展開 |
 | 2 | 4 台の Linux に setup スクリプトを流し、IPv6 が降りるところまで | 未着手 | — | — |
 | 3 | MAP-E / DS-Lite で IPv4 が通り、`run-checks.sh` が PASS するまで | 未着手 | — | — |
 | 4 | 実機 CPE(892FJ)を収容する | 未着手 | — | — |
@@ -75,7 +75,56 @@
 
 #### Do
 
-<!-- ここに叩いたコマンドと出力を貼る -->
+**手順 1: リポジトリをホストに持ち込む**
+
+ホストに `git` が入っておらず、`apt-get install git` は enterprise リポジトリの 401 で失敗する。
+`unzip` の有無も不明なため、**`tar` でアーカイブを展開する**方法に統一した(`tar` は PVE 標準)。
+
+```
+cd /root
+curl -fsSL "https://github.com/<owner>/<repo>/archive/refs/heads/<branch>.tar.gz" | tar xz
+mv -f <repo>-<branch をダッシュ化した名前> ipoe-lab
+chmod +x ipoe-lab/lab/ipoe/proxmox/provision.sh
+```
+
+**手順 2: 事前検証(何も変更しない)**
+
+```
+cd /root/ipoe-lab/lab/ipoe/proxmox
+STORAGE=local-lvm ./provision.sh preflight
+```
+
+出力(正常時。runbook にはこれを「期待される出力」として載せる):
+
+```
+[検証] 環境を確認します
+  PVE バージョン: 9.1 (ディスク取り込み: import-from)
+  ストレージ種別: lvmthin / スナップショット: yes
+  VMID 9001-9010: すべて空き
+  公開鍵: /root/.ssh/id_rsa.pub
+  ブリッジ vmbr1-4: すべて未使用 (これから作成)
+[完了] 事前検証のみ実行しました (何も変更していません)
+```
+
+**手順 3: ホスト環境の実測(サイクル 4 と CML 併用の判断材料)**
+
+```
+free -h        →  総メモリ 251Gi / 空き 247Gi
+pvesm status   →  local-lvm (lvmthin) 空き 1023229952 KiB ≒ 975GB
+                  local (dir) 空き 87961884 KiB ≒ 84GB  ← イメージ置き場
+                  QNAP-10G (nfs) 空き 15074678784 KiB ≒ 14TB
+qm list        →  VMID 100 CML (stopped, 65536MB 割当) のみ
+ip -br link    →  UP:   nic2 (vmbr0 のポート), nic11
+                  DOWN: nic0, nic1, nic3, nic4, nic5, nic7, nic8, nic9, nic10
+```
+
+**手順 4: VM 作成(実行)**
+
+```
+STORAGE=local-lvm ./provision.sh
+```
+
+<!-- 出力をここに貼る -->
 
 ```
 （未実施）
@@ -83,11 +132,26 @@
 
 #### Check
 
-<!-- 期待と違った点。エラーは原文で -->
+**preflight は 4 項目すべて合格。想定外はなかった。** 判明した事実:
+
+- **メモリに余裕がある(251GB)**。CML(64GB)とラボ(7.5GB)を**同時に動かせる**。
+  → §3.5 の H3(CML で IOS XE の MAP-E CLI を確認)は、ラボ構築を止めずに並行して実施できる。
+  当初「CML を止めないとラボが動かないかもしれない」と懸念していたが、その制約は無い。
+- **ディスクも余裕(local-lvm 975GB 空き)**。当初の見積り 70GB に対して十分。
+  QNAP(14TB / NFS)を使う必要はなく、**スナップショットが速い local-lvm のままでよい**と確定。
+- **空き物理 NIC が 9 本ある**(nic0/1/3/4/5/7/8/9/10 はすべて NO-CARRIER)。
+  サイクル 4 で 892FJ を繋ぐ `ACCESS_UPLINK` はここから選ぶ。
+  **`nic2` と `nic11` は使用中なので選ばないこと**(nic2 = vmbr0 の管理系、
+  nic11 = キャリアあり。QNAP 10G と推定。**要確認**)。
+
+<!-- 手順 4 以降の結果をここに追記 -->
 
 #### Act
 
-<!-- 直したファイルと commit -->
+- `build-log.md` にホスト実測値を記録(このセクション)
+- §3.1 のトラッカー B1/B2/B3/B6 を更新
+- 持ち込み方法を `git clone` 前提から **tar アーカイブ展開**に確定(ホストに git が無いため)。
+  この方法は会社環境でもそのまま使えるので、runbook の手順 1 に採用する
 
 ---
 
@@ -109,12 +173,14 @@
 
 | # | 仮説 / 未確認 | 確認方法 | 結果 |
 |---|---|---|---|
-| B1 | `local-lvm` の空きが 70GB 以上ある | `pvesm status` | |
-| B2 | VMID 9001-9004 / 9010 が空いている | `qm list` | |
-| B3 | `vmbr1`〜`vmbr4` が未使用(CML と衝突しない) | `provision.sh preflight` | |
+| B1 | `local-lvm` の空きが 70GB 以上ある | `pvesm status` | **OK** 975GB 空き。QNAP 不要、local-lvm で確定 |
+| B2 | VMID 9001-9004 / 9010 が空いている | `qm list` | **OK** VMID 100 (CML) のみ存在 |
+| B3 | `vmbr1`〜`vmbr4` が未使用(CML と衝突しない) | `provision.sh preflight` | **OK** すべて未使用。vmbr0 のみ存在 |
 | B4 | `bridge-mcsnoop 0` が実際に効いて RA が通る | VM 間で `ping6` / `tcpdump` で RA 受信 | |
 | B5 | `detect-ifs.sh` の MAC 判定が Ubuntu 24.04 で機能する | VM 内で `. detect-ifs.sh; echo $ACCESS_IF` | |
-| B6 | `import-from`(PVE 9.1)でディスク取り込みが通る | provision.sh の出力 | |
+| B6 | `import-from`(PVE 9.1)でディスク取り込みが通る | provision.sh の出力 | PVE 9.1 を検出し `import-from` を選択。**実行は手順 4 で確認** |
+| B7 | ホストからイメージをダウンロードできる(`wget` で Ubuntu 600MB / OpenWrt 50MB) | provision.sh の出力 | |
+| B8 | `nic11` は何に使われているか(QNAP 10G と推定)。サイクル 4 で誤って使わないため | `ip -4 addr show nic11` / `cat /etc/network/interfaces` | |
 
 ### 3.2 IPv6 の配布(サイクル 2)
 
