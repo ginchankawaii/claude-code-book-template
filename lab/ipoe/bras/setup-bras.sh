@@ -54,7 +54,9 @@ ip route replace default via 203.0.113.80
 
 mkdir -p /var/log/accel-ppp
 sed "s/^interface=eth1/interface=${ACCESS_IF}/" "${LABDIR}/accel-ppp.conf" > /etc/accel-ppp.conf
-install -m 600 "${LABDIR}/chap-secrets" /etc/ppp/chap-secrets
+# -D で /etc/ppp ごと作る。accel-ppp をソースからビルドしていると ppp パッケージが
+# 入らないため /etc/ppp が存在せず、-D 無しだと install が No such file or directory で落ちる
+install -D -m 600 "${LABDIR}/chap-secrets" /etc/ppp/chap-secrets
 
 # PPPoE プールを INET へ NAT (実網の ISP NAT なし構成を再現するなら削ること)
 nft -f - <<EOF
