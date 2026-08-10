@@ -70,7 +70,15 @@
 ### R1: RA 方式なのに PD 前提設定(最頻出)
 - 再現: NGN-SIM を `ra` モード、CPE で DHCPv6-PD を要求する設定に
 - 症状: IPv6 アドレスが付かない/MAP-E が上がらない
-- 切り分け: CPE で RA 受信は見えるが PD 応答がない(`tcpdump -i wan ip6 and udp port 547`)
+- **⚠ 症状の実態(サイクル 5 実測): 「IPv6 が付かない」のではありません。**
+  `wan6` は `up` で **WAN 側には RA 由来のグローバル IPv6 が普通に付きます**。
+  死ぬのは **委譲プレフィックス(LAN 側)と MAP-E** です。WAN を見に行くと混乱します
+- **⚠ 切り分けの実態: 「PD 応答がない」のではありません。**
+  `tcpdump -ni <ACCESS_IF> "udp port 547"` すると `solicit` → `advertise` は**流れています**。
+  **Advertise に IA_PD が入っていないだけ**で、その後 Request が続きません。
+  「udp 547 が見えるから DHCPv6 は動いている」と誤読しやすい箇所です。**見るべきは Advertise の中身**
+- **戻すとき**: `ifdown wan6 && ifup wan6` では戻りません。`/etc/init.d/network restart` が必要です
+  (`map-wanmap` を作り直す必要があるため)。知らないと「pd に戻したのに MAP-E が上がらない」で二次遭難します
 
 ### R2: PPPoE セッション残留
 - 再現: CPE の電源断で PPPoE を切断(正常切断させない)→ 即座に再接続 or IPoE 切替
