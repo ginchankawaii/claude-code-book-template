@@ -147,8 +147,10 @@ fi
 
 # --- VMID の衝突 ---
 CONFLICT=0
+FOUND_VM=0
 for vmid in "${VMIDS[@]}"; do
   qm status "$vmid" >/dev/null 2>&1 || continue
+  FOUND_VM=1
   if vm_is_ours "$vmid"; then
     echo "  VMID ${vmid}: このラボの VM が既存 ($(vm_name "$vmid"))"
   else
@@ -156,6 +158,7 @@ for vmid in "${VMIDS[@]}"; do
     CONFLICT=1
   fi
 done
+[ "$FOUND_VM" = "0" ] && echo "  VMID 9001-9010: すべて空き"
 if [ "$CONFLICT" = "1" ]; then
   cat >&2 <<'EOF'
 
@@ -176,6 +179,47 @@ if [ -f /etc/network/interfaces.new ]; then
   echo "ERROR: GUI の未適用ネットワーク変更 (/etc/network/interfaces.new) があります。" >&2
   echo "       このまま追記すると後で GUI の Apply に上書きされます。先に適用または破棄してください" >&2
   exit 1
+fi
+
+# --- 既存ブリッジ (vmbr1-4 が別用途で使われていないか) ---
+# 別用途のブリッジにラボをぶら下げると NGN-SIM の RA / DHCPv6-PD が既存 L2 に流れ、
+# 同居 VM (CML 等) の IPv6 を汚染するため、ここで検出して中断する
+BR_CONFLICT=0
+BR_EXISTING=""
+for br in vmbr1 vmbr2 vmbr3 vmbr4; do
+  grep -qE "^iface[[:space:]]+${br}[[:space:]]" /etc/network/interfaces 2>/dev/null || continue
+  if grep -A8 -E "^iface[[:space:]]+${br}[[:space:]]" /etc/network/interfaces | grep -q "${BRIDGE_TAG}"; then
+    BR_EXISTING="${BR_EXISTING} ${br}(ラボ用)"
+  else
+    echo "  ${br}: **別用途のブリッジが存在** (CML の External Connector 等の可能性)" >&2
+    BR_CONFLICT=1
+  fi
+done
+if [ "$BR_CONFLICT" = "1" ]; then
+  cat >&2 <<'EOF'
+
+  ERROR: vmbr1-4 に別用途のブリッジがあります。
+         ここにラボをぶら下げると NGN-SIM の RA / DHCPv6-PD が既存 L2 に流れ、
+         同居 VM の IPv6 を汚染します。安全側で中断しました。
+         対処: 既存ブリッジの用途を確認し、空いている番号へ変更してください
+               (ensure_bridge の呼び出しと各 VM の bridge= を揃えて書き換え)
+EOF
+  exit 1
+fi
+if [ -n "$BR_EXISTING" ]; then
+  echo "  既存ブリッジ:${BR_EXISTING}"
+else
+  echo "  ブリッジ vmbr1-4: すべて未使用 (これから作成)"
+fi
+
+# --- 容量 (VM 5 台で概ね 50-60GB 使う) ---
+SAVAIL_KB="$(echo "$SLINE" | awk '{print $5}')"
+if [ -n "$SAVAIL_KB" ] && [ "$SAVAIL_KB" -gt 0 ] 2>/dev/null; then
+  SAVAIL_GB=$((SAVAIL_KB / 1024 / 1024))
+  echo "  ${STORAGE} の空き: 約 ${SAVAIL_GB}GB (VM 5 台で 50-60GB 使用)"
+  if [ "$SAVAIL_GB" -lt 70 ]; then
+    echo "  警告: 空き容量が少なめです。WITH_OPENWRT=0 / WITH_CLIENT=0 で減らすか、別ストレージを指定してください" >&2
+  fi
 fi
 
 if [ "$MODE" = "preflight" ]; then
