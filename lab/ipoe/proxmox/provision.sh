@@ -14,6 +14,10 @@
 #     SSHKEY=/root/.ssh/id_rsa.pub  VM に登録する公開鍵 (sudo 実行なので既定は root の鍵)
 #     CIUSER=labadmin           VM のログインユーザ名
 #     WITH_CLIENT=1 / WITH_OPENWRT=1   検証クライアント / OpenWrt CE も作る (既定: 作る)
+#     OPENWRT_MGMT=1            OpenWrt に管理NIC (net2) を足す。既定 0。
+#                               map / ds-lite パッケージは既定イメージに入っておらず、
+#                               ラボ内にインターネットが無いため opkg できない。
+#                               1 にすると管理ブリッジ経由で opkg install できる
 #     ALLOW_NO_SNAPSHOT=1       スナップショット不可ストレージでも確認なしで続行
 #
 # 安全設計 (レビュー指摘反映):
@@ -35,6 +39,7 @@ SSHKEY="${SSHKEY:-/root/.ssh/id_rsa.pub}"
 CIUSER="${CIUSER:-labadmin}"
 WITH_CLIENT="${WITH_CLIENT:-1}"
 WITH_OPENWRT="${WITH_OPENWRT:-1}"
+OPENWRT_MGMT="${OPENWRT_MGMT:-0}"   # 1 にすると OpenWrt に管理NICを足す (opkg 用)
 ALLOW_NO_SNAPSHOT="${ALLOW_NO_SNAPSHOT:-0}"
 
 IMG_DIR="/var/lib/vz/template/iso"
@@ -105,7 +110,17 @@ if [ "$MODE" = "ips" ]; then
   for vmid in "${VMIDS[@]}"; do
     qm status "$vmid" >/dev/null 2>&1 || continue
     vm_is_ours "$vmid" || continue
-    mac="$(qm config "$vmid" | awk -F'[=,]' '/^net0:/{print tolower($2); exit}')"
+    # 管理ブリッジに繋がっている NIC を探す。net0 が管理とは限らない
+    # (OpenWrt-CE は net0=LAN/vmbr4, net1=WAN/vmbr1 で、管理 NIC を持たない)
+    mac="$(qm config "$vmid" | awk -v br="bridge=${MGMT_BRIDGE}" '
+             /^net[0-9]+:/ && index($0, br) {
+               if (match($0, /[0-9A-Fa-f:]{17}/)) { print tolower(substr($0, RSTART, RLENGTH)); exit }
+             }')"
+    if [ -z "$mac" ]; then
+      printf '  %-6s %-12s %-19s %s\n' "$vmid" "$(lab_name_of "$vmid")" "-" \
+        "(${MGMT_BRIDGE} に NIC なし: qm terminal ${vmid} で操作)"
+      continue
+    fi
     # MAC は "lladdr" の次のトークン。列位置は iproute2 の版で変わるので位置に依存しない
     lladdr="$(ip -6 neigh show dev "$MGMT_BRIDGE" 2>/dev/null \
               | awk -v m="$mac" '$1 ~ /^fe80:/ {
@@ -115,7 +130,7 @@ if [ "$MODE" = "ips" ]; then
     if [ -n "$lladdr" ]; then
       dest="${lladdr}%${MGMT_BRIDGE}"
     else
-      dest="(未検出: qm terminal ${vmid} で ip a を確認)"
+      dest="(未検出: 起動直後かも。少し待って再実行 / qm terminal ${vmid})"
     fi
     printf '  %-6s %-12s %-19s %s\n' "$vmid" "$(lab_name_of "$vmid")" "$mac" "$dest"
   done
@@ -450,10 +465,20 @@ if [ "$WITH_OPENWRT" = "1" ]; then
       --scsihw virtio-scsi-single --serial0 socket \
       --net0 "virtio,bridge=vmbr4" \
       --net1 "virtio=02:AC:00:00:00:10,bridge=vmbr1"
+    # map / ds-lite は既定イメージに入っておらず、ラボ内にインターネットも無いので
+    # opkg install できない。管理NICを足して外に出られるようにする (既定は無効)
+    if [ "$OPENWRT_MGMT" = "1" ]; then
+      qm set 9010 --net2 "virtio,bridge=${MGMT_BRIDGE}" >/dev/null
+    fi
     import_boot_disk 9010 "$OPENWRT_IMG"
     qm set 9010 --boot order=scsi0 >/dev/null
     qm set 9010 --tags "$LAB_TAG" >/dev/null
-    echo "  VM 9010 (openwrt-ce): 作成 (net0=LAN/vmbr4, net1=WAN/vmbr1)"
+    if [ "$OPENWRT_MGMT" = "1" ]; then
+      echo "  VM 9010 (openwrt-ce): 作成 (net0=LAN/vmbr4, net1=WAN/vmbr1, net2=管理/${MGMT_BRIDGE})"
+    else
+      echo "  VM 9010 (openwrt-ce): 作成 (net0=LAN/vmbr4, net1=WAN/vmbr1)"
+      echo "    注意: 管理NICなし。map/ds-lite の opkg install には OPENWRT_MGMT=1 が必要です"
+    fi
   fi
 fi
 

@@ -239,6 +239,55 @@ gzip: f.gz: decompression OK, trailing garbage ignored
     リンクローカルでの `scp` の書き方(`[fe80::xxxx%vmbr0]`)を明示した
   - guest-agent を使いたい場合の手順(`pvesm set local --content ...,snippets` +
     作り直し)も併記した
+
+**手順 5: 成功条件の確認**
+
+```
+qm list
+  9001 ngn-sim     running  2048  9.50
+  9002 vne-inet    running  2048  9.50
+  9003 bras        running  2048  9.50
+  9004 lab-client  running  1024  9.50
+  9010 openwrt-ce  running   512  2.00
+
+vmbr1 mcsnoop=0 / vmbr2 mcsnoop=0 / vmbr3 mcsnoop=0 / vmbr4 mcsnoop=0   ← 全て 0 (必須)
+
+./provision.sh ips
+  9001 ngn-sim     bc:24:11:e5:63:1b  fe80::be24:11ff:fee5:631b%vmbr0
+  9002 vne-inet    bc:24:11:b9:3f:b1  fe80::be24:11ff:feb9:3fb1%vmbr0
+  9003 bras        bc:24:11:50:eb:7c  fe80::be24:11ff:fe50:eb7c%vmbr0
+  9004 lab-client  bc:24:11:3b:bf:e2  fe80::be24:11ff:fe3b:bfe2%vmbr0
+  9010 openwrt-ce  bc:24:11:73:e4:24  (未検出)          ← 下記④のとおり ips 側のバグ
+```
+
+**成功条件 1(5 台 running)と 4(mcsnoop=0)は達成。** 2(SSH)と 3(detect-ifs.sh)は確認中。
+
+**④ `ips` モードが net0 を管理NICと決め打ちしていた(自作バグ)**
+
+Linux VM は net0 が管理(vmbr0)だが、**OpenWrt-CE は net0=LAN(vmbr4) / net1=WAN(vmbr1)** で
+構成が違う。`ips` は net0 の MAC を無条件に管理NICとして扱っていたため、
+OpenWrt については **vmbr4 側の MAC を vmbr0 の近隣キャッシュから探す**という
+成立しない検索をしていた。結果「未検出」と表示され、しかも
+「`qm terminal` で `ip a` を確認」という**解決しない指示**を出していた。
+
+→ 管理ブリッジ(`bridge=<MGMT_BRIDGE>`)を含む `netN:` 行から MAC を取る形に修正。
+  該当 NIC が無い場合は「`vmbr0` に NIC なし」と**事実を表示**するようにした。
+
+**⑤ OpenWrt に `map` / `ds-lite` を入れる経路が無い(サイクル 3 の前提が崩れる)**
+
+④ で明確になった構造上の問題。OpenWrt-CE は
+
+- 管理NICを持たない(vmbr4 と vmbr1 のみ)
+- ラボ内に本物のインターネットは無い(INET-SIM は模擬)
+
+ため、**`opkg update && opkg install map ds-lite` が実行できない**。
+これらは既定イメージに含まれないので、**MAP-E / DS-Lite の CE 役が成立しない** =
+サイクル 3 が始まらない。トラッカー V2 として挙げていた懸念が現実だったことが確定した。
+
+→ `provision.sh` に `OPENWRT_MGMT=1`(既定 0)を追加。OpenWrt に net2 を足して
+  管理ブリッジ経由で外に出られるようにする。**既定を 0 にしたのは、会社環境で
+  検証機を社内 LAN に足を出すことがポリシー上の問題になりうるため**。
+  必要なときだけ明示的に有効化する。
 - §3.1 のトラッカー B1/B2/B3/B6 を更新、B7/B8 を追加
 - 持ち込み方法を `git clone` 前提から **tar アーカイブ展開**に確定(ホストに git が無いため)。
   この方法は会社環境でもそのまま使えるので、runbook の手順 1 に採用する
@@ -276,13 +325,13 @@ gzip: f.gz: decompression OK, trailing garbage ignored
 | B1 | `local-lvm` の空きが 70GB 以上ある | `pvesm status` | **OK** 975GB 空き。QNAP 不要、local-lvm で確定 |
 | B2 | VMID 9001-9004 / 9010 が空いている | `qm list` | **OK** VMID 100 (CML) のみ存在 |
 | B3 | `vmbr1`〜`vmbr4` が未使用(CML と衝突しない) | `provision.sh preflight` | **OK** すべて未使用。vmbr0 のみ存在 |
-| B4 | `bridge-mcsnoop 0` が実際に効いて RA が通る | VM 間で `ping6` / `tcpdump` で RA 受信 | |
+| B4 | `bridge-mcsnoop 0` が実際に効いて RA が通る | VM 間で `ping6` / `tcpdump` で RA 受信 | 設定値は **vmbr1-4 すべて 0** を確認。実際に RA が通るかはサイクル 2 で確認 |
 | B5 | `detect-ifs.sh` の MAC 判定が Ubuntu 24.04 で機能する | VM 内で `. detect-ifs.sh; echo $ACCESS_IF` | |
 | B6 | `import-from`(PVE 9.1)でディスク取り込みが通る | provision.sh の出力 | **OK** 5 台すべて作成・起動できた |
 | B7 | ホストからイメージをダウンロードできる(`wget` で Ubuntu 600MB / OpenWrt 50MB) | provision.sh の出力 | **OK** Ubuntu 595MB/46秒、OpenWrt 13MB/8秒。ただし展開で gzip 終了コード 2 → スクリプト即死(修正済み) |
 | B8 | `nic11` は何に使われているか(QNAP 10G と推定)。サイクル 4 で誤って使わないため | `ip -4 addr show nic11` / `cat /etc/network/interfaces` | |
 | B9 | `snippets` 対応ストレージが無く guest-agent が入らない | 完了メッセージの注意書き | **該当**。`provision.sh ips`(IPv6 リンクローカル)で代替。guest-agent が必要なら `pvesm set local --content iso,vztmpl,backup,snippets` + 作り直し |
-| B10 | `provision.sh ips` が 4 台(+OpenWrt)を検出できる | `./provision.sh ips` | |
+| B10 | `provision.sh ips` が 4 台(+OpenWrt)を検出できる | `./provision.sh ips` | **OK**(Linux 4 台)。OpenWrt は管理NICが無いので対象外。net0 決め打ちのバグを修正済み |
 
 ### 3.2 IPv6 の配布(サイクル 2)
 
@@ -302,7 +351,7 @@ gzip: f.gz: decompression OK, trailing garbage ignored
 | # | 仮説 / 未確認 | 確認方法 | 結果 |
 |---|---|---|---|
 | V1 | `ip -6 tunnel add ... mode ipip6` が実際に張れる | `setup-map-br.sh` 実行 → `ip -6 tunnel show` | |
-| V2 | OpenWrt に `map` / `ds-lite` パッケージをどう入れるか(**ラボ内にインターネットが無い**) | 管理経路 or 事前導入イメージ。**手順を確定して記録すること** | |
+| V2 | OpenWrt に `map` / `ds-lite` パッケージをどう入れるか(**ラボ内にインターネットが無い**) | 管理経路 or 事前導入イメージ。**手順を確定して記録すること** | **問題を確認**。OpenWrt は管理NIC無しで作られ opkg 不可。`OPENWRT_MGMT=1` を追加して net2 経由で導入する方式にした。**実際の導入はサイクル 2 で検証** |
 | V3 | MAP-E で CPE の自動計算値が期待値表と一致する | `build.md` §3 の表と照合 | |
 | V4 | 実際に使えるポート数が 240 で、飛び飛びである | CPE の状態表示 / 実測 | |
 | V5 | DS-Lite で IPv4 が通る | `run-checks.sh` | |
