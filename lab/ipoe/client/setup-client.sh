@@ -87,7 +87,9 @@ netplan apply
 
 echo "[client] RA / DHCP の受信を待ちます (最大 30 秒)"
 for _ in $(seq 30); do
-  if ip -4 addr show dev "$LAN_IF" | grep -q 'inet '; then break; fi
+  # IPv4 だけでなく **グローバル IPv6 が preferred になるまで**待つ。
+  # RA は IPv4 より遅れて届くことがあり、先に抜けると下の自己判定が誤検知する
+  if ip -4 addr show dev "$LAN_IF" | grep -q 'inet ' && \n     ip -6 addr show dev "$LAN_IF" scope global | grep inet6 | grep -qv deprecated; then break; fi
   sleep 1
 done
 

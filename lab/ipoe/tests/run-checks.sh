@@ -33,12 +33,28 @@ echo "--- アドレス/経路 ---"
 ip -6 addr show scope global | grep -E 'inet6|^[0-9]' || echo "(グローバル IPv6 なし)"
 ip route show default; ip -6 route show default
 
-# ウォームアップ (判定には数えない)。
-# 経路上 (クライアント → CPE → NGN → VNE → INET-SIM) の近隣探索が初回に間に合わず、
-# **1 回目だけ IPv6 が FAIL する**ことが実測で確認されている (2 回目以降は必ず PASS)。
-# 判定を緩めると本物の障害を見逃すので、閾値ではなくウォームアップで解消する。
+# 経路の初回ウォームアップ (判定には数えない)。近隣探索の取りこぼし対策
 ping -c1 -W3 "$V4_TARGET" >/dev/null 2>&1 || true
 ping -c1 -W3 "$V6_TARGET" >/dev/null 2>&1 || true
+
+# **IPv6 の送信元アドレスを先に確認する。**
+# ここが「意図しないプレフィックス」だと、以降の IPv6 項目が全部タイムアウトするが、
+# 症状は「なんとなく IPv6 だけ死ぬ」にしか見えず原因に辿り着けない。
+#
+# 実際に踏んだ例 (サイクル 5): CPE の GUA が deprecated (preferred_lft 0) になった瞬間、
+# RFC 6724 の送信元選択が **OpenWrt 既定の ULA (fd00::/8)** にフォールバックし、
+# ラボ内に ULA の復路が無いため IPv6 が全滅した。IPv4 は MAP-E トンネル経由で
+# 送信元選択が絡まないため無傷 →「IPv4 は通るのに IPv6 だけ死ぬ」という紛らわしい形になる。
+SRC6_SEL="$(ip -6 route get "$V6_TARGET" 2>/dev/null | sed -n 's/.* src \([0-9a-f:]*\).*/\1/p')"
+case "${SRC6_SEL:-}" in
+  fd*|fc*)
+    echo "警告: IPv6 の送信元に ULA (${SRC6_SEL}) が選ばれています。" >&2
+    echo "      GUA が deprecated になっている可能性があります (ip -6 addr show で preferred_lft を確認)。" >&2
+    echo "      ラボ内に ULA の復路は無いので、以降の IPv6 項目は全て FAIL します。" >&2
+    echo "      対処: CPE で ULA を無効化する (uci set network.globals.ula_prefix='')" >&2 ;;
+  "") echo "警告: IPv6 の送信元アドレスを決定できません (グローバル IPv6 が無い可能性)" >&2 ;;
+  *)  echo "INFO: IPv6 の送信元に ${SRC6_SEL} を使います" ;;
+esac
 
 echo "--- 疎通 ---"
 check "IPv4 ping (${V4_TARGET})"      ping -c2 -W2 "$V4_TARGET"

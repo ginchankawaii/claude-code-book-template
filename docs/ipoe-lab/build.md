@@ -217,7 +217,7 @@ config interface 'wandsl'
 
 **MTU 注意**: OpenWrt の map.sh / ds-lite は `option mtu` 未指定だと **1280** に設定します(上記サンプルの `option mtu '1460'` は必須。設定後 `ip link` で確認)。
 
-### 5.6 CPE に必ず入れる 2 つの設定(入れないと名前解決が死にます)
+### 5.6 CPE に必ず入れる 3 つの設定(入れないと名前解決や IPv6 が死にます)
 
 サイクル 3 の実走で、**この 2 つが無いと `run-checks.sh` の DNS が必ず FAIL** することが分かりました。
 どちらも「ping は通るのに名前解決だけ死ぬ」という切り分けにくい症状になります。
@@ -238,6 +238,16 @@ ifdown wan6 && ifup wan6
 #      dnsmasq: possible DNS-rebind attack detected: www.lab.example
 #    として破棄する。ラボを使う限り必ず踏む。
 uci add_list dhcp.@dnsmasq[0].rebind_domain='lab.example'
+uci commit dhcp
+
+# ③ ULA を無効化する (これが無いと IPv6 が「たまに全滅」します)
+#    OpenWrt は既定で ULA (fd00::/8) を生成して LAN に配ります。委譲プレフィックス由来の
+#    GUA が deprecated になった瞬間、RFC 6724 の送信元選択が ULA にフォールバックし、
+#    ラボ内に ULA の復路が無いため **IPv6 だけが黙って全滅** します
+#    (IPv4 は MAP-E トンネル経由で送信元選択が絡まないため無傷 →
+#     「IPv4 は通るのに IPv6 だけ死ぬ」という紛らわしい形になる)。実網の NGN も ULA は配りません。
+uci set network.globals.ula_prefix=''
+uci commit network
 uci commit dhcp
 /etc/init.d/dnsmasq restart
 ```

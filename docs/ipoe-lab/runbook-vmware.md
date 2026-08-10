@@ -287,7 +287,7 @@ uci commit network
 /etc/init.d/network reload
 ```
 
-**(b) CPE に必ず入れる 3 つの設定** — 入れないと必ず詰まります
+**(b) CPE に必ず入れる 4 つの設定** — 入れないと必ず詰まります
 
 ```sh
 # ① PPPoE と IPoE を同居させる (これが無いと PPPoE を上げた瞬間に IPv6 が全部消えます)
@@ -301,6 +301,15 @@ uci commit network
 
 # ③ DNS リバインド保護からラボのドメインを除外する (§9-C)
 uci add_list dhcp.@dnsmasq[0].rebind_domain='lab.example'
+uci commit dhcp
+
+# ④ ULA を無効化する (これが無いと IPv6 が「たまに全滅」します。§9-I)
+#    OpenWrt は既定で ULA (fd00::/8) を生成し LAN に配ります。
+#    委譲プレフィックス由来の GUA が deprecated になった瞬間、RFC 6724 の
+#    送信元選択が ULA にフォールバックし、ラボ内に ULA の復路が無いため
+#    IPv6 だけが黙って全滅します (IPv4 は MAP-E トンネル経由なので無傷)。
+#    実網の NGN も ULA は配りません。
+uci set network.globals.ula_prefix=''
 uci commit dhcp
 /etc/init.d/dnsmasq restart
 ```
