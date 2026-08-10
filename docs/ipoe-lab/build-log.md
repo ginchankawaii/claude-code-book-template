@@ -935,7 +935,101 @@ tcpdump -ni eth1 -nn -c 2 "icmp6[icmp6type]==134"
 |---|---|---|---|
 | H1 | 892FJ が IPoE(RA/PD)の CE として動く | [research-notes.md](research-notes.md) §4 の表に従って設定 | |
 | H2 | 892FJ が DS-Lite の B4 として動く | 同上 | |
-| H3 | CML の Cat8000v で MAP-E CLI が使える | `nat64 ?` / `nat64 map-e ?` / `nat64 provisioning ?`([proxmox-prototype.md](proxmox-prototype.md) §4.1)。**タイムボックス 30 分** | |
+| H3 | CML の Cat8000v で MAP-E CLI が使える | `nat64 ?` / `nat64 map-e ?` / `nat64 provisioning ?`([proxmox-prototype.md](proxmox-prototype.md) §4.1)。**タイムボックス 30 分** | **OK(MAP-E 実装あり)** CML 2.9.0 / Cat8000v **IOS XE 17.15.01a** で `nat64 map-e domain 1` と `nat64 provisioning mode jp01` が**両方とも running-config に入った**。§3.5-A に詳細 |
+
+#### 3.5-A. H3 の実施記録(2026-08-10)
+
+**結論: Cat8000v(IOS XE 17.15.01a)は MAP-E の CLI を持っている。**
+[proxmox-prototype.md §4.1](proxmox-prototype.md) の判定表でいう
+「`nat64 map-e domain` と `nat64 provisioning mode jp01` が両方通る → **MAP-E 実装あり。CE 役に使える**」に該当。
+
+| 項目 | 実測値 |
+|---|---|
+| CML | 2.9.0+build.3 / ライセンス `IN_COMPLIANCE`(Learning@Cisco) |
+| ノード定義 | `cat8000v` / イメージ `cat8000v-17-15-01a` |
+| IOS XE | `version 17.15` / `license udi pid C8000V` |
+| `license boot level` | **明示行なし(既定のまま)**。レベルを上げなくても MAP-E CLI は出た |
+
+**やり方が普通と違うので記録しておく(会社では不要な回り道)**
+
+CML のコンソールは**読み取り専用の API しかない**。書き込みは SSH コンソールサーバ経由だが
+**パスワード認証を要求する**ため、トークンだけでは対話でコマンドを打てなかった。
+
+```
+$ ssh <console_key>@192.168.11.40
+debug1: Remote protocol version 2.0, remote software version SERVER
+debug1: Authentications that can continue: password
+```
+
+そこで **`?` を打つ代わりに、起動時コンフィグに判定対象のコマンドを流し込み、
+パーサが受理したかを running-config の抽出で確認する**方法にした。
+`?` の補完が出るかと、コマンドが実際に投入できるかは、H3 の目的(実装の有無)に対しては同値。
+
+```
+# 1) ノードを wipe して DEFINED_ON_CORE にする (STOPPED では configuration を変更できない)
+PUT  /api/v0/labs/{lab}/nodes/{node}/wipe_disks
+
+# 2) 判定対象を含むコンフィグを投入
+PATCH /api/v0/labs/{lab}/nodes/{node}   {"configuration": "...(下記)..."}
+
+# 3) 起動して running-config を抽出
+PUT  /api/v0/labs/{lab}/nodes/{node}/state/start
+PUT  /api/v0/labs/{lab}/nodes/{node}/extract_configuration
+GET  /api/v0/labs/{lab}/nodes/{node}          → configuration を読む
+```
+
+投入したコンフィグ(抜粋):
+
+```
+platform console serial
+!
+hostname H3TEST
+!
+nat64 settings mtu minimum 1280      ← コントロール (既知の NAT64 コマンドのつもり)
+nat64 map-e domain 1                 ← 判定対象 1
+nat64 provisioning mode jp01         ← 判定対象 2
+```
+
+ブート時のコンソール出力:
+
+```
+%CVAC-4-CLI_FAILURE: Configuration command failure: 'nat64 settings mtu minimum 1280' was rejected
+%CVAC-3-CONFIG_ERROR: 1 error(s) while applying configs generated from file objstore:/iosxe_config
+```
+
+抽出した running-config:
+
+```
+hostname H3TEST
+nat64 map-e domain 1
+nat64 provisioning mode jp01
+```
+
+**読み方**:
+
+- **判定対象 2 つは running-config に載った** = パーサが受理した = **実装あり**
+- `hostname H3TEST` も載っているので、**CVAC は 1 件目のエラーで中断していない**。
+  「エラーが 1 件だけ」なのは、残りが通ったからであって、途中で止まったからではない
+- 唯一弾かれたのは**私が入れたコントロール側**。`nat64 settings mtu minimum` は
+  17.15 では通らない構文だった。NAT64 機能の不在を示すものではない
+  (機能が無ければ `nat64 map-e` も同時に弾かれるはず)
+
+**注意: 「CLI がある」と「動く」は別**。ここで確認したのは**パーサに実装があること**だけで、
+実際に MAP-E のカプセル化が成立するか、期待値表([build.md](build.md) §3)どおりの
+共有 IPv4 / PSID になるかは**未検証**。それはサイクル 4 で、ラボのアクセス網に繋いでから確認する。
+CML 上の Cat8000v は demo mode(スループット制限あり)なので、**性能の検証には使えない**。
+
+**所要時間**: 約 25 分(タイムボックス 30 分内)。うち大半は Cat8000v のブート待ち(2 回、各 5 分前後)。
+
+**サイクル 4 への準備**: CML VM(VMID 100)に `net1 = vmbr1` を追加済み。
+
+```
+qm set 100 --net1 virtio,bridge=vmbr1
+net1: virtio=BC:24:11:2F:40:2C,bridge=vmbr1
+```
+
+CML 側で External Connector として認識させるには **CML の再起動が必要**な見込み。
+サイクル 4 を始めるときに実施する(サイクル 3 は OpenWrt-CE で進むので今は不要)。
 
 ---
 
