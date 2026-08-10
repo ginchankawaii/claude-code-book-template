@@ -67,7 +67,7 @@ sudo lab/ipoe/vne/setup-aftr.sh    # DS-Lite 検証時(両方同時起動も可)
 ```
 
 - MAP-E BR: CE の MAP アドレス(既定 `2001:db8:100a:500:0:c633:640a:5`)との ip6tnl を張り、共有 IPv4 `198.51.100.10` を復路ルーティング。CE 側 NAT なので BR では NAT しません
-- AFTR: CE の WAN アドレスとの ip6tnl + nftables masquerade(RFC 6333 の `192.0.0.1/192.0.2` を使用)。**ポート開放不可の再現はこの構成そのもの**です
+- AFTR: CE の WAN アドレスとの ip6tnl + nftables masquerade(RFC 6333 の `192.0.0.1`(AFTR)/ `192.0.0.2`(B4)を使用)。**ポート開放不可の再現はこの構成そのもの**です
 - MAP ルール(CPE に設定する値):
 
 | パラメータ | 値 |

@@ -20,8 +20,8 @@
 |---|---|
 | 教科書との対応表(§1)・用語集(§4)・壁 Q&A(§3) | **使える**。ラボの実行状態に依存しない |
 | カリキュラムの時間配分(§2) | **仮案。実測していません** |
-| ラボ演習の期待結果 | **サイクル 2 まで実走済み**(VM 起動 → IPv6 が CPE / クライアントに降りるまで)。演習 2-A のキャプチャ(RS→RA、Solicit→Advertise→Request→Reply)は [build-log.md](build-log.md) に実測出力あり。**MAP-E / DS-Lite 以降は未実行**なので「⚠未検証」印のまま |
-| 会社 VMware ランブック | [runbook-vmware.md](runbook-vmware.md) は**執筆前(ほぼ空)** |
+| ラボ演習の期待結果 | **サイクル 3 まで実走済み**。MAP-E は期待値表と完全一致(共有IPv4 `198.51.100.10` / ポート `4176-4191` / MTU 1460)、DS-Lite も RFC 6333 どおり(B4 `192.0.0.2` / AFTR `192.0.0.1`)。両方式で `run-checks.sh` が PASS。**ただし演習 3-A の手順 3(R3 ポート制限)と手順 4(R4 ポート開放不可)は未検証**で、R4 は **VNE と INET-SIM を同居させた構成では実演できません**([build-log.md](build-log.md) バックログ 9) |
+| 会社 VMware ランブック | [runbook-vmware.md](runbook-vmware.md) は**執筆済み**(サイクル 1〜3 の実走ベース、573 行) |
 
 **配布前にやること**: [proxmox-prototype.md](proxmox-prototype.md) §0.5 → §2 → §5 を一巡し、
 本ガイドの「⚠未検証」印の演習を 1 本ずつ実走して、期待結果と所要時間を確定してください。
@@ -130,7 +130,7 @@ python3 docs/ipoe-lab/slides/build-toranomaki.py docs/ipoe-lab/slides/toranomaki
 **この回のゴール**: 登場人物(CPE / HGW / NGN / VNE / ISP)を絵で描ける。
 `fe80::` とグローバルの違いが言える。
 
-#### 演習 1-A: CPE の WAN に何が付いているか(⚠未検証)
+#### 演習 1-A: CPE の WAN に何が付いているか(**実測済み / サイクル 2**)
 
 1. **CPE**(OpenWrt-CE または実機。クライアント VM ではありません)で PPPoE 接続する
    - 認証情報: `user1@isp-a.example` / `pass1` / サービス名 `lab-isp`([build.md](build.md) §2)
@@ -202,7 +202,7 @@ Windows は `ipconfig /all`、Mac/Linux は `ip -6 addr` か `ifconfig`。
 
 **この回のゴール**: 「ひかり電話の有無」と「**どこで終端するか**」の 2 段で方式を決められる。
 
-#### 演習 2-A: 4 兄弟をキャプチャする(⚠未検証)
+#### 演習 2-A: 4 兄弟をキャプチャする(**実測済み / サイクル 2**)
 
 **NGN-SIM の方式を切り替えるときは、VNE 側(BR)も同じ組み合わせに合わせて再実行しないと IPv4 が全断します。**
 必ず 2 コマンド 1 組で実行してください([build.md](build.md) §3 の期待値表)。
@@ -214,9 +214,16 @@ Windows は `ipconfig /all`、Mac/Linux は `ip -6 addr` か `ifconfig`。
 
 ```
 # NGN-SIM で(root 必須)
+# ★ 先に Kea のリースを消すこと。残っていると Renew に旧プレフィックスで応答し、
+#   「切り替えたのに CPE が前のプレフィックスのまま」で当日ハマります
+sudo systemctl stop kea-dhcp6-server
+sudo rm -f /var/lib/kea/kea-leases6.csv*
+sudo systemctl start kea-dhcp6-server
+
 sudo ./lab/ipoe/ngn/setup-ngn.sh ra     # ひかり電話なし相当
-# ↑ に切り替えたら VNE でも必ず
-sudo CE_MAP_ADDR=... CE_SHARED_V4=... ./lab/ipoe/vne/setup-map-br.sh
+# ↑ に切り替えたら VNE でも必ず(値は build.md §3 の表から取る)
+sudo CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 \
+     ./lab/ipoe/vne/setup-map-br.sh
 
 # CPE 側でキャプチャしながら再接続
 sudo tcpdump -nn -i <ACCESS_IF> 'icmp6 or udp port 546 or udp port 547'
@@ -277,7 +284,7 @@ HGW が PD を取るので、配下でも PD を要求すると**二重終端**(
 
 **この回のゴール**: 客から「ポート開放したい」と言われたときに、方式を聞いて**可否を即答できる**。
 
-#### 演習 3-A: ポートを数えて、失敗させる(⚠未検証)
+#### 演習 3-A: ポートを数えて、失敗させる(**一部実測済み / サイクル 3**。手順 1・5 は確定、手順 3・4 は未検証)
 
 1. **CPE に降りたプレフィックスから共有 IPv4 と PSID を確認**し、§1.5 の計算と一致するか照合する
 2. **ポート集合を紙に書き出し、飛び飛びであることを目で見る**(240 個 = 16 個 × 15 ブロック)

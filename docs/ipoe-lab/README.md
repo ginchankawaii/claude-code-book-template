@@ -6,7 +6,7 @@ NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネッ�
 - 構築手順: [build.md](build.md)
 - 検証マトリクス・切替シナリオ・トラブル再現レシピ: [test-matrix.md](test-matrix.md)
 - **Proxmox プロトタイプ手順(自宅検証用)**: [proxmox-prototype.md](proxmox-prototype.md)
-- **会社 VMware 構築ランブック(手動作業用・構築と並行して執筆)**: [runbook-vmware.md](runbook-vmware.md)
+- **会社 VMware 構築ランブック(手動作業用・**サイクル 1〜3 の実走をもとに執筆済み**)**: [runbook-vmware.md](runbook-vmware.md)
 - 事例調査ノート(実例・失敗談と設計への反映): [research-notes.md](research-notes.md)
 - **構築ログ / PDCA 記録(実走の記録・未検証項目トラッカー・CE 入替手順)**: [build-log.md](build-log.md)
 - **勉強会「虎の巻」(教科書 × ラボ 連動学習ガイド)**: [study-guide.md](study-guide.md)
@@ -106,7 +106,7 @@ NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネッ�
 
 ## 7. 使い方の流れ
 
-1. [build.md](build.md) に従って 5 VM を構築(初回のみ。以後はスナップショットで即復元)
+1. [build.md](build.md) に従って 6 VM を構築(VNE と INET-SIM は分けること。同居させると DS-Lite の網側 NAT が効きません)(初回のみ。以後はスナップショットで即復元)
 2. 案件の構成(払い出し方式 × IPv4 over IPv6 方式 × CPE)に合わせて NGN-SIM のモードと CPE を設定
 3. 実機 CPE を PG-ACCESS に接続し、[test-matrix.md](test-matrix.md) のシナリオで**切替前 → 切替 → 切替後 → 切戻し**を通しでリハーサル
 4. `lab/ipoe/tests/run-checks.sh` を CPE 配下のクライアントで実行し、疎通・DNS・MTU を機械的に判定

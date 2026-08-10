@@ -25,8 +25,8 @@
 
 | 工程 | 実測 |
 |---|---|
-| VM 5 台の作成〜起動(スクリプト) | 約 3 分 |
-| Linux 4 台の setup スクリプト | 合計 約 2.5 分 |
+| VM 6 台の作成〜起動 | 約 3 分(自宅はスクリプト。VMware は手動のぶん増えます) |
+| Linux 5 台の setup スクリプト | 合計 約 2.5 分 |
 | CPE(OpenWrt)の設定 | 約 10 分 |
 | 動作確認(`run-checks.sh`) | 約 1 分 |
 
@@ -44,7 +44,7 @@
 - [ ] リポジトリの `lab/ipoe` 一式(§4 の方法で持ち込みます)
 
 > **検証機を社内 LAN に足を出してよいかを先に確認してください。**
-> OpenWrt に `map` / `ds-lite` を導入する工程(§5.3)で、**一時的に社内 LAN への
+> OpenWrt に `map` / `ds-lite` を導入する工程(§5.4)で、**一時的に社内 LAN への
 > 接続が必要**になります。ポリシー上不可の場合は、パッケージを事前導入した
 > イメージを用意する必要があります(§9-G)。
 
@@ -95,19 +95,52 @@
 
 ## 3. VM の作成
 
-**5 台**作ります。1 枚目 NIC(net0)は必ず管理ネットワークに繋いでください。
+**6 台**作ります。Linux VM 5 台は 1 枚目 NIC(net0)を管理ネットワークに繋いでください。
+**OpenWrt-CE だけは例外です**(下の警告を必ず読んでください)。
 
-| VM | vCPU/RAM | net1 | net2 | 役割 |
-|---|---|---|---|---|
-| NGN-SIM | 2 / 2GB | PG-ACCESS | PG-CORE | RA / DHCPv6-PD 配布 |
-| VNE+INET | 2 / 2GB | PG-CORE | PG-INET | MAP-E BR + DS-Lite AFTR + Web/DNS |
-| BRAS | 2 / 2GB | PG-ACCESS | PG-INET | PPPoE 終端(accel-ppp をソースビルドするため 2GB 必須) |
-| LAB-CLIENT | 1 / 1GB | PG-CLIENT | — | 検証クライアント(`run-checks.sh` 実行用) |
-| OpenWrt-CE | 1 / 512MB | PG-CLIENT(LAN) | PG-ACCESS(WAN) | リファレンス CPE |
+| VM | vCPU/RAM | net0 | net1 | net2 | 役割 |
+|---|---|---|---|---|---|
+| NGN-SIM | 2 / 2GB | 管理 | PG-ACCESS | PG-CORE | RA / DHCPv6-PD 配布 |
+| VNE | 2 / 2GB | 管理 | PG-CORE | PG-INET | MAP-E BR + DS-Lite AFTR |
+| INET-SIM | 1 / 1GB | 管理 | PG-INET | — | 模擬インターネット(Web / DNS) |
+| BRAS | 2 / 2GB | 管理 | PG-ACCESS | PG-INET | PPPoE 終端(accel-ppp をソースビルドするため 2GB 必須) |
+| LAB-CLIENT | 1 / 1GB | 管理 | PG-CLIENT | — | 検証クライアント(`run-checks.sh` 実行用) |
+| **OpenWrt-CE** | 1 / 512MB | **PG-CLIENT(LAN)** | **PG-ACCESS(WAN)** | — | リファレンス CPE。**管理 NIC は付けない** |
+
+> ### ⚠ OpenWrt-CE の NIC 順序を間違えると、管理 LAN に DHCP サーバを撒きます
+>
+> OpenWrt x86/64 の既定は **eth0 = LAN(`192.168.1.1`、DHCP サーバ有効) / eth1 = WAN** です。
+> **1 枚目を管理ネットワークに繋ぐと、会社の管理 LAN に `192.168.1.1` と DHCP サーバが
+> 立ち上がります。** 必ず **net0 = PG-CLIENT / net1 = PG-ACCESS** の順で作ってください。
+>
+> 管理 NIC は付けません。§5.4-a でパッケージを導入するときだけ**一時的に**
+> 3 枚目(eth2)として足し、終わったら無効化します。
 
 > **LAB-CLIENT を省略しないでください。** 管理 LAN に直結したホストから `run-checks.sh` を
 > 流すと、通信が CPE を通らずに抜けて **「PASS したのに何も検証できていない」**
 > という最悪の偽陽性になります。
+
+> **VNE と INET-SIM は分けてください(同居させない)。** 自宅プロトタイプでは VM 数を
+> 減らすため 1 台に同居させましたが、その構成では **DS-Lite の AFTR による網側 NAT が
+> 効きません**(宛先がローカル配送になり `oifname` 条件の masquerade が当たらないため)。
+> 「DS-Lite は網側 NAT だからポート開放できない」という**教材の中心論点が実演できず**、
+> [test-matrix.md](test-matrix.md) の R4 も再現しません。詳細は
+> [build-log.md](build-log.md) のバックログ 9。
+
+### Linux VM 5 台の初期設定
+
+自宅では cloud-init が自動でやっていた部分です。**会社では手動になります。**
+5 台すべてに以下を済ませてから §4 に進んでください。
+
+- [ ] 作業用ユーザを作成し、`sudo` を許可する(以降の手順は `sudo` 前提です)
+- [ ] `openssh-server` を導入し、起動を確認(`systemctl is-active ssh`)
+- [ ] **管理 NIC(net0)だけ** DHCP で疎通させる。
+      ラボ側 NIC(net1 以降)は**設定しないでください** — setup スクリプトが上げます
+- [ ] `apt-get update` が通ることを確認(setup スクリプトが冒頭で使います)
+
+> **LAB-CLIENT だけは順序に注意。** `setup-client.sh` は既定経路を CPE 側へ寄せるため、
+> 実行後は `apt` が使えなくなります。**必要なパッケージは先に入れてください**
+> (スクリプト自身も `curl` / `ping` は事前導入しますが、追加で欲しいものがあれば先に)。
 
 ### 役割別 MAC の設定(重要)
 
@@ -118,7 +151,7 @@
 |---|---|---|
 | `02:ac:*` | PG-ACCESS | `02:ac:00:00:00:01`(NGN-SIM) |
 | `02:c0:*` | PG-CORE | `02:c0:00:00:00:01`(NGN-SIM) |
-| `02:1e:*` | PG-INET | `02:1e:00:00:00:02`(VNE+INET) |
+| `02:1e:*` | PG-INET | `02:1e:00:00:00:02`(VNE / INET-SIM) |
 | `02:c1:*` | PG-CLIENT | `02:c1:00:00:00:04`(LAB-CLIENT) |
 
 **静的 MAC が許可されていない場合の代替**: 各スクリプトを実行するとき、環境変数で
@@ -194,23 +227,38 @@ systemctl is-active radvd kea-dhcp6-server
 # → active
 ```
 
-### 5.2 VNE+INET(約 39 秒 + 4 秒)
+### 5.2 INET-SIM(約 39 秒)
 
 ```bash
 sudo ./ipoe/inet/setup-inet.sh       # 模擬インターネット(Web/DNS)
+```
+
+```
+[INET-SIM] http://203.0.113.80 / http://[2001:db8:cafe::80] / DNS 203.0.113.53
+  MTU/MSS 検証用: /big.bin (5MB)
+```
+
+### 5.3 VNE(約 4 秒)
+
+```bash
 sudo ./ipoe/vne/setup-map-br.sh      # MAP-E BR
 sudo ./ipoe/vne/setup-aftr.sh        # DS-Lite AFTR(両方同時起動でよい)
 ```
 
-期待される出力:
-
 ```
-[INET-SIM] http://203.0.113.80 / http://[2001:db8:cafe::80] / DNS 203.0.113.53
 [VNE] MAP-E BR 起動: BR=2001:db8:9999::1, CE=2001:db8:100a:500:0:c633:640a:5, 共有IPv4=198.51.100.10
 [VNE] DS-Lite AFTR 起動: AFTR=2001:db8:8888::1, B4=2001:db8:100a:500::1
 ```
 
-### 5.3 OpenWrt-CE
+> **片方だけを検証するときは、もう片方を止めてください。**
+> 残しておくと旧 CE 宛のトンネルが生き続け、切り分けを汚します。
+>
+> ```bash
+> sudo ./ipoe/vne/setup-aftr.sh stop      # DS-Lite を止める (MAP-E だけ検証)
+> sudo ./ipoe/vne/setup-map-br.sh stop    # MAP-E を止める (DS-Lite だけ検証)
+> ```
+
+### 5.4 OpenWrt-CE
 
 コンソールで操作します(管理 NIC を持たないため)。
 
@@ -329,7 +377,7 @@ sudo CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 \
   ./ipoe/vne/setup-map-br.sh
 ```
 
-### 5.4 BRAS(約 66 秒。accel-ppp をソースビルドするため)
+### 5.5 BRAS(約 66 秒。accel-ppp をソースビルドするため)
 
 ```bash
 sudo ./ipoe/bras/setup-bras.sh
@@ -346,7 +394,7 @@ sudo ./ipoe/bras/setup-bras.sh
 > パッケージ導入済みなら待てば完走します。急ぐなら先に
 > `sudo ip route del default via 203.0.113.80` してください。
 
-### 5.5 LAB-CLIENT(約 12 秒)
+### 5.6 LAB-CLIENT(約 12 秒)
 
 ```bash
 sudo ./ipoe/client/setup-client.sh
@@ -370,8 +418,17 @@ sudo ./ipoe/client/setup-client.sh
 **LAB-CLIENT で**実行します。
 
 ```bash
-./ipoe/tests/run-checks.sh | tee $(date +%Y%m%d-%H%M)-checks.log
+# 期待する出口アドレスを必ず渡してください。渡さないと「疎通はしているが
+# 意図した経路ではない」状態 (§9-H) を見逃します
+EXPECT_SRC4=198.51.100.10 ./ipoe/tests/run-checks.sh | tee $(date +%Y%m%d-%H%M)-checks.log
 ```
+
+| 検証する方式 | `EXPECT_SRC4` に渡す値 |
+|---|---|
+| MAP-E(PD 方式 / ひかり電話あり) | `198.51.100.10` |
+| MAP-E(RA 方式 / ひかり電話なし) | `198.51.100.20` |
+| DS-Lite | `203.0.113.1`(AFTR で NAT された後のアドレス) |
+| PPPoE(Phase 0) | `100.64.1.0` 等(BRAS のプール。`accel-cmd show sessions` で確認) |
 
 **期待される出力(MAP-E / DS-Lite とも `PASS=10 FAIL=0`)**:
 
@@ -472,7 +529,7 @@ Connection error: Connection failed
 OpenWrt の PD 既定経路は**送信元制限付き**で入ります。
 `uclient-fetch`(OpenWrt の `wget`)は AAAA を選ぶと **A へフォールバックしません**。
 
-**対処**: `ifdown wan6` してから `opkg`、終わったら `ifup wan6`(§5.3)。
+**対処**: `ifdown wan6` してから `opkg`、終わったら `ifup wan6`(§5.4)。
 
 ### 9-B. ping は通るのに名前解決だけ死ぬ(その 1: CPE 側)
 
@@ -487,7 +544,7 @@ ip -6 route get 2001:db8:cafe::53         → Network unreachable
 **原因**: 送信元制限付きの既定経路。**CPE 自身が発信する UDP** は送信元未定のまま
 経路探索されて失敗します。ping は別経路(ICMP ソケット)なので通ってしまい紛らわしい。
 
-**対処**: `uci set network.wan6.sourcefilter='0'`(§5.3-b)。
+**対処**: `uci set network.wan6.sourcefilter='0'`(§5.4-b)。
 
 ### 9-C. ping は通るのに名前解決だけ死ぬ(その 2: リバインド保護)
 
@@ -502,7 +559,7 @@ logread | grep dnsmasq
 **原因**: ラボはドキュメント用アドレス(`2001:db8::/32` / `203.0.113.0/24`)を使うため、
 OpenWrt の `rebind_protection`(既定 1)が応答を破棄します。**ラボを使う限り必ず踏みます。**
 
-**対処**: `uci add_list dhcp.@dnsmasq[0].rebind_domain='lab.example'`(§5.3-b)。
+**対処**: `uci add_list dhcp.@dnsmasq[0].rebind_domain='lab.example'`(§5.4-b)。
 
 ### 9-D. ping は通るのに名前解決だけ死ぬ(その 3: DNS サーバ側)
 
@@ -532,7 +589,7 @@ cat /proc/sys/net/ipv6/conf/eth1/disable_ipv6 → 1
 **RA 自体は届いています**(`tcpdump -ni eth1 "icmp6[icmp6type]==134"` で確認可能)。
 「届かない」のではなく「受け取れない設定になる」のが問題です。
 
-**対処**: `network.wan_dev` に `option ipv6 '1'`(§5.3-b)。
+**対処**: `network.wan_dev` に `option ipv6 '1'`(§5.4-b)。
 
 ### 9-F. `run-checks.sh` が PASS するのに実は CPE を通っていない
 
@@ -541,13 +598,13 @@ cat /proc/sys/net/ipv6/conf/eth1/disable_ipv6 → 1
 **原因**: クライアントの既定経路が管理 LAN を向いたまま。
 
 **対処**: `sudo ./ipoe/client/setup-client.sh` を実行し、
-「既定経路が CPE 側を向いています」の行を確認(§5.5)。
+「既定経路が CPE 側を向いています」の行を確認(§5.6)。
 
 ### 9-G. 検証機を社内 LAN に出せない場合
 
-`map` / `ds-lite` の導入(§5.3-a)には社内 LAN への一時接続が必要です。
+`map` / `ds-lite` の導入(§5.4-a)には社内 LAN への一時接続が必要です。
 ポリシー上不可の場合は、**パッケージを事前に導入したイメージ**を用意してください。
-自宅など外に出られる環境で §5.3-a を実施し、その VM をエクスポートして持ち込みます。
+自宅など外に出られる環境で §5.4-a を実施し、その VM をエクスポートして持ち込みます。
 
 ### 9-H. その他の実測メモ
 
@@ -558,9 +615,14 @@ cat /proc/sys/net/ipv6/conf/eth1/disable_ipv6 → 1
 - **CPE の `br-lan` に降りるのは `/64` ではなく `/60`**(OpenWrt 既定の `ip6assign '60'`)。
   動作としては正常です
 - **DS-Lite で AFTR の NAT が効かない構成があります。** VNE と INET-SIM を同一 VM に
-  同居させると、宛先がローカル配送になり masquerade が当たりません。
-  **会社の 5 VM 構成(INET-SIM を分ける)では発生しません**が、
-  「網側 NAT だからポート開放できない」を実演するときは分離構成にしてください
+  同居させると、宛先がローカル配送になり `oifname` 条件の masquerade が当たりません。
+  **§3 のとおり VNE と INET-SIM を分けていれば発生しません。**
+  自宅プロトタイプ(同居)での実測症状は「`run-checks.sh` は PASS するのに、
+  出口アドレスがクライアントの私設アドレス `192.168.1.247` のまま」でした。
+  この状態では [test-matrix.md](test-matrix.md) の **R4(ポート開放不可の再現)が
+  逆の結果になり得ます**(開放できてしまう)。
+  **`EXPECT_SRC4=<期待する出口アドレス> ./run-checks.sh` を必ず付けて実行してください** —
+  この種の偽陽性を検出できる唯一の項目です
 
 ---
 

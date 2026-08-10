@@ -86,6 +86,14 @@
 - **戻し方(必須)**: `nft delete table ip map-enforce`。**演習後に必ず戻すこと。**残したまま次の MAP-E 検証をすると、原因の分からない断続失敗として現れます
 
 ### R4: DS-Lite でポート開放不可
+- **前提(必読): VNE と INET-SIM を別 VM に分けてください。** 同居させると AFTR の
+  masquerade が `oifname` 条件で当たらず(宛先がローカル配送になるため)、
+  **ポート開放が「できてしまう」= このレシピが逆の結果になります**。
+  自宅プロトタイプ(同居)の実測では、出口アドレスがクライアントの私設アドレス
+  `192.168.1.247` のままでした([build-log.md](build-log.md) バックログ 9)
+- **事前確認**: `EXPECT_SRC4=203.0.113.1 ./run-checks.sh` で「出口 IPv4」が
+  AFTR の NAT 後アドレスになっていること。ここがクライアントの私設アドレスなら
+  NAT が効いておらず、このレシピは成立しません
 - 再現: aftr 構成でポートフォワード設定 → 外部(INET-SIM)から到達確認
 - 症状: 設定 UI 上は入るが一切着信しない(NAT が網側のため)
 - 切り分け: 仕様であることをエビデンス付きで説明できるようにしておく
@@ -111,7 +119,7 @@
 - 切り分け: NGN 網内(NGN-SIM)へは ping が通るが AFTR/BR に届かない → 契約状態の確認へ誘導
 
 ### R9: プレフィックス変更で LAN 側が追従しない
-- 再現: 接続中に NGN-SIM を `ra`→`pd`(または kea の委譲プレフィックスを変更)して再起動。**kea のリースファイルを消してから再起動すること**(`systemctl stop kea-dhcp6-server && rm /var/lib/kea/kea-leases6.csv && systemctl start kea-dhcp6-server`。残っていると Renew に旧プレフィックスで応答してしまい変更が反映されない)
+- 再現: 接続中に NGN-SIM を `ra`→`pd`(または kea の委譲プレフィックスを変更)して再起動。**kea のリースファイルを消してから再起動すること**(`systemctl stop kea-dhcp6-server && rm -f /var/lib/kea/kea-leases6.csv* && systemctl start kea-dhcp6-server`。残っていると Renew に旧プレフィックスで応答してしまい変更が反映されない)
 - 症状: WAN は新プレフィックスだが LAN 内端末が旧アドレスを保持し通信断
 - 切り分け: CPE の再起動または RA の有効期限切れ待ちが必要か、機種ごとの挙動を記録
 

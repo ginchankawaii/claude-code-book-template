@@ -16,6 +16,14 @@ set -euo pipefail
 # 役割別 MAC から NIC 名を自動解決 (provision.sh で作った VM 向け。未設定の変数だけ埋める)
 if [ -f "$(dirname "$0")/../detect-ifs.sh" ]; then . "$(dirname "$0")/../detect-ifs.sh"; fi
 
+case "${1:-}" in
+  stop)
+    # DS-Lite だけを検証するときに使う。残すと map0 が旧 CE の MAP アドレス宛のまま
+    # 生き続け、共有 IPv4 宛の復路がそちらへ流れて切り分けを汚す
+    ip -6 tunnel del map0 2>/dev/null || true
+    echo "[VNE] MAP-E BR を停止しました (トンネル・共有IPv4の復路を削除)"; exit 0 ;;
+esac
+
 BR_ADDR="2001:db8:9999::1"
 CE_MAP_ADDR="${CE_MAP_ADDR:-2001:db8:100a:500:0:c633:640a:5}"  # RFC7597 IID: 0000:IPv4:PSID
 CE_SHARED_V4="${CE_SHARED_V4:-198.51.100.10}"

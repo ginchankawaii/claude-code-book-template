@@ -62,10 +62,18 @@ fi
 # (DNSStubListener=no はしない: /etc/resolv.conf が stub-resolv.conf のままだと
 #  この直後の apt-get が名前解決できず失敗する)
 mkdir -p /etc/dnsmasq.d
+#
+# bind-interfaces ではなく **bind-dynamic** を使う。
+# bind-interfaces は「dnsmasq 起動時点で存在するアドレス」にしか bind しないため、
+# CORE 側のアドレス (2001:db8:ff00::2) を付けるのが setup-map-br.sh / setup-aftr.sh
+# (= このスクリプトより後に実行されうる) である以上、
+# フレッシュ構築や VM 再起動のたびに「CORE 側から来たクエリが黙って捨てられる」
+# 症状が再発する。bind-dynamic なら後から現れたアドレスにも追従しつつ、
+# 指定した NIC 以外には bind しない (127.0.0.53 との衝突回避はそのまま成立)。
 cat > /etc/dnsmasq.d/lab.conf <<EOF
 no-resolv
 ${DNS_LISTEN}
-bind-interfaces
+bind-dynamic
 local-ttl=3600
 address=/www.lab.example/203.0.113.80
 address=/www.lab.example/2001:db8:cafe::80

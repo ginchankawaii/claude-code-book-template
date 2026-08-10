@@ -3,7 +3,7 @@
 会社の VMware に構築する前に、自宅の Proxmox で同じ構成を小さく組んで理解するための手順。
 **役割・アドレス計画は本番設計([README.md](README.md))と同一**にしてあるので、ここで作った設定ファイルはそのまま VMware 版に持っていけます。
 
-## 0. プロトタイプの構成(最小 3 VM + CPE)
+## 0. プロトタイプの構成(Linux 4 VM + CPE)
 
 理解が目的なので、VNE と INET-SIM を 1 VM に同居させて VM 数を減らします。
 
@@ -181,6 +181,14 @@ qm start 9010
 
 起動後、`opkg update && opkg install map ds-lite` の上で [build.md §5](build.md) の設定を投入します。
 
+> ⚠️ **この `opkg` はそのままでは通りません。**(サイクル 2 で実証済み)
+> OpenWrt は管理 NIC を持たずラボ内に閉じているうえ、管理 NIC を足しても
+> **ラボの IPv6 が降りていると全リポジトリが `wget returned 4` で落ちます**
+> (PD の既定経路が送信元制限付きで、`uclient-fetch` は AAAA から A へ
+> フォールバックしないため)。
+> **動く手順の全文は [build.md §5](build.md) の冒頭にあります** — 管理 NIC の追加 →
+> `ifdown wan6` → `opkg` → `ifup wan6` → 管理 NIC 無効化、の順です。
+
 **OpenWrt の MAP-E で追加すべき設定(調査反映)**:
 
 ```
@@ -240,7 +248,16 @@ sudo CE_WAN6=<確認した GUA> lab/ipoe/vne/setup-aftr.sh
 >
 > 逆に言うと、**CML で IOS XE の MAP-E 設定を確認しておけば、会社にある物理の IOS XE 機(C1100 系など)にそのまま持っていける**という連続性があります。自宅での CML 検証は、会社での実機検証のリハーサルとして機能します。
 
-892FJ で埋まらない MAP-E の CE 役を、**CML 上の Catalyst 8000V / CSR1000v(IOS XE)で代替できる可能性があります**([research-notes.md §4.1](research-notes.md))。IOS XE は日本向け MAP-E(`draft-ietf-softwire-map-03` = jp01 モード)に対応していますが、**仮想プラットフォームで使えるかは未確認**です。
+892FJ で埋まらない MAP-E の CE 役を、**CML 上の Catalyst 8000V / CSR1000v(IOS XE)で代替できます**([research-notes.md §4.1](research-notes.md))。
+
+> ✅ **確認済み(2026-08-10 / トラッカー H3)**: CML 2.9.0 の **Cat8000v(IOS XE 17.15.01a)**で
+> `nat64 map-e domain 1` と `nat64 provisioning mode jp01` が**両方とも running-config に入る**
+> ことを確認しました = **MAP-E の実装あり**。`license boot level` の明示指定は不要でした
+> (既定のまま通った)。実施記録は [build-log.md §3.5-A](build-log.md)。
+>
+> ただし確認したのは**パーサに実装があること**までです。実際のカプセル化が成立するか、
+> [build.md](build.md) §3 の期待値表と一致するかは**未検証**(サイクル 4)。
+> CML 上の Cat8000v は demo mode なので**性能の検証には使えません**。
 
 ### まず CLI の有無を確認する(5分)
 
@@ -340,7 +357,7 @@ CML の **External Connector** を使ってアクセス網(vmbr1)に足を出し
 | 主な役割 | スクリプトの不具合出し・手順の確定・実機リハーサル | 確定した手順の再現 |
 | 持ち出すもの | Git リポジトリ(設定ファイル・スクリプト・手順書) | 同じものを clone/コピーして使用 |
 
-**自宅での構築作業そのものが、会社側ランブックの素材になります。** 実際に叩いたコマンド・詰まった箇所・回避策を [`runbook-vmware.md`](runbook-vmware.md) に記録していき、会社ではそれを見ながら手を動かせる状態にします(まだ Proxmox で実走していないため、このファイルは構築と並行して書き起こします)。
+**自宅での構築作業そのものが、会社側ランブックの素材になります。** 実際に叩いたコマンド・詰まった箇所・回避策を [`runbook-vmware.md`](runbook-vmware.md) に記録していき、会社ではそれを見ながら手を動かせる状態にします(サイクル 1〜3 の実走をもとに **執筆済み**。サイクル 4 以降で追記していきます)。
 
 なお、ラボの構成要素(Ubuntu / OpenWrt / accel-ppp / radvd / Kea / nftables)はすべて無償・オープンソースなので、**持ち込みにライセンス上の制約はありません**。
 
@@ -348,7 +365,7 @@ CML の **External Connector** を使ってアクセス網(vmbr1)に足を出し
 
 | 項目 | Proxmox(プロトタイプ) | VMware(本番) |
 |---|---|---|
-| セグメント | Linux ブリッジ(vmbr1〜3) | vSwitch + ポートグループ(PG-ACCESS 等) |
+| セグメント | Linux ブリッジ(vmbr1〜4) | vSwitch + ポートグループ(PG-ACCESS 等) |
 | 無差別モード等 | 不要(ブリッジが MAC 学習する) | **PG のセキュリティ 3 項目を「承諾」必須**(vSwitch は MAC 学習せず、登録済み vNIC MAC 宛しか配送しないため) |
 | IPv6 マルチキャスト | `bridge-mcsnoop 0` が必要 | 不要(vSwitch は snooping しない) |
 | VLAN でトランク | VLAN aware bridge | VLAN ID 4095 のポートグループ(VGT) |
