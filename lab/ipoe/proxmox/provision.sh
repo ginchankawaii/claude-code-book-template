@@ -299,12 +299,34 @@ if [ ! -f "$UBUNTU_IMG" ]; then
 else
   echo "  Ubuntu イメージ: 既存を使用"
 fi
-if [ "$WITH_OPENWRT" = "1" ] && [ ! -f "$OPENWRT_IMG" ]; then
-  echo "  OpenWrt ${OPENWRT_VER} イメージを取得中..."
-  fetch "$OPENWRT_URL" "${OPENWRT_IMG}.gz"
-  gunzip -f "${OPENWRT_IMG}.gz"
+if [ "$WITH_OPENWRT" = "1" ]; then
+  if [ ! -f "$OPENWRT_IMG" ]; then
+    echo "  OpenWrt ${OPENWRT_VER} イメージを取得中..."
+    fetch "$OPENWRT_URL" "${OPENWRT_IMG}.gz"
+    # gzip は展開に成功しても警告があると終了コード 2 を返す
+    # (OpenWrt の配布 .gz は "trailing garbage ignored" が出る)。
+    # set -e のままだとここで黙って停止してしまうため、2 だけは許容する。
+    # 終了コードは `|| rc=$?` で受ける。`if ! cmd; then rc=$?` は否定後の 0 を拾うので使えない
+    gz_rc=0
+    gunzip -f "${OPENWRT_IMG}.gz" || gz_rc=$?
+    case "$gz_rc" in
+      0) ;;
+      2) echo "  (gzip の警告は無視しました: 展開自体は成功しています)" ;;
+      *) echo "ERROR: OpenWrt イメージの展開に失敗しました (gzip 終了コード ${gz_rc})" >&2
+         exit "$gz_rc" ;;
+    esac
+    [ -s "$OPENWRT_IMG" ] || {
+      echo "ERROR: 展開後の ${OPENWRT_IMG} が空です。取得し直してください" >&2; exit 1; }
+  else
+    echo "  OpenWrt イメージ: 既存を使用"
+  fi
   # 空き領域を予約するだけ (rootfs の拡張は OpenWrt 側で別途。ラボ用途なら未拡張でも足りる)
-  qemu-img resize -f raw "$OPENWRT_IMG" 2G >/dev/null
+  # ダウンロード分岐の外に置く: 中で失敗して再実行したときに resize だけ飛ばされるのを防ぐ
+  # raw イメージなのでファイルサイズ = 仮想サイズ。qemu-img info の JSON を解析する必要はない
+  if [ "$(stat -c %s "$OPENWRT_IMG")" -lt 2147483648 ]; then
+    qemu-img resize -f raw "$OPENWRT_IMG" 2G >/dev/null
+    echo "  OpenWrt イメージを 2G に拡張しました"
+  fi
 fi
 
 # cloud-init で qemu-guest-agent を入れる (snippets が使えるストレージがある場合のみ)

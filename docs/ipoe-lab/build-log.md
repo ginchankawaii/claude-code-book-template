@@ -31,7 +31,7 @@
 
 | # | 目的 | 状態 | 所要 | 主な学び |
 |---|---|---|---|---|
-| 1 | Proxmox に 5 VM を作って起動する | **進行中**(preflight 合格) | — | メモリ 251GB / ディスク 975GB で余裕。CML と同時稼働可。持ち込みは tar 展開 |
+| 1 | Proxmox に 5 VM を作って起動する | **進行中**([2/4] で停止 → 修正して再実行待ち) | — | gzip は警告でも終了コード 2 を返し `set -e` で即死する。冪等性の無い分岐に副作用を置くと再実行で隠れる |
 | 2 | 4 台の Linux に setup スクリプトを流し、IPv6 が降りるところまで | 未着手 | — | — |
 | 3 | MAP-E / DS-Lite で IPv4 が通り、`run-checks.sh` が PASS するまで | 未着手 | — | — |
 | 4 | 実機 CPE(892FJ)を収容する | 未着手 | — | — |
@@ -118,16 +118,28 @@ ip -br link    →  UP:   nic2 (vmbr0 のポート), nic11
                   DOWN: nic0, nic1, nic3, nic4, nic5, nic7, nic8, nic9, nic10
 ```
 
-**手順 4: VM 作成(実行)**
+**手順 4: VM 作成(実行) — 1 回目: [2/4] で黙って停止した**
 
 ```
 STORAGE=local-lvm ./provision.sh
 ```
 
-<!-- 出力をここに貼る -->
-
 ```
-（未実施）
+[1/4] ブリッジを準備します
+  vmbr1: 追加 (アクセス網 (PG-ACCESS相当), uplink=none)
+  vmbr2: 追加 (NGN網内 (PG-CORE相当), uplink=none)
+  vmbr3: 追加 (模擬インターネット (PG-INET相当), uplink=none)
+  vmbr4: 追加 (CPE配下のクライアント側LAN, uplink=none)
+warning: nic6: interface not recognized - please check interface configuration
+  ネットワーク設定を反映しました
+[2/4] イメージを準備します
+  Ubuntu 24.04 クラウドイメージを取得中...
+  ... 595.32M  8.47MB/s    in 46s
+  OpenWrt 24.10.0 イメージを取得中...
+  ...  12.98M  1.58MB/s    in 8.2s
+
+gzip: /var/lib/vz/template/iso/openwrt-24.10.0-x86-64-generic-ext4-combined.img.gz: decompression OK, trailing garbage ignored
+（ここでプロンプトに戻る。[3/4] が出ない）
 ```
 
 #### Check
@@ -144,14 +156,53 @@ STORAGE=local-lvm ./provision.sh
   **`nic2` と `nic11` は使用中なので選ばないこと**(nic2 = vmbr0 の管理系、
   nic11 = キャリアあり。QNAP 10G と推定。**要確認**)。
 
-<!-- 手順 4 以降の結果をここに追記 -->
+**手順 4 で見つかった不具合 2 件**
+
+**① `gunzip` の終了コード 2 で `set -e` が発動し、スクリプトが黙って停止していた(致命的)**
+
+OpenWrt の配布 `.img.gz` は展開すると `decompression OK, trailing garbage ignored` という
+**警告**を出す。gzip は**警告でも終了コード 2 を返す**仕様で、`set -euo pipefail` の下では
+これが即死につながる。**展開自体は成功しているのにスクリプトが止まる**ため、
+エラーメッセージが 1 行も出ずに `[3/4]` に進まないという分かりにくい症状になっていた。
+
+再現確認(手元で検証):
+
+```
+$ gzip -c file > f.gz && printf 'GARBAGE' >> f.gz
+$ gunzip -f f.gz; echo "終了コード = $?"
+gzip: f.gz: decompression OK, trailing garbage ignored
+終了コード = 2      ← 展開は成功しているが 0 ではない
+```
+
+**② `qemu-img resize` がダウンロード分岐の中にあり、再実行時にスキップされる**
+
+`if [ ! -f "$OPENWRT_IMG" ]` の**中**に resize があったため、① で停止した状態から
+再実行すると「イメージは既存」と判定されて `if` ブロック全体が飛ばされ、
+**2G への拡張が永久に行われない**。OpenWrt のディスクが小さいまま進み、
+後で `opkg install` の段階で容量不足として現れる(原因が遠く、追いにくい)。
+
+**③ `warning: nic6: interface not recognized`(既存構成由来・無害)**
+
+`/etc/network/interfaces` に `nic6` の記述があるが実機に存在しない。
+ラボが作った設定とは無関係で、`ifreload -a` は成功している(`vmbr1-4` は作成済み)。
+**このホスト固有のノイズ**として記録しておく。会社環境では出ない可能性が高い。
 
 #### Act
 
-- `build-log.md` にホスト実測値を記録(このセクション)
-- §3.1 のトラッカー B1/B2/B3/B6 を更新
+- `build-log.md` にホスト実測値と上記 3 件を記録(このセクション)
+- §3.1 のトラッカー B1/B2/B3/B6 を更新、B7/B8 を追加
 - 持ち込み方法を `git clone` 前提から **tar アーカイブ展開**に確定(ホストに git が無いため)。
   この方法は会社環境でもそのまま使えるので、runbook の手順 1 に採用する
+- **`provision.sh` を修正**:
+  - `gunzip` の終了コードを `|| gz_rc=$?` で受け、`0` と `2` を成功として扱う。
+    それ以外は原因を表示して中断する
+    (`if ! gunzip; then rc=$?` と書くと**否定後の 0 を拾ってしまう**ため使えない。
+     最初の修正案がこの罠を踏んでおり、手元テストで発覚した)
+  - 展開後に `[ -s "$OPENWRT_IMG" ]` で空ファイルを検出する
+  - `qemu-img resize` をダウンロード分岐の**外**に出し、
+    `stat -c %s` が 2GiB 未満のときだけ実行する(再実行しても安全な形にした)
+  - 判定は `qemu-img info --output=json` の解析ではなく `stat -c %s` を使う
+    (raw イメージなのでファイルサイズ = 仮想サイズ。依存を増やさない)
 
 ---
 
@@ -179,7 +230,7 @@ STORAGE=local-lvm ./provision.sh
 | B4 | `bridge-mcsnoop 0` が実際に効いて RA が通る | VM 間で `ping6` / `tcpdump` で RA 受信 | |
 | B5 | `detect-ifs.sh` の MAC 判定が Ubuntu 24.04 で機能する | VM 内で `. detect-ifs.sh; echo $ACCESS_IF` | |
 | B6 | `import-from`(PVE 9.1)でディスク取り込みが通る | provision.sh の出力 | PVE 9.1 を検出し `import-from` を選択。**実行は手順 4 で確認** |
-| B7 | ホストからイメージをダウンロードできる(`wget` で Ubuntu 600MB / OpenWrt 50MB) | provision.sh の出力 | |
+| B7 | ホストからイメージをダウンロードできる(`wget` で Ubuntu 600MB / OpenWrt 50MB) | provision.sh の出力 | **OK** Ubuntu 595MB/46秒、OpenWrt 13MB/8秒。ただし展開で gzip 終了コード 2 → スクリプト即死(修正済み) |
 | B8 | `nic11` は何に使われているか(QNAP 10G と推定)。サイクル 4 で誤って使わないため | `ip -4 addr show nic11` / `cat /etc/network/interfaces` | |
 
 ### 3.2 IPv6 の配布(サイクル 2)
