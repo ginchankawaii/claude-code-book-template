@@ -510,90 +510,241 @@ CPE を通っていない可能性があります(§9-F)。
       Proxmox で既にラボを構築済みの場合は
       `ACCESS_UPLINK=<物理NIC> ./provision.sh` を再実行すると既存ブリッジに追加されます
 - [ ] **検証クライアントをどうするか決める**(§8.1)
-- [ ] 実機のコンソールケーブル
+- [ ] 実機のコンソールケーブル(9600/8/N/1)
+- [ ] **`lab/ipoe/tests/` をクライアント PC にコピー**(Windows なら `run-checks.ps1`、Linux なら `run-checks.sh`)
 
-### 8.1 検証クライアントの置き場所(先に決めること)
+### 8.1 検証クライアントの用意(先に決めること)
 
-`run-checks.sh` は **CE の配下**で実行しないと意味がありません。
+`run-checks` は **CE の配下**で実行しないと意味がありません。
 実機を CE にすると LAB-CLIENT(仮想)は OpenWrt の LAN 側にいるので**使えなくなります**。
-どちらかを選んでください。
 
-| 方式 | 必要なもの | 手順 |
+**Windows PC で問題ありません。** Windows 用の `run-checks.ps1` を用意してあります。
+
+| 方式 | 必要なもの | 実行するもの |
 |---|---|---|
-| **(a) 物理 PC を実機の LAN ポートに直結**(推奨・簡単) | Linux が動く PC 1 台 | `lab/ipoe/tests/run-checks.sh` をコピーして実行。必要コマンドは `bash` / `curl` / `getent` / `ping` |
-| (b) 仮想クライアントを実機配下に入れる | **2 本目の物理 NIC** | その NIC を PG-CLIENT(vmbr4)のアップリンクにし、実機の LAN ポートを同じ L2 に入れる |
+| **(a) Windows PC を実機の LAN ポートに直結**(推奨) | Windows 10 1803 以降 | `lab/ipoe/tests/run-checks.ps1` |
+| (b) Linux PC を直結 | 任意の Linux | `lab/ipoe/tests/run-checks.sh` |
+| (c) 仮想クライアントを実機配下に入れる | **2 本目の物理 NIC** | `run-checks.sh` |
 
-> **(b) は物理 NIC がもう 1 本要ります。**§0 のチェックリストは PG-ACCESS 用の 1 本しか
-> 数えていないので、(b) を選ぶなら追加で確保してください。
+> **(c) は物理 NIC がもう 1 本要ります。**§0 のチェックリストは PG-ACCESS 用の 1 本しか
+> 数えていないので、(c) を選ぶなら追加で確保してください。**(a) がいちばん簡単です。**
 
-### 8.2 接続と設定
+#### Windows PC 側の設定(物理接続だけでは通信しません)
 
-1. 物理スイッチに実機を接続(PG-ACCESS のアップリンク物理 NIC と同じスイッチ)
-2. 実機側で IPoE を設定する
+1. **有線 NIC を「自動取得」にする**(既定ならそのまま)。
+   892FJ 側で DHCP を配る設定を §8.2 に入れてあります
 
-**Cisco 892FJ(classic IOS)の DS-Lite 設定骨子**(お客様が同型機とは限りません。参考例):
+   ```powershell
+   # 手動設定が残っている場合は自動取得に戻す (管理者権限の PowerShell)
+   Get-NetAdapter                                          # 対象の ifIndex を確認
+   Set-NetIPInterface -InterfaceIndex <N> -Dhcp Enabled
+   Remove-NetIPAddress -InterfaceIndex <N> -Confirm:$false -ErrorAction SilentlyContinue
+   Remove-NetRoute     -InterfaceIndex <N> -Confirm:$false -ErrorAction SilentlyContinue
+   Set-DnsClientServerAddress -InterfaceIndex <N> -ResetServerAddresses
+   ipconfig /renew
+   ```
+
+2. **Wi-Fi は切ってください。** 有線と両方生きていると、既定経路が Wi-Fi 側に向いて
+   **CPE を通らない通信を「PASS」と誤判定**します(§9-F と同じ事故)
+
+3. アドレスが降りたか確認
+
+   ```powershell
+   ipconfig /all
+   # IPv4: 192.168.100.x / デフォルトゲートウェイ 192.168.100.1
+   # IPv6: 2001:db8:... のグローバルアドレスが付いていること
+   ```
+
+4. 実行(PowerShell。管理者権限は不要)
+
+   ```powershell
+   # 実行ポリシーで弾かれる場合はこの窓だけ緩める
+   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+.un-checks.ps1 -ExpectSrc4 203.0.113.1 | Tee-Object -FilePath jitsuki-checks.log
+   ```
+
+> **`run-checks.ps1` は英語表記です。**日本語を含む `.ps1` は Windows PowerShell 5.1 で
+> 文字化けし、証跡ログが読めなくなるため、意図的に ASCII だけで書いてあります。
+> 判定内容は `.sh` 版とまったく同じです。
+
+### 8.2 892FJ の初期化と設定
+
+> **既存のゴミ設定は必ず消してください。** 前案件の NAT・ACL・DHCP・トンネルが残っていると、
+> 症状が出ても「ラボが悪いのか設定が悪いのか」が切り分けられません。
+
+#### (1) コンソール接続
+
+| 項目 | 値 |
+|---|---|
+| ボーレート | 9600 |
+| データ / パリティ / ストップ | 8 / なし / 1 |
+| フロー制御 | なし |
+
+#### (2) 設定を消す(erase)
 
 ```
+enable
+show version | include uptime|Version        ! 念のため機種と版数を控える
+write erase
+```
+
+```
+Erasing the nvram filesystem will remove all configuration files! Continue? [confirm]
+```
+
+→ **Enter**
+
+```
+reload
+```
+
+```
+System configuration has been modified. Save? [yes/no]:
+```
+
+→ **no**(ここで yes にすると消したはずの設定が書き戻ります)
+
+```
+Proceed with reload? [confirm]
+```
+
+→ **Enter**。再起動後:
+
+```
+Would you like to enter the initial configuration dialog? [yes/no]:
+```
+
+→ **no**
+
+```
+Would you like to terminate autoinstall? [yes]:
+```
+
+→ **Enter**
+
+#### (3) インターフェース名を確認する
+
+**890 系は機種によって WAN 側のポート名が違います。**先に実物を見てください。
+
+```
+enable
+show ip interface brief
+```
+
+- **LAN 側**: `FastEthernet0`〜`FastEthernet7`(スイッチポート)と `Vlan1`(SVI)
+- **WAN 側**: `GigabitEthernet0` / `GigabitEthernet8` のような**ルーテッドポート**
+
+以降は WAN を `GigabitEthernet0`、LAN を `Vlan1` として書きます。
+**違っていたら読み替えてください。**
+
+#### (4) 基本設定を入れる(コピペ可)
+
+```
+configure terminal
+!
+hostname LAB-892FJ
+no ip domain lookup
+!
+line con 0
+ exec-timeout 0 0
+ logging synchronous
+!
 ipv6 unicast-routing
 ipv6 cef
 !
-interface GigabitEthernet8            ! WAN (PG-ACCESS に繋いだポート)
- ipv6 address autoconfig              ! RA 方式。PD 方式なら ipv6 dhcp client pd LABPD
+! ---- WAN: ラボのアクセス網 (PG-ACCESS) ----
+interface GigabitEthernet0
+ description WAN to LAB PG-ACCESS
+ no ip address
+ ipv6 address autoconfig default
  ipv6 enable
+ no shutdown
+!
+! ---- LAN: 検証クライアントを繋ぐ側 ----
+interface Vlan1
+ description LAN for test client
+ ip address 192.168.100.1 255.255.255.0
+ ip tcp adjust-mss 1420
+ no shutdown
+!
+interface FastEthernet0
+ description test client
+ switchport access vlan 1
+ no shutdown
+!
+! ---- クライアントにアドレスを配る ----
+ip dhcp excluded-address 192.168.100.1
+!
+ip dhcp pool LAN
+ network 192.168.100.0 255.255.255.0
+ default-router 192.168.100.1
+ dns-server 203.0.113.53
+!
+end
+write memory
+```
+
+> **`ip tcp adjust-mss 1420` は必須です。** classic IOS は PMTUD 頼みだと
+> MTU ブラックホール(§9 の R5 系)を踏みます。実務でも定石です。
+>
+> LAN を `192.168.100.0/24` にしているのは、OpenWrt-CE の `192.168.1.0/24` と
+> Proxmox 管理 LAN の `192.168.11.0/24` を避けるためです。
+
+#### (5) WAN 側 IPv6 アドレスを確認して、こちらに知らせてください
+
+**ここで一度止まります。**RA 方式(`autoconfig`)のアドレスは EUI-64 で決まるため、
+**事前には分かりません**。実測した値で VNE 側のトンネルを張り替える必要があります。
+
+```
+show ipv6 interface GigabitEthernet0
+```
+
+```
+GigabitEthernet0 is up, line protocol is up
+  IPv6 is enabled, link-local address is FE80::XXXX:XXFF:FEXX:XXXX
+  Global unicast address(es):
+    2001:DB8:1014:300:XXXX:XXFF:FEXX:XXXX, subnet is 2001:DB8:1014:300::/64   ← これ
+```
+
+**この `2001:DB8:...` の行を教えてください。**受け取ったら私が VNE 側の AFTR を
+その値で張り替えます(`sudo CE_WAN6=<値> ./ipoe/vne/setup-aftr.sh`)。
+
+> グローバルアドレスが出ない場合は §9-E / §9-K を見てください。
+> `show ipv6 interface GigabitEthernet0 | include Router advertisement` で
+> RA を受けているかも確認できます。
+
+#### (6) トンネルを張る(私が AFTR を張り替えたあと)
+
+```
+configure terminal
 !
 interface Tunnel0
- ip address 192.0.0.2 255.255.255.248 ! B4 側 (RFC 6333)
- tunnel source GigabitEthernet8
- tunnel mode ipv6                     ! IPv4 over IPv6
- tunnel destination 2001:db8:8888::1  ! ラボの AFTR
+ description DS-Lite B4
+ ip address 192.0.0.2 255.255.255.248
+ ip mtu 1460
+ ip tcp adjust-mss 1420
+ tunnel source GigabitEthernet0
+ tunnel mode ipv6
+ tunnel destination 2001:DB8:8888::1
+ no shutdown
 !
-ip route 0.0.0.0 0.0.0.0 Tunnel0      ! NAT は網側 (AFTR) なのでルータ側 NAT44 は不要
+ip route 0.0.0.0 0.0.0.0 Tunnel0
 !
-interface Vlan1                        ! LAN 側
- ip tcp adjust-mss 1420                ! classic IOS は PMTUD 頼みだと R5 を踏みます。必須
+end
+write memory
 ```
 
-> **892FJ は MAP-E ができません**(classic IOS に CE 機能がない)。
-> MAP-E の CE 役は OpenWrt か IOS XE 機(C1100 系 / Cat8000v)に割り当ててください。
+> **NAT は入れません。** DS-Lite は網側(AFTR)が NAT します。
+> ここで `ip nat` を入れると二重 NAT になり、出口アドレスの確認が無意味になります。
 
-3. **実機の WAN 側 IPv6 アドレスを確認する**
-
-RA 方式(`autoconfig`)の場合、アドレスは EUI-64 で決まるため**事前には分かりません**。
-必ず実測してください。
+#### (7) 確認コマンド
 
 ```
-実機側:  show ipv6 interface GigabitEthernet8        ! GUA を確認
-VNE 側:  sudo tcpdump -ni <CORE_IF> 'ip6 proto 4'    ! encap の送信元から実測する方法
-```
-
-4. **VNE 側のトンネルを実機向けに張り替える**
-
-```bash
-# DS-Lite
-sudo CE_WAN6=<実機のWAN側IPv6> ./ipoe/vne/setup-aftr.sh
-
-# MAP-E (IOS XE 機のとき。期待値は §5.4 の表から取る)
-sudo CE_MAP_ADDR=<実機のMAPアドレス> CE_SHARED_V4=<共有IPv4> ./ipoe/vne/setup-map-br.sh
-
-# 使わない方式は止める (残すと旧 CE 宛のトンネルが生きて切り分けを汚します)
-sudo ./ipoe/vne/setup-map-br.sh stop     # DS-Lite だけ検証するとき
-sudo ./ipoe/vne/setup-aftr.sh stop       # MAP-E だけ検証するとき
-```
-
-5. **PD 方式なら Kea のリースを消す**(同じプレフィックスを実機に渡すため)
-
-```bash
-sudo systemctl stop kea-dhcp6-server
-sudo rm -f /var/lib/kea/kea-leases6.csv*
-sudo systemctl start kea-dhcp6-server
-```
-
-6. **復路が入ったことを確認する**(ここを飛ばすと「IPv4 は通るのに IPv6 だけ死ぬ」を踏みます)
-
-```bash
-# NGN-SIM で
-journalctl -t kea-pd-route -n 3          # committed ... via <実機のリンクローカル> が出ること
-ip -6 route show | grep 100a:500         # via が入っていること (dev だけなら NG)
+show ipv6 interface brief
+show interface Tunnel0
+show ip route | include 0.0.0.0
+ping 203.0.113.80                    ! ルータ自身から (Tunnel0 経由)
 ```
 
 ### 8.3 動作確認
@@ -601,8 +752,12 @@ ip -6 route show | grep 100a:500         # via が入っていること (dev だ
 §8.1 で決めたクライアントから実行します。**期待する出口アドレスを必ず渡してください。**
 
 ```bash
-EXPECT_SRC4=203.0.113.1 ./run-checks.sh | tee $(date +%Y%m%d-%H%M)-jitsuki.log   # DS-Lite
-EXPECT_SRC4=198.51.100.10 ./run-checks.sh | tee ...                              # MAP-E (PD 方式)
+# Windows PC の場合 (PowerShell)
+.\run-checks.ps1 -ExpectSrc4 203.0.113.1 | Tee-Object -FilePath jitsuki-checks.log
+
+# Linux PC の場合
+EXPECT_SRC4=203.0.113.1 ./run-checks.sh | tee $(date +%Y%m%d-%H%M)-jitsuki.log
+
 ```
 
 ### 8.4 機種別の可否(調査 + 自宅実測)
