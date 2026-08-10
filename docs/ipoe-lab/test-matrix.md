@@ -82,7 +82,18 @@
 - 再現: map-br 構成で、配下から 240 を超える**滞留する**同時セッションを張る(`for i in $(seq 250); do curl -s --limit-rate 1k -m 60 http://203.0.113.80/big.bin -o /dev/null & done` 等。即クローズする curl 連打では NAT テーブルが 240 に達しないことがある)、または well-known ポートの開放を試みる
 - 症状: セッション超過時に新規接続断続失敗。80/443 等の待受公開は不可
 - 切り分け: CPE の NAT テーブル使用数。ポート要件がある案件は DS-Lite でなく MAP-E でも不可 → 固定 IP 系か PPPoE 併用を提案
-- 注意: ラボの BR はポート制限を**強制しない**(制限は CE の NAT 実装依存)ため、CE の実装が甘いと症状が出ないことがある。網側で強制して確実に再現したい場合は BR(VNE)に次を追加: `nft add table ip map-enforce; nft 'add chain ip map-enforce fwd { type filter hook forward priority 0; }'; nft 'add rule ip map-enforce fwd iifname "map0" ip saddr 198.51.100.10 tcp sport != { 4176-4191 } drop'`(許可ブロックの数だけ範囲を追記。UDP も同様)
+- **⚠ 実測(サイクル 5): OpenWrt が CE のときは 240 ではなく 16 本で詰まります。**
+  同時接続を 100 本・300 本と張っても、**成功するのはきっかり 16 本**でした。
+  原因は OpenWrt が生成する nft ルールで、15 本の `snat` が**すべて同じマッチ条件**のため、
+  nftables の終端判定により**先頭ブロック(4176-4191)しか使われません**。
+  カウンタで確定しています(`nat 1: packets 3462` / `nat 4 以降: packets 0`)。
+  → **`for i in $(seq 20)` 程度で再現します。**下記の 250 本は不要です
+- **ポート集合の実測値**(PSID=5。`a=0` のブロックが無いので **well-known ポートは原理的に使えない**):
+  `4176-4191 / 8272-8287 / 12368-12383 / … / 61520-61535`(間隔 4096、15 ブロック × 16 = 240)
+- 注意: ラボの BR はポート制限を**強制しない**(制限は CE の NAT 実装依存)。
+  **OpenWrt では上記のとおり CE 側が先に詰まるので `map-enforce` は不要でした。**
+  実機 CPE で CE 側が正しく 240 使える場合に、網側で強制したいときだけ次を追加:
+  `nft add table ip map-enforce; nft 'add chain ip map-enforce fwd { type filter hook forward priority 0; }'; nft 'add rule ip map-enforce fwd iifname "map0" ip saddr 198.51.100.10 tcp sport != { 4176-4191 } drop'`(許可ブロックの数だけ範囲を追記。UDP も同様)
 - **戻し方(必須)**: `nft delete table ip map-enforce`。**演習後に必ず戻すこと。**残したまま次の MAP-E 検証をすると、原因の分からない断続失敗として現れます
 
 ### R4: DS-Lite でポート開放不可
@@ -95,13 +106,32 @@
   AFTR の NAT 後アドレスになっていること。ここがクライアントの私設アドレスなら
   NAT が効いておらず、このレシピは成立しません
 - 再現: aftr 構成でポートフォワード設定 → 外部(INET-SIM)から到達確認
-- 症状: 設定 UI 上は入るが一切着信しない(NAT が網側のため)
+- **⚠ 対照実験を必ず先にやること(サイクル 5 で危うく誤判定した)。**
+  「着信しない」理由が**仕様どおりなのか、そもそも受け側がいないのか**は外から見て区別できません。
+  1. クライアントで待受を起動: `sudo systemd-run --unit=r4test --collect python3 -m http.server 8000 --bind 0.0.0.0`
+     (**多段 ssh 越しの `nohup ... &` は起動しません。**実際にこれで待受が無いまま「再現した」と読みかけました)
+  2. **LAN 内から到達できることを先に示す**: CPE で `wget -O - http://<クライアント>:8000/` → HTML が返ること
+  3. その状態で外から試す
+- 症状: 設定 UI 上は入るが一切着信しない(NAT が網側のため)。**実測**:
+  `203.0.113.1:8080` → 接続拒否 / `192.0.0.2:8080` → タイムアウト / `192.168.1.247:8000` → タイムアウト
+- 切り分け: CPE の DNAT ルールの宛先が `ip daddr 192.0.0.2`(RFC 6333 の B4 アドレス)になっている点を見せると、
+  **そもそも公開できる先が存在しない**ことが一目で分かります
 - 切り分け: 仕様であることをエビデンス付きで説明できるようにしておく
 
 ### R5: MTU ブラックホール
 - 再現: VNE で `setup-aftr.sh break-pmtu` を実行(VNE 自身が生成する ICMPv4 Fragmentation-Needed を drop する。このラボの外側パケットは 1500 に収まるため ICMPv6 Too-Big は発生せず、落とすべきは inner IPv4 側)。復旧は `restore-pmtu`
+- **⚠ `break-pmtu` だけでは再現しません(サイクル 5 実測)。前提が 2 つ要ります**:
+  1. **CPE の MSS clamp を切る**: `uci set firewall.@zone[1].mtu_fix='0'; uci commit firewall; /etc/init.d/firewall reload`
+     OpenWrt は既定で wan ゾーンの ingress/egress 両方に `tcp option maxseg size set rt mtu` を入れるため、
+     **TCP は最初からトンネル MTU を超えず、Frag-Needed 自体が発生しません**
+  2. **両端で PMTU キャッシュをフラッシュ**: クライアントと INET-SIM で `sudo ip route flush cache`
+     一度成功した経路には PMTU 1460 が学習済みで、やはり Frag-Needed が不要になります。
+     **「さっきまで再現していたのに再現しなくなる」**という形で出るので演習中いちばん混乱します
+- 実測の推移: `break-pmtu` のみ → PASS / + `mtu_fix=0` → まだ PASS / + キャッシュフラッシュ → **FAIL: TCP 5MB over IPv4**
 - 症状: `run-checks.sh` で小さいページ・ping は PASS するのに **TCP 5MB 転送だけ FAIL**(切替後問い合わせの定番「表示が固まる」)
 - 切り分け: `ping -M do -s 1432` は通るが `-s 1472` が通らない、TCP MSS 調整(clamp)で回復
+- **演習の回し方**: 既定(clamp あり)で症状が出ないことをまず見せ、clamp を切って再現させ、
+  clamp を戻して直す、と回すと **`mtu_fix` が実務的な対処そのもの**であることまで体験できます
 
 ### R6: DNS フォールバック遅延
 - 再現: `setup-inet.sh break-v6`(AAAA は返るが v6 到達不可)
