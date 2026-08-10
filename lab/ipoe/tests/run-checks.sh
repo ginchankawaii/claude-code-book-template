@@ -33,6 +33,13 @@ echo "--- アドレス/経路 ---"
 ip -6 addr show scope global | grep -E 'inet6|^[0-9]' || echo "(グローバル IPv6 なし)"
 ip route show default; ip -6 route show default
 
+# ウォームアップ (判定には数えない)。
+# 経路上 (クライアント → CPE → NGN → VNE → INET-SIM) の近隣探索が初回に間に合わず、
+# **1 回目だけ IPv6 が FAIL する**ことが実測で確認されている (2 回目以降は必ず PASS)。
+# 判定を緩めると本物の障害を見逃すので、閾値ではなくウォームアップで解消する。
+ping -c1 -W3 "$V4_TARGET" >/dev/null 2>&1 || true
+ping -c1 -W3 "$V6_TARGET" >/dev/null 2>&1 || true
+
 echo "--- 疎通 ---"
 check "IPv4 ping (${V4_TARGET})"      ping -c2 -W2 "$V4_TARGET"
 check "IPv6 ping (${V6_TARGET})"      ping -c2 -W2 "$V6_TARGET"
@@ -41,6 +48,10 @@ echo "--- DNS ---"
 # キャッシュを落としてから引く。ラボの dnsmasq は local-ttl=3600 なので、
 # キャッシュが残っていると **切替で DNS 経路が壊れていても PASS してしまう**。
 # 「切替前後のチェック」というこのスクリプトの用途でこそ発動する偽陽性なので必須。
+# **限界**: これで消えるのは **このホストのキャッシュだけ**。CPE (OpenWrt) の dnsmasq にも
+# キャッシュが残るため、切替直後の厳密な比較をするなら CPE 側でも
+#   /etc/init.d/dnsmasq restart
+# を実行してください (上流の local-ttl=3600 が効くので最長 1 時間残ります)
 resolvectl flush-caches >/dev/null 2>&1 || true
 check "A 解決 (${DNS_NAME})"          sh -c "getent ahostsv4 $DNS_NAME | grep -q ."
 check "AAAA 解決 (${DNS_NAME})"       sh -c "getent ahostsv6 $DNS_NAME | grep -q ."

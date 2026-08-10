@@ -516,10 +516,14 @@ cat <<EOF
 [完了] 検証ラボの土台ができました   (ストレージ: ${STORAGE} / ${STYPE} / snapshot=${SNAP_OK})
 
   9001 ngn-sim    NGN網模擬      (ACCESS + CORE)
-  9002 vne-inet   VNE+模擬INET   (CORE + INET)
+  9002 vne-inet   $([ "$SPLIT_INET" = "1" ] && echo "VNE (BR/AFTR)  (CORE + INET)" || echo "VNE+模擬INET   (CORE + INET)")
   9003 bras       PPPoE終端      (ACCESS + INET)
-  9004 lab-client 検証クライアント (CPE配下)
+  9004 lab-client 検証クライアント (CPE配下)$([ "$SPLIT_INET" = "1" ] && printf '\n  9005 inet-sim   模擬インターネット (INET)')
   9010 openwrt-ce リファレンスCPE (net0=LAN/vmbr4, net1=WAN/vmbr1)
+$([ "$SPLIT_INET" = "1" ] || echo "
+  注意: INET-SIM は 9002 に同居しています。この構成では **DS-Lite の網側 NAT が効かず**、
+        test-matrix の R4 (ポート開放不可) が逆の結果になります。
+        R4 を検証するなら SPLIT_INET=1 で作り直してください。")
 
 次の手順:
   1. 各VMの接続先を確認
@@ -532,8 +536,9 @@ $([ -n "$VENDOR_OPT" ] && echo "       qm guest cmd <vmid> network-get-interface
        sudo ./ipoe/ngn/setup-ngn.sh pd        # 9001
        sudo ./ipoe/vne/setup-map-br.sh        # 9002
        sudo ./ipoe/vne/setup-aftr.sh          # 9002
-       sudo ./ipoe/inet/setup-inet.sh         # 9002
+       sudo ./ipoe/inet/setup-inet.sh         # $([ "$SPLIT_INET" = "1" ] && echo "9005" || echo "9002 (同居)")
        sudo ./ipoe/bras/setup-bras.sh         # 9003
+       sudo ./ipoe/client/setup-client.sh     # 9004 (省略不可。これが無いと検証が偽陽性になる)
   4. 全VMのスナップショットを取得 (メモリ込み)$([ "$SNAP_OK" = "no" ] && echo " ← このストレージでは不可" || true)
 
 実機CPE(892FJ等)を繋ぐ場合: ACCESS_UPLINK=<物理NIC名> で再実行すると

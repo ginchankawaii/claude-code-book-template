@@ -24,6 +24,7 @@ EOF
     echo "[INET-SIM] AFTR FQDN 偽装を有効化 (解除: rm /etc/dnsmasq.d/lab-aftr-spoof.conf && systemctl restart dnsmasq)"
     exit 0 ;;
   break-v6)
+    nft delete table ip6 break-v6 2>/dev/null || true   # 再実行で drop が重複しないよう消してから作る
     nft -f - <<'EOF'
 table ip6 break-v6 {
   chain input {
