@@ -40,7 +40,23 @@ ip -6 route replace 2001:db8:cafe::/64 via ${CORE_VNE}
 # 注意: CE が MAP アドレス宛の NS に WAN 側で応答しない実装だと復路が死ぬ。
 # その場合は on-link をやめ、CE の WAN GUA を next-hop に指定する:
 #   ip -6 route replace 2001:db8:100a:500::/56 via <CEのWAN GUA> dev ${ACCESS_IF}
-ip -6 route replace 2001:db8:100a:500::/56 dev "${ACCESS_IF}"
+# **既に via 経路があるなら絶対に上書きしないこと。**
+#
+# PD 方式の正しい復路は Kea のフック (kea-pd-route.sh) が入れる
+#   2001:db8:100a:500::/56 via <CE のリンクローカル> dev <ACCESS_IF>
+# である。ここで無条件に on-link 経路を `replace` すると **それを潰してしまう**。
+#
+# on-link は「CE が配下アドレス宛の NS に WAN 側で応答する」実装でないと成立しないが、
+# OpenWrt は応答しない。その結果:
+#   - クライアントの IPv6 だけが片方向で死ぬ (IPv4 は MAP-E トンネル経由なので無傷)
+#   - CPE 自身や NGN からの ping は通るので「経路はあるのに通らない」に見える
+#   - CPE が PD を更新する (T1 = 約 37 分) まで自然回復しない
+# という、極めて追いにくい症状になる (サイクル 5 で実際に半日溶かした)。
+#
+# → フック由来の via 経路がある間は触らない。無いときだけ初期経路として on-link を置く。
+if ! ip -6 route show 2001:db8:100a:500::/56 2>/dev/null | grep -q ' via '; then
+  ip -6 route replace 2001:db8:100a:500::/56 dev "${ACCESS_IF}"
+fi
 
 case "$MODE" in
   ra)
