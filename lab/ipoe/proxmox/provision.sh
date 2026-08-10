@@ -5,6 +5,7 @@
 #          ./provision.sh preflight  … 事前検証だけ実行して環境を報告 (何も変更しない)
 #          ./provision.sh bridges    … 事前検証 + ブリッジ (vmbr1-4) だけ作成
 #          ./provision.sh destroy    … このスクリプトが作った VM だけを削除
+#          ./provision.sh ips        … 各 VM の接続先 (IPv6 リンクローカル) を表示
 #
 #   主な環境変数:
 #     STORAGE=<名前>            VM ディスクの格納先。省略時は自動検出を試みる
@@ -84,6 +85,51 @@ if [ "$MODE" = "destroy" ]; then
     fi
   done
   echo "[完了] ブリッジ vmbr1-4 は残しています"
+  exit 0
+fi
+
+# ============================================================ ips (接続先の表示)
+# guest-agent が入らない環境 (snippets 対応ストレージが無い) でも VM に入れるように、
+# IPv6 のリンクローカルアドレスで接続先を解決する。
+# リンクローカルは MAC から決まるので DHCP に依存せず、常に同じ値になる。
+if [ "$MODE" = "ips" ]; then
+  echo "[ips] 管理ブリッジ (${MGMT_BRIDGE}) 上の VM を探します"
+  # 近隣キャッシュを埋める: 全ノードマルチキャストへ ping して応答させる
+  # (IPv4 のブロードキャストを撒かないので、同居している家庭 LAN に影響しない)
+  if command -v ping6 >/dev/null 2>&1; then
+    ping6 -c 2 -W 1 -I "$MGMT_BRIDGE" ff02::1 >/dev/null 2>&1 || true
+  else
+    ping -6 -c 2 -W 1 -I "$MGMT_BRIDGE" ff02::1 >/dev/null 2>&1 || true
+  fi
+  printf '  %-6s %-12s %-19s %s\n' VMID NAME MAC 接続先
+  for vmid in "${VMIDS[@]}"; do
+    qm status "$vmid" >/dev/null 2>&1 || continue
+    vm_is_ours "$vmid" || continue
+    mac="$(qm config "$vmid" | awk -F'[=,]' '/^net0:/{print tolower($2); exit}')"
+    # MAC は "lladdr" の次のトークン。列位置は iproute2 の版で変わるので位置に依存しない
+    lladdr="$(ip -6 neigh show dev "$MGMT_BRIDGE" 2>/dev/null \
+              | awk -v m="$mac" '$1 ~ /^fe80:/ {
+                  for (i = 1; i < NF; i++)
+                    if ($i == "lladdr" && tolower($(i+1)) == m) { print $1; exit }
+                }')"
+    if [ -n "$lladdr" ]; then
+      dest="${lladdr}%${MGMT_BRIDGE}"
+    else
+      dest="(未検出: qm terminal ${vmid} で ip a を確認)"
+    fi
+    printf '  %-6s %-12s %-19s %s\n' "$vmid" "$(lab_name_of "$vmid")" "$mac" "$dest"
+  done
+  cat <<EOF
+
+使い方 (IPv6 リンクローカルなので %${MGMT_BRIDGE} を必ず付ける):
+  ssh ${CIUSER}@fe80::xxxx%${MGMT_BRIDGE}
+  scp -r <ラボのパス>/lab/ipoe ${CIUSER}@[fe80::xxxx%${MGMT_BRIDGE}]:~/
+
+IPv4 で入りたい場合は、家庭 LAN のルータの DHCP リース一覧で上記 MAC を探してください。
+guest-agent を使えるようにするなら (任意):
+  pvesm set local --content iso,vztmpl,backup,snippets
+  ./provision.sh destroy && ./provision.sh     # 作り直しが必要
+EOF
   exit 0
 fi
 
@@ -431,11 +477,12 @@ cat <<EOF
   9010 openwrt-ce リファレンスCPE (net0=LAN/vmbr4, net1=WAN/vmbr1)
 
 次の手順:
-  1. 各VMのIPを確認
-       qm terminal <vmid>                 # シリアルコンソール (抜けるのは Ctrl-O)
-$([ -n "$VENDOR_OPT" ] && echo "       qm guest cmd <vmid> network-get-interfaces   # 起動後しばらくすると使える" || echo "       ※ guest-agent 未導入のため qm guest cmd は使えません")
-  2. lab/ipoe をコピー
-       scp -r lab/ipoe ${CIUSER}@<VMのIP>:~/
+  1. 各VMの接続先を確認
+       ./provision.sh ips                 # IPv6 リンクローカルで一覧表示 (DHCP に依存しない)
+       qm terminal <vmid>                 # 上で出ないときはシリアルコンソール (抜けるのは Ctrl-O)
+$([ -n "$VENDOR_OPT" ] && echo "       qm guest cmd <vmid> network-get-interfaces   # 起動後しばらくすると使える" || echo "       ※ guest-agent 未導入のため qm guest cmd は使えません (ips モードを使ってください)")
+  2. lab/ipoe をコピー (リンクローカルは [] で囲み %${MGMT_BRIDGE} を付ける)
+       scp -r lab/ipoe ${CIUSER}@[fe80::xxxx%${MGMT_BRIDGE}]:~/
   3. セットアップ実行 (NIC名は MAC から自動判別されるので指定不要)
        sudo ./ipoe/ngn/setup-ngn.sh pd        # 9001
        sudo ./ipoe/vne/setup-map-br.sh        # 9002

@@ -31,7 +31,7 @@
 
 | # | 目的 | 状態 | 所要 | 主な学び |
 |---|---|---|---|---|
-| 1 | Proxmox に 5 VM を作って起動する | **進行中**([2/4] で停止 → 修正して再実行待ち) | — | gzip は警告でも終了コード 2 を返し `set -e` で即死する。冪等性の無い分岐に副作用を置くと再実行で隠れる |
+| 1 | Proxmox に 5 VM を作って起動する | **VM 起動まで完了**(成功条件の確認中) | 約 3 分(2 回) | gzip は警告でも終了コード 2 を返し `set -e` で即死する。冪等性の無い分岐に副作用を置くと再実行で隠れる。guest-agent 無しでも IPv6 リンクローカルで VM に入れる |
 | 2 | 4 台の Linux に setup スクリプトを流し、IPv6 が降りるところまで | 未着手 | — | — |
 | 3 | MAP-E / DS-Lite で IPv4 が通り、`run-checks.sh` が PASS するまで | 未着手 | — | — |
 | 4 | 実機 CPE(892FJ)を収容する | 未着手 | — | — |
@@ -187,9 +187,58 @@ gzip: f.gz: decompression OK, trailing garbage ignored
 ラボが作った設定とは無関係で、`ifreload -a` は成功している(`vmbr1-4` は作成済み)。
 **このホスト固有のノイズ**として記録しておく。会社環境では出ない可能性が高い。
 
+**手順 4: VM 作成(実行) — 2 回目: 完走した**
+
+```
+[1/4] ブリッジを準備します
+  vmbr1: 既存 (ラボ用) のためスキップ      ← 1 回目で作成済み。冪等に動いた
+  vmbr2: 既存 (ラボ用) のためスキップ
+  vmbr3: 既存 (ラボ用) のためスキップ
+  vmbr4: 既存 (ラボ用) のためスキップ
+[2/4] イメージを準備します
+  Ubuntu イメージ: 既存を使用
+  OpenWrt イメージ: 既存を使用
+  OpenWrt イメージを 2G に拡張しました    ← 修正②が効いた箇所 (1 回目は飛ばされていた)
+  注意: snippets 対応ストレージがないため guest-agent は入りません (qm guest cmd は使えない)
+[3/4] VM を作成します
+  VM 9001 (ngn-sim): 作成
+  VM 9002 (vne-inet): 作成
+  VM 9003 (bras): 作成
+  VM 9004 (lab-client): 作成
+  VM 9010 (openwrt-ce): 作成 (net0=LAN/vmbr4, net1=WAN/vmbr1)
+[4/4] VM を起動します
+  VM 9001〜9004: 起動 (generating cloud-init ISO)
+  VM 9010: 起動
+[完了] 検証ラボの土台ができました   (ストレージ: local-lvm / lvmthin / snapshot=yes)
+```
+
+**所要時間**: 1 回目(イメージ取得込み) 約 2 分 + 2 回目 約 1 分。
+**2 回目にイメージ取得が走らないので、再実行は速い**(会社環境でも同じはず)。
+
+**手順 4 で見つかった不具合 3 件目: 接続先の確認手段が無かった**
+
+`snippets` に対応したストレージ(`local` は既定で iso/vztmpl/backup のみ)が無いため
+**guest-agent が VM に入らず、`qm guest cmd` で IP を取れない**。
+一方で完了メッセージは「各VMのIPを確認」と書いているだけで、**手段を示していなかった**。
+`qm terminal` で 1 台ずつコンソールに入って `ip a` を読むしかない状態で、
+4 台ぶんやると地味に時間を食う。会社環境(人間が手順書を見て作業する)ではここで止まる。
+
 #### Act
 
 - `build-log.md` にホスト実測値と上記 3 件を記録(このセクション)
+- **`provision.sh ips` モードを追加**(3 件目の対策)
+  - **IPv6 リンクローカルアドレスで接続先を解決する。** リンクローカルは MAC から
+    決まるので DHCP に依存せず、家庭 LAN のルータのリース表を見に行く必要もない
+  - `ff02::1`(全ノードマルチキャスト)へ ping して近隣キャッシュを埋め、
+    `ip -6 neigh` の結果を VM の net0 MAC と突き合わせて一覧表示する
+  - IPv4 のブロードキャストは撒かないので、同居している家庭 LAN に影響しない
+  - `ip -6 neigh` のパースは列位置ではなく **`lladdr` の次のトークン**を取る形にした
+    (iproute2 の版で列位置が変わるため。最初は `$3` を見ていて誤っていた)
+  - `ping6` / `ping -6` の両方に対応(ディストリによってどちらかしか無い)
+  - 完了メッセージも「`./provision.sh ips` を使う」に修正し、
+    リンクローカルでの `scp` の書き方(`[fe80::xxxx%vmbr0]`)を明示した
+  - guest-agent を使いたい場合の手順(`pvesm set local --content ...,snippets` +
+    作り直し)も併記した
 - §3.1 のトラッカー B1/B2/B3/B6 を更新、B7/B8 を追加
 - 持ち込み方法を `git clone` 前提から **tar アーカイブ展開**に確定(ホストに git が無いため)。
   この方法は会社環境でもそのまま使えるので、runbook の手順 1 に採用する
@@ -229,9 +278,11 @@ gzip: f.gz: decompression OK, trailing garbage ignored
 | B3 | `vmbr1`〜`vmbr4` が未使用(CML と衝突しない) | `provision.sh preflight` | **OK** すべて未使用。vmbr0 のみ存在 |
 | B4 | `bridge-mcsnoop 0` が実際に効いて RA が通る | VM 間で `ping6` / `tcpdump` で RA 受信 | |
 | B5 | `detect-ifs.sh` の MAC 判定が Ubuntu 24.04 で機能する | VM 内で `. detect-ifs.sh; echo $ACCESS_IF` | |
-| B6 | `import-from`(PVE 9.1)でディスク取り込みが通る | provision.sh の出力 | PVE 9.1 を検出し `import-from` を選択。**実行は手順 4 で確認** |
+| B6 | `import-from`(PVE 9.1)でディスク取り込みが通る | provision.sh の出力 | **OK** 5 台すべて作成・起動できた |
 | B7 | ホストからイメージをダウンロードできる(`wget` で Ubuntu 600MB / OpenWrt 50MB) | provision.sh の出力 | **OK** Ubuntu 595MB/46秒、OpenWrt 13MB/8秒。ただし展開で gzip 終了コード 2 → スクリプト即死(修正済み) |
 | B8 | `nic11` は何に使われているか(QNAP 10G と推定)。サイクル 4 で誤って使わないため | `ip -4 addr show nic11` / `cat /etc/network/interfaces` | |
+| B9 | `snippets` 対応ストレージが無く guest-agent が入らない | 完了メッセージの注意書き | **該当**。`provision.sh ips`(IPv6 リンクローカル)で代替。guest-agent が必要なら `pvesm set local --content iso,vztmpl,backup,snippets` + 作り直し |
+| B10 | `provision.sh ips` が 4 台(+OpenWrt)を検出できる | `./provision.sh ips` | |
 
 ### 3.2 IPv6 の配布(サイクル 2)
 
