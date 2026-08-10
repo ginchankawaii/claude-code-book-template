@@ -1,42 +1,573 @@
 # 会社 VMware 環境 構築ランブック(手動作業用)
 
-> **このファイルはまだ空です。** 自宅 Proxmox での構築作業を通じて、実際に動いたコマンドと詰まった箇所をここに書き起こしていきます。
-> 会社環境では AI 支援が使えないため、**このファイルだけを見て上から順に実行すれば完成する**状態を目標にします。
-
-## 書き方のルール(記録する側のメモ)
-
-- コマンドは**コピーして貼れる形**で書く。「適宜読み替えてください」を避け、置換が必要な箇所は `<...>` で明示する
-- 実行結果の**期待される出力**を併記する(正常か異常かを人が判断できるように)
-- 詰まった箇所は「症状 → 原因 → 対処」の形で残す。将来同じ人が同じ場所で詰まる
-- 判断が必要な分岐は、**推奨をひとつ書く**。選択肢の羅列で終わらせない
+> **このファイルだけを見て上から順に実行すれば完成する**ことを目標にしています。
+> 会社環境では AI 支援が使えないため、判断が必要な箇所には**推奨をひとつ**書いてあります。
+>
+> 記載内容は自宅 Proxmox での実走(サイクル 1〜3)で**実際に動いたもの**です。
+> 詰まった箇所は §9 に「症状 → 原因 → 対処」で残してあります。
+> 経緯の全文は [build-log.md](build-log.md) にあります。
 
 ## 会社環境の前提(自宅との違い)
 
 | | 自宅 Proxmox | **会社 VMware** |
 |---|---|---|
-| CML | あり(Cat8000v 等を CE に使える) | **なし** |
+| CML | あり(Cat8000v を CE に使える。MAP-E CLI 実装ありを確認済み) | **なし** |
 | 実機 | 892FJ のみ | **豊富にある** ← 検証の本命 |
 | CE 調達 | OpenWrt VM / CML / 892FJ | **物理ポートに実機を挿す** + OpenWrt VM |
 
-**したがって会社側では「物理ポート経由で実機を接続する」手順が必須です。** 自宅は CML があるので内部ブリッジだけでも回りますが、会社は物理接続なしでは検証対象がありません。ポートグループのセキュリティ 3 項目「承諾」を落とすとここで確実に詰まるため、**省略不可の手順**として扱います。
+**会社側では「物理ポート経由で実機を接続する」手順が必須です。**
+ポートグループのセキュリティ 3 項目「承諾」を落とすとここで確実に詰まるため、**省略不可**として扱います。
 
-**同時に検証できる CE は 1 台です**(BR/AFTR が静的トンネルのため)。実機は 1 台ずつ順番に。IPv6(native / PD)だけなら DUID 予約で複数台に配れます — 詳細は [proxmox-prototype.md §4.2](proxmox-prototype.md)。
+**同時に検証できる CE は 1 台です**(BR/AFTR が静的トンネルのため)。実機は 1 台ずつ順番に。
+入れ替え手順は [build-log.md §4](build-log.md) を参照。
 
-## 構成
+**所要時間の目安**(自宅実測。VMware では VM 作成が手動になるぶん増えます):
 
-- [ ] 0. 事前準備(必要な情報・権限・払い出し依頼)
-- [ ] 1. vSwitch / ポートグループの作成(**セキュリティ 3 項目「承諾」は必須**)
-- [ ] 2. **物理 NIC を PG-ACCESS のアップリンクに割当**(実機接続の前提)
-- [ ] 3. VM の作成(役割別 MAC の手動設定を含む)
-- [ ] 4. 各 VM のセットアップ(`lab/ipoe` のコピーとスクリプト実行)
-- [ ] 5. 動作確認(`run-checks.sh` の期待結果)
-- [ ] 6. スナップショット取得
-- [ ] 7. **実機 CPE の接続と検証**(物理スイッチ経由・1 台ずつ)
-- [ ] 8. トラブルシューティング(自宅で実際に踏んだもの)
+| 工程 | 実測 |
+|---|---|
+| VM 5 台の作成〜起動(スクリプト) | 約 3 分 |
+| Linux 4 台の setup スクリプト | 合計 約 2.5 分 |
+| CPE(OpenWrt)の設定 | 約 10 分 |
+| 動作確認(`run-checks.sh`) | 約 1 分 |
+
+---
+
+## 0. 事前準備(必要な情報・権限・払い出し依頼)
+
+- [ ] vSphere で **ポートグループを作成できる権限**
+- [ ] **空き物理 NIC を 1 本**確保(実機 CPE 収容用。PG-ACCESS のアップリンクにする)
+- [ ] **静的 MAC アドレスの割当が許可されている**こと(§3 で使います)
+  - 許可されない場合は §3 の代替手順(環境変数で NIC 名を直接指定)を使います
+- [ ] 物理 L2 スイッチ 1 台(特別な設定は不要。MTU 1500 のまま)
+- [ ] Ubuntu Server 24.04 の ISO または OVA
+- [ ] OpenWrt x86/64 のイメージ(`openwrt-24.10.0-x86-64-generic-ext4-combined.img.gz`)
+- [ ] リポジトリの `lab/ipoe` 一式(§4 の方法で持ち込みます)
+
+> **検証機を社内 LAN に足を出してよいかを先に確認してください。**
+> OpenWrt に `map` / `ds-lite` を導入する工程(§5.3)で、**一時的に社内 LAN への
+> 接続が必要**になります。ポリシー上不可の場合は、パッケージを事前導入した
+> イメージを用意する必要があります(§9-G)。
+
+---
+
+## 1. vSwitch / ポートグループの作成
+
+ポートグループを **5 つ**作ります。
+
+| PG | 用途 | アップリンク |
+|---|---|---|
+| PG-ACCESS | アクセス回線 L2(NGN-SIM / BRAS / CPE の WAN) | **物理 NIC(§2)** |
+| PG-CORE | NGN 網内(IPv6 のみ) | なし(内部専用) |
+| PG-INET | 模擬インターネット | なし(内部専用) |
+| PG-CLIENT | CPE 配下の LAN(CPE の LAN 側 ⇔ 検証クライアント) | なし(内部専用) |
+| 管理 | 各 VM の 1 枚目 NIC | 既存の管理ネットワークでよい |
+
+**PG-ACCESS のセキュリティ 3 項目を「承諾」にします(必須)**:
+
+- 無差別モード(Promiscuous mode): **承諾**
+- MAC アドレス変更(MAC address changes): **承諾**
+- 偽装転送(Forged transmits): **承諾**
+
+> **これを落とすと PPPoE と実機ブリッジが動きません。** 症状は「PADI に応答がない」
+> 「実機から RA が見えない」など、原因が遠く追いにくい形で出ます。
+
+> **Proxmox との差**: Linux ブリッジでは `bridge-mcsnoop 0` が必要でしたが、
+> vSwitch には該当設定がありません。VMware の標準 vSwitch は IGMP/MLD snooping を
+> しないため、RA / DHCPv6 のマルチキャストはそのまま通ります。
+
+---
+
+## 2. 物理 NIC を PG-ACCESS のアップリンクに割当
+
+```
+[実機ルータ(お客様同型機)] ─┐
+[HGW実機(あれば)] ──────────┼─[物理スイッチ]──[ESXiホストの空き物理NIC]
+[検証用PC] ─────────────────┘                        │
+                                                     └ この物理NICを PG-ACCESS の
+                                                       アップリンクに割り当てる
+```
+
+- 物理スイッチは**普通の L2 スイッチでよい**(特別な設定不要、MTU 1500 のまま)
+- 検証面を複数持ちたい場合は、物理スイッチを VLAN で分け、PG 側も VLAN ID 付きの
+  ポートグループを複数作れば、1 本の物理 NIC で複数のアクセス網を収容できます
+
+---
+
+## 3. VM の作成
+
+**5 台**作ります。1 枚目 NIC(net0)は必ず管理ネットワークに繋いでください。
+
+| VM | vCPU/RAM | net1 | net2 | 役割 |
+|---|---|---|---|---|
+| NGN-SIM | 2 / 2GB | PG-ACCESS | PG-CORE | RA / DHCPv6-PD 配布 |
+| VNE+INET | 2 / 2GB | PG-CORE | PG-INET | MAP-E BR + DS-Lite AFTR + Web/DNS |
+| BRAS | 2 / 2GB | PG-ACCESS | PG-INET | PPPoE 終端(accel-ppp をソースビルドするため 2GB 必須) |
+| LAB-CLIENT | 1 / 1GB | PG-CLIENT | — | 検証クライアント(`run-checks.sh` 実行用) |
+| OpenWrt-CE | 1 / 512MB | PG-CLIENT(LAN) | PG-ACCESS(WAN) | リファレンス CPE |
+
+> **LAB-CLIENT を省略しないでください。** 管理 LAN に直結したホストから `run-checks.sh` を
+> 流すと、通信が CPE を通らずに抜けて **「PASS したのに何も検証できていない」**
+> という最悪の偽陽性になります。
+
+### 役割別 MAC の設定(重要)
+
+スクリプトは **MAC から NIC の役割を判別**します。NIC 名(`ens192` 等)は環境で変わるためです。
+各 VM の NIC に、以下の規則で**静的 MAC** を設定してください。
+
+| MAC の先頭 | 役割 | 例(末尾は VM 番号) |
+|---|---|---|
+| `02:ac:*` | PG-ACCESS | `02:ac:00:00:00:01`(NGN-SIM) |
+| `02:c0:*` | PG-CORE | `02:c0:00:00:00:01`(NGN-SIM) |
+| `02:1e:*` | PG-INET | `02:1e:00:00:00:02`(VNE+INET) |
+| `02:c1:*` | PG-CLIENT | `02:c1:00:00:00:04`(LAB-CLIENT) |
+
+**静的 MAC が許可されていない場合の代替**: 各スクリプトを実行するとき、環境変数で
+NIC 名を直接指定します。`ip -br link` で名前を確認してから:
+
+```bash
+sudo ACCESS_IF=ens192 CORE_IF=ens224 ./ipoe/ngn/setup-ngn.sh pd
+```
+
+### OpenWrt-CE のディスク
+
+イメージを 2G に拡張しておきます。
+
+```bash
+gunzip openwrt-24.10.0-x86-64-generic-ext4-combined.img.gz
+qemu-img resize -f raw openwrt-*.img 2G
+# vmdk に変換して VM にアタッチ
+qemu-img convert -f raw -O vmdk openwrt-*.img openwrt-ce.vmdk
+```
+
+> **注意**: これは**イメージファイル**を 2G にするだけで、中のファイルシステムは
+> **98MB のまま**です(自宅実測: `df -h /` → `/dev/root 98.3M`)。
+> `map` / `ds-lite` / `tcpdump-mini` までは収まります(使用 27MB)。
+> それ以上入れる場合は OpenWrt 側でパーティション拡張が別途必要です。
+
+---
+
+## 4. スクリプトの持ち込み
+
+`git` が入っていない環境でも通る方法です(自宅の Proxmox ホストがそうでした)。
+
+```bash
+cd /root
+curl -fsSL "https://github.com/<owner>/<repo>/archive/refs/heads/<branch>.tar.gz" | tar xz
+mv -f <repo>-<branch をダッシュ化した名前> ipoe-lab
+chmod +x ipoe-lab/lab/ipoe/*/*.sh
+```
+
+各 Linux VM に `lab/ipoe` ディレクトリごとコピーします。SSH が使えるなら:
+
+```bash
+tar cz -C <リポジトリ>/lab ipoe | ssh <user>@<VMのIP> 'tar xz -C ~'
+```
+
+> **以降、VM 上ではパスが `~/ipoe/...` になります。**
+> この手順書のコマンドはその前提で書いてあります。
+
+---
+
+## 5. 各 VM のセットアップ
+
+**この順序で実行してください。** 括弧内は自宅での実測時間です。
+
+### 5.1 NGN-SIM(約 37 秒)
+
+```bash
+sudo ./ipoe/ngn/setup-ngn.sh pd     # ひかり電話あり相当(DHCPv6-PD, /56)
+# sudo ./ipoe/ngn/setup-ngn.sh ra   # ひかり電話なし相当(RA, /64)に切り替える場合
+```
+
+期待される出力(末尾):
+
+```
+[NGN-SIM] PD モード (ひかり電話あり相当, 2001:db8:100a:500::/56 を委譲)
+  この /56 での MAP-E 期待値: 共有IPv4=198.51.100.10, PSID=5
+```
+
+確認:
+
+```bash
+systemctl is-active radvd kea-dhcp6-server
+# → active
+# → active
+```
+
+### 5.2 VNE+INET(約 39 秒 + 4 秒)
+
+```bash
+sudo ./ipoe/inet/setup-inet.sh       # 模擬インターネット(Web/DNS)
+sudo ./ipoe/vne/setup-map-br.sh      # MAP-E BR
+sudo ./ipoe/vne/setup-aftr.sh        # DS-Lite AFTR(両方同時起動でよい)
+```
+
+期待される出力:
+
+```
+[INET-SIM] http://203.0.113.80 / http://[2001:db8:cafe::80] / DNS 203.0.113.53
+[VNE] MAP-E BR 起動: BR=2001:db8:9999::1, CE=2001:db8:100a:500:0:c633:640a:5, 共有IPv4=198.51.100.10
+[VNE] DS-Lite AFTR 起動: AFTR=2001:db8:8888::1, B4=2001:db8:100a:500::1
+```
+
+### 5.3 OpenWrt-CE
+
+コンソールで操作します(管理 NIC を持たないため)。
+
+**(a) `map` / `ds-lite` の導入** — 一時的に社内 LAN への足が必要です
+
+```sh
+# ① 管理NICを一時的に足す (vSphere で「管理」PG の NIC を 1 枚追加。再起動不要)
+# ② OpenWrt 側:
+uci set network.mgmt=interface
+uci set network.mgmt.device='eth2'
+uci set network.mgmt.proto='dhcp'
+uci commit network
+uci add_list firewall.@zone[1].network='mgmt'     # zone[1] = wan。DHCPサーバは立てない
+uci commit firewall
+/etc/init.d/network reload && /etc/init.d/firewall reload
+
+# ③ ラボの IPv6 を一時的に落としてから opkg (これをしないと必ず失敗します。理由は §9-A)
+ifdown wan6
+opkg update
+opkg install map ds-lite tcpdump-mini
+ifup wan6
+
+# ④ 検証中は管理NICを無効化する (社内 LAN へ抜ける偽陽性を防ぐ)
+uci set network.mgmt.disabled='1'
+uci commit network
+/etc/init.d/network reload
+```
+
+**(b) CPE に必ず入れる 3 つの設定** — 入れないと必ず詰まります
+
+```sh
+# ① PPPoE と IPoE を同居させる (これが無いと PPPoE を上げた瞬間に IPv6 が全部消えます)
+uci set network.wan_dev=device
+uci set network.wan_dev.name='eth1'
+uci set network.wan_dev.ipv6='1'
+
+# ② 送信元制限付きの既定経路をやめる (これが無いと名前解決が死にます。§9-B)
+uci set network.wan6.sourcefilter='0'
+uci commit network
+
+# ③ DNS リバインド保護からラボのドメインを除外する (§9-C)
+uci add_list dhcp.@dnsmasq[0].rebind_domain='lab.example'
+uci commit dhcp
+/etc/init.d/dnsmasq restart
+```
+
+**(c) 方式ごとの WAN 設定** — 検証する方式のものだけ有効にします
+
+```sh
+# --- MAP-E ---
+uci set network.wanmap=interface
+uci set network.wanmap.proto='map'
+uci set network.wanmap.maptype='map-e'
+uci set network.wanmap.peeraddr='2001:db8:9999::1'
+uci set network.wanmap.ipaddr='198.51.100.0'
+uci set network.wanmap.ip4prefixlen='24'
+uci set network.wanmap.ip6prefix='2001:db8:1000::'
+uci set network.wanmap.ip6prefixlen='40'
+uci set network.wanmap.ealen='16'
+uci set network.wanmap.psidlen='8'
+uci set network.wanmap.offset='4'
+uci set network.wanmap.encaplimit='ignore'
+uci set network.wanmap.mtu='1460'
+uci set network.wanmap.tunlink='wan6'
+uci commit network
+uci add_list firewall.@zone[1].network='wanmap'
+uci commit firewall
+/etc/init.d/network reload && /etc/init.d/firewall reload
+
+# --- DS-Lite ---
+uci set network.wandsl=interface
+uci set network.wandsl.proto='dslite'
+uci set network.wandsl.peeraddr='2001:db8:8888::1'
+uci set network.wandsl.mtu='1460'
+uci set network.wandsl.tunlink='wan6'
+uci commit network
+uci add_list firewall.@zone[1].network='wandsl'
+uci commit firewall
+/etc/init.d/network restart
+
+# --- PPPoE (Phase 0 の再現用) ---
+uci set network.wanppp=interface
+uci set network.wanppp.proto='pppoe'
+uci set network.wanppp.device='eth1'
+uci set network.wanppp.username='user1@isp-a.example'
+uci set network.wanppp.password='pass1'
+uci set network.wanppp.ipv6='0'
+uci commit network
+uci add_list firewall.@zone[1].network='wanppp'
+uci commit firewall
+/etc/init.d/firewall reload
+ifup wanppp
+```
+
+**方式の切替は `disabled` で行います**(消さずに残しておくと戻すのが速い):
+
+```sh
+uci set network.wanmap.disabled='1'    # MAP-E を止める
+uci set network.wandsl.disabled='0'    # DS-Lite を使う
+uci commit network && /etc/init.d/network restart
+```
+
+**MAP-E の期待値照合**(ここが最初の確認ポイント):
+
+| 項目 | 期待値(PD 方式) | 確認コマンド |
+|---|---|---|
+| 共有 IPv4 | `198.51.100.10/32` | `ip -4 addr show dev map-wanmap` |
+| 先頭ポートブロック | `4176-4191` | `nft list ruleset \| grep snat` |
+| MTU | 1460 | `ip link show map-wanmap` |
+
+**RA 方式に切り替えた場合は期待値が変わります**([build.md](build.md) §3 の表)。
+NGN 側を `ra` にしたら **BR も張り替えが必要**です:
+
+```bash
+sudo CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 \
+  ./ipoe/vne/setup-map-br.sh
+```
+
+### 5.4 BRAS(約 66 秒。accel-ppp をソースビルドするため)
+
+```bash
+sudo ./ipoe/bras/setup-bras.sh
+```
+
+期待される出力(末尾):
+
+```
+[BRAS] PPPoE 待受開始 (<NIC名>, AC=LAB-BRAS)。セッション確認: accel-cmd show sessions
+```
+
+> **注意**: このスクリプトは自分で既定経路を INET-SIM 側へ奪います。
+> **2 回目以降の実行では冒頭の `apt-get update` がタイムアウトします**(数分固まります)。
+> パッケージ導入済みなら待てば完走します。急ぐなら先に
+> `sudo ip route del default via 203.0.113.80` してください。
+
+### 5.5 LAB-CLIENT(約 12 秒)
+
+```bash
+sudo ./ipoe/client/setup-client.sh
+```
+
+**出力の最後に次の 2 行が出ることを確認してください。**ここが `注意:` になっている場合、
+以降の検証結果は信用できません。
+
+```
+[client] OK: 既定経路が CPE 側 (<NIC名>) を向いています
+[client] OK: LAN 側にグローバル IPv6 が付いています (RA 受信できている)
+```
+
+> 実行後、このクライアントからは**本物のインターネットに出られなくなります**
+> (ラボとしては正しい状態)。管理は IPv6 リンクローカルで継続できます。
+
+---
+
+## 6. 動作確認
+
+**LAB-CLIENT で**実行します。
+
+```bash
+./ipoe/tests/run-checks.sh | tee $(date +%Y%m%d-%H%M)-checks.log
+```
+
+**期待される出力(MAP-E / DS-Lite とも `PASS=10 FAIL=0`)**:
+
+```
+--- 疎通 ---
+PASS: IPv4 ping (203.0.113.80)
+PASS: IPv6 ping (2001:db8:cafe::80)
+--- DNS ---
+PASS: A 解決 (www.lab.example)
+PASS: AAAA 解決 (www.lab.example)
+--- HTTP 到達性 (応答に出口アドレスが表示される) ---
+lab-inet OK
+src: 198.51.100.10          ← MAP-E なら共有 IPv4 が出る (ここが確認ポイント)
+host: 203.0.113.80
+PASS: HTTP over IPv4
+PASS: HTTP over IPv6
+--- 大サイズ TCP 転送 ---
+PASS: TCP 5MB over IPv4
+PASS: TCP 5MB over IPv6
+--- フラグメント ---
+PASS: IPv4 fragment (2000B)
+PASS: IPv6 fragment (2000B)
+--- MTU 実測 ---
+INFO: payload 1472 不可
+INFO: IPv4 パス MTU >= 1460 (payload 1432 通過)     ← 1460 が期待値
+=== 結果: PASS=10 FAIL=0 ===
+```
+
+**`src:` の行がいちばん重要です。** ここが共有 IPv4(`198.51.100.10`)になっていれば
+MAP-E が成立しています。クライアントの私設アドレスがそのまま出ている場合は
+CPE を通っていない可能性があります(§9-F)。
+
+---
+
+## 7. スナップショット取得
+
+**全 VM を「メモリ込み」で取得します。** 障害注入や壊す系の検証後に数秒で戻せることが、
+このラボの価値の半分です。
+
+> setup スクリプトが投入するアドレス・経路・トンネル・nft は**ランタイム設定**です
+> (永続なのは sysctl と systemd unit のみ)。電源 OFF からの復元や再起動後は
+> **該当 VM の setup スクリプトを再実行**してください。
+
+---
+
+## 8. 実機 CPE の接続と検証
+
+1. 物理スイッチに実機を接続(PG-ACCESS のアップリンク物理 NIC と同じスイッチ)
+2. 実機側で IPoE(RA または DHCPv6-PD)を設定し、**WAN 側 IPv6 アドレスを確認**
+3. **VNE 側のトンネルを実機向けに張り替える**
+
+```bash
+# DS-Lite
+sudo CE_WAN6=<実機のWAN側IPv6> ./ipoe/vne/setup-aftr.sh
+
+# MAP-E (期待値は build.md §3 の表から取る)
+sudo CE_MAP_ADDR=<実機のMAPアドレス> CE_SHARED_V4=<共有IPv4> ./ipoe/vne/setup-map-br.sh
+```
+
+4. **PD 方式で CE を入れ替えるときは Kea のリースを消します**(同じプレフィックスを渡すため)
+
+```bash
+sudo systemctl stop kea-dhcp6-server
+sudo rm -f /var/lib/kea/kea-leases6.csv*
+sudo systemctl start kea-dhcp6-server
+```
+
+5. `run-checks.sh` を流して PASS を確認
+
+**機種ごとの可否**(調査 + 自宅実測):
+
+| 機種 | IPoE(RA/PD) | PPPoE | DS-Lite | MAP-E |
+|---|---|---|---|---|
+| Cisco 892FJ(classic IOS 15.x) | ○ | ○ | ○ | **×**(classic IOS に CE 機能なし) |
+| IOS XE(C1100 系 / Cat8000v) | ○ | ○ | ○ | **○**(`nat64 map-e domain` / `nat64 provisioning mode jp01` を確認済み) |
+| OpenWrt | ○ | ○ | ○ | ○ |
+
+> **892FJ は MAP-E ができません。** MAP-E の CE 役は OpenWrt か IOS XE 機に割り当ててください。
+> IOS XE の MAP-E CLI は自宅の CML(Cat8000v / IOS XE 17.15.01a)で**実装ありを確認済み**です
+> ([build-log.md §3.5-A](build-log.md))。ただし確認したのは**パーサに実装があること**までで、
+> 実際のカプセル化や期待値の一致は未検証です。
+
+---
+
+## 9. トラブルシューティング(自宅で実際に踏んだもの)
+
+### 9-A. `opkg update` が全リポジトリで失敗する
+
+**症状**: 管理 NIC で IPv4 の到達性があるのに、`opkg update` が全部落ちる。
+
+```
+Connecting to 2a04:4e42:8c::644:80
+Connection error: Connection failed
+* opkg_download: ... wget returned 4.
+```
+
+**原因**: CPE が「グローバル IPv6 を持っているのに、そのアドレスでは外に出られない」状態。
+OpenWrt の PD 既定経路は**送信元制限付き**で入ります。
+`uclient-fetch`(OpenWrt の `wget`)は AAAA を選ぶと **A へフォールバックしません**。
+
+**対処**: `ifdown wan6` してから `opkg`、終わったら `ifup wan6`(§5.3)。
+
+### 9-B. ping は通るのに名前解決だけ死ぬ(その 1: CPE 側)
+
+**症状**: `run-checks.sh` の DNS 2 項目だけが FAIL。CPE から DNS サーバに ping は通る。
+
+```
+ping -c2 2001:db8:cafe::53                → 0% packet loss
+nslookup www.lab.example 2001:db8:cafe::53 → connection timed out
+ip -6 route get 2001:db8:cafe::53         → Network unreachable
+```
+
+**原因**: 送信元制限付きの既定経路。**CPE 自身が発信する UDP** は送信元未定のまま
+経路探索されて失敗します。ping は別経路(ICMP ソケット)なので通ってしまい紛らわしい。
+
+**対処**: `uci set network.wan6.sourcefilter='0'`(§5.3-b)。
+
+### 9-C. ping は通るのに名前解決だけ死ぬ(その 2: リバインド保護)
+
+**症状**: 9-B を直しても、クライアントからの名前解決だけ失敗する。
+ただし**所要時間が数秒から数十ミリ秒に変わる**(タイムアウトではなく即失敗になる)。
+
+```
+logread | grep dnsmasq
+→ possible DNS-rebind attack detected: www.lab.example
+```
+
+**原因**: ラボはドキュメント用アドレス(`2001:db8::/32` / `203.0.113.0/24`)を使うため、
+OpenWrt の `rebind_protection`(既定 1)が応答を破棄します。**ラボを使う限り必ず踏みます。**
+
+**対処**: `uci add_list dhcp.@dnsmasq[0].rebind_domain='lab.example'`(§5.3-b)。
+
+### 9-D. ping は通るのに名前解決だけ死ぬ(その 3: DNS サーバ側)
+
+**症状**: DNS サーバ(INET-SIM)で `tcpdump` してもクエリが**見えない**。
+なのにクライアントからは届いているはず。
+
+**原因**: dnsmasq が **INET 側インタフェースしか listen していない**と、
+CPE からのクエリ(NGN 経由 = **CORE 側**に着く)を黙って捨てます。
+INET 側で `tcpdump` しても見えないのは、そもそも CORE 側に来ているからです。
+
+**対処**: 現在の `setup-inet.sh` は CORE 側も listen するよう修正済みです。
+手動で設定する場合は `/etc/dnsmasq.d/lab.conf` に `interface=<CORE側NIC>` を追加。
+
+**切り分けのコツ**: DNS サーバ側は `tcpdump -i any` で見てください。
+インタフェースを決め打ちすると、この種の問題は見えません。
+
+### 9-E. PPPoE を上げた瞬間に IPv6 が全部消える
+
+**症状**: `ifup wanppp` の後、`wan6` が上がらない。`eth1` からリンクローカルまで消える。
+
+```
+odhcp6c: Failed to send RS (Network unreachable)
+cat /proc/sys/net/ipv6/conf/eth1/disable_ipv6 → 1
+```
+
+**原因**: netifd が PPPoE の搬送路にした物理 NIC の IPv6 を無効化します。
+**RA 自体は届いています**(`tcpdump -ni eth1 "icmp6[icmp6type]==134"` で確認可能)。
+「届かない」のではなく「受け取れない設定になる」のが問題です。
+
+**対処**: `network.wan_dev` に `option ipv6 '1'`(§5.3-b)。
+
+### 9-F. `run-checks.sh` が PASS するのに実は CPE を通っていない
+
+**症状**: PASS するが、`src:` の行にクライアントの管理 LAN アドレスが出る。
+
+**原因**: クライアントの既定経路が管理 LAN を向いたまま。
+
+**対処**: `sudo ./ipoe/client/setup-client.sh` を実行し、
+「既定経路が CPE 側を向いています」の行を確認(§5.5)。
+
+### 9-G. 検証機を社内 LAN に出せない場合
+
+`map` / `ds-lite` の導入(§5.3-a)には社内 LAN への一時接続が必要です。
+ポリシー上不可の場合は、**パッケージを事前に導入したイメージ**を用意してください。
+自宅など外に出られる環境で §5.3-a を実施し、その VM をエクスポートして持ち込みます。
+
+### 9-H. その他の実測メモ
+
+- **BusyBox には `timeout` と `ip -d` がありません。** CPE 上では
+  `tcpdump -c <数>` と `ip link show` を使ってください
+- **`accel-ppp` の認証は PAP でネゴされます。** `chap-secrets` はファイル名(認証情報ストア)
+  であって認証方式名ではありません
+- **CPE の `br-lan` に降りるのは `/64` ではなく `/60`**(OpenWrt 既定の `ip6assign '60'`)。
+  動作としては正常です
+- **DS-Lite で AFTR の NAT が効かない構成があります。** VNE と INET-SIM を同一 VM に
+  同居させると、宛先がローカル配送になり masquerade が当たりません。
+  **会社の 5 VM 構成(INET-SIM を分ける)では発生しません**が、
+  「網側 NAT だからポート開放できない」を実演するときは分離構成にしてください
+
+---
 
 ## 参照
 
 - 設計全体: [README.md](README.md)
 - 構築手順の詳細(考え方): [build.md](build.md)
+- 実走の全記録(症状と原因の一次情報): [build-log.md](build-log.md)
 - Proxmox 側の構築記録: [proxmox-prototype.md](proxmox-prototype.md)
-- VMware との差分: [proxmox-prototype.md §6](proxmox-prototype.md)
+- 検証マトリクス / 障害再現レシピ: [test-matrix.md](test-matrix.md)
