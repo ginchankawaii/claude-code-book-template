@@ -79,8 +79,16 @@ if [ "$MODE" = "destroy" ]; then
   for vmid in "${VMIDS[@]}"; do
     qm status "$vmid" >/dev/null 2>&1 || continue
     if ! vm_is_ours "$vmid"; then
-      echo "  VM ${vmid} ($(vm_name "$vmid")): このスクリプトの作成物ではないためスキップ" >&2
-      continue
+      # 所有印のタグは作成の **最後** に付くため、途中で失敗した VM は「名前は一致するが
+      # タグなし」で残る。ここでタグだけを見てスキップすると、作成側が出す
+      # 「'$0 destroy' で掃除するか手動確認を」に従っても消えず、堂々巡りになる。
+      # 名前が一致するものは作りかけとみなして削除対象に含める。
+      if [ "$(vm_name "$vmid")" = "$(lab_name_of "$vmid")" ]; then
+        echo "  VM ${vmid} ($(vm_name "$vmid")): タグなし (作成途中とみなして削除します)" >&2
+      else
+        echo "  VM ${vmid} ($(vm_name "$vmid")): このスクリプトの作成物ではないためスキップ" >&2
+        continue
+      fi
     fi
     qm stop "$vmid" --timeout 60 >/dev/null 2>&1 || true
     if qm destroy "$vmid" --purge; then
@@ -274,7 +282,10 @@ else
 fi
 
 # --- 容量 (VM 5 台で概ね 50-60GB 使う) ---
-SAVAIL_KB="$(echo "$SLINE" | awk '{print $5}')"
+# pvesm status の列は  Name Type Status Total Used Available %  なので空きは $6。
+# $5 は Used で、これを空きとして読むと「満杯のストレージほど空きが多い」と
+# 誤報告して 70GB 未満の警告をすり抜ける
+SAVAIL_KB="$(echo "$SLINE" | awk '{print $6}')"
 if [ -n "$SAVAIL_KB" ] && [ "$SAVAIL_KB" -gt 0 ] 2>/dev/null; then
   SAVAIL_GB=$((SAVAIL_KB / 1024 / 1024))
   echo "  ${STORAGE} の空き: 約 ${SAVAIL_GB}GB (VM 5 台で 50-60GB 使用)"

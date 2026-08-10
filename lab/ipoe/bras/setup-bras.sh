@@ -18,7 +18,14 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y nftables tcpdump
 if ! command -v accel-pppd >/dev/null 2>&1; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential cmake git \
     libpcre2-dev libssl-dev linux-headers-generic
-  git clone --depth 1 https://github.com/accel-ppp/accel-ppp.git /usr/local/src/accel-ppp
+  # clone 済みなら再取得しない。初回の cmake/make がメモリ不足などで失敗すると
+  # ディレクトリだけ残るため、無条件に clone すると再実行が
+  #   fatal: destination path '/usr/local/src/accel-ppp' already exists
+  # で毎回止まる (accel-pppd が入っていないので 18 行目の判定はすり抜ける)
+  if [ ! -d /usr/local/src/accel-ppp/.git ]; then
+    rm -rf /usr/local/src/accel-ppp
+    git clone --depth 1 https://github.com/accel-ppp/accel-ppp.git /usr/local/src/accel-ppp
+  fi
   cmake -S /usr/local/src/accel-ppp -B /usr/local/src/accel-ppp/build \
     -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_IPOE_DRIVER=FALSE -DBUILD_VLAN_MON_DRIVER=FALSE \
     -DRADIUS=TRUE -DSHAPER=FALSE

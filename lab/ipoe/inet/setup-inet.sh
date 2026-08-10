@@ -87,8 +87,13 @@ server {
     }
 }
 EOF
-systemctl enable --now nginx && systemctl restart nginx
-systemctl enable --now dnsmasq && systemctl restart dnsmasq
+# `A && B` と書かないこと。set -e は && リストの最後以外の失敗では終了しないため、
+# enable が失敗しても restart がスキップされるだけでスクリプトは進み、
+# 下の成功バナーを出して exit 0 してしまう (起動していないのに成功に見える)
+systemctl enable --now nginx
+systemctl restart nginx
+systemctl enable --now dnsmasq
+systemctl restart dnsmasq
 
 echo "[INET-SIM] http://203.0.113.80 / http://[2001:db8:cafe::80] / DNS 203.0.113.53"
 echo "  MTU/MSS 検証用: /big.bin (5MB)"

@@ -41,11 +41,14 @@ if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --git-dir >/d
   echo "[deploy] リポジトリ: $(git -C "$REPO_ROOT" rev-parse --short HEAD) ($(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD))"
 fi
 
+# chmod の `|| true` は必ず { } で囲むこと。囲まないと `A && B && C || true` の
+# `|| true` が **連鎖全体**にかかり、tar の失敗 (ディスクフル・権限・ストリーム破損) まで
+# 飲み込んで exit 0 になる。配布できていないのに「OK」と出るのがいちばん危ない。
 deploy_host() {
   echo "[deploy] ${PVE_USER}@${PVE_HOST}:${HOST_DIR}/lab/ipoe へ配布"
   tar cz -C "${REPO_ROOT}/lab" ipoe \
     | ssh "${SSH_OPTS[@]}" "${PVE_USER}@${PVE_HOST}" \
-        "mkdir -p '${HOST_DIR}/lab' && tar xz -C '${HOST_DIR}/lab' && chmod +x '${HOST_DIR}'/lab/ipoe/*/*.sh 2>/dev/null || true"
+        "mkdir -p '${HOST_DIR}/lab' && tar xz -C '${HOST_DIR}/lab' && { chmod +x '${HOST_DIR}'/lab/ipoe/*/*.sh 2>/dev/null || true; }"
   echo "  ホスト: OK"
 }
 
@@ -67,7 +70,7 @@ deploy_vms() {
     # -n は必須: 付けないと ssh が while の stdin (<<< "$lls") を読み尽くし、
     # 2 台目以降のループが回らず「1 台だけ配って正常終了」する
     if ssh -n "${SSH_OPTS[@]}" "${PVE_USER}@${PVE_HOST}" \
-         "tar cz -C '${HOST_DIR}/lab' ipoe | ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 ${CIUSER}@'${ll}' 'tar xz -C ~ && chmod +x ~/ipoe/*/*.sh 2>/dev/null || true'"; then
+         "tar cz -C '${HOST_DIR}/lab' ipoe | ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 ${CIUSER}@'${ll}' 'tar xz -C ~ && { chmod +x ~/ipoe/*/*.sh 2>/dev/null || true; }'"; then
       echo "  ${ll}: OK"
       n=$((n+1))
     else
