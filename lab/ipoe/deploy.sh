@@ -64,7 +64,9 @@ deploy_vms() {
   while read -r ll; do
     [ -n "$ll" ] || continue
     # ホスト上で tar を展開して VM に流す (作業機から VM のリンクローカルには届かないため)
-    if ssh "${SSH_OPTS[@]}" "${PVE_USER}@${PVE_HOST}" \
+    # -n は必須: 付けないと ssh が while の stdin (<<< "$lls") を読み尽くし、
+    # 2 台目以降のループが回らず「1 台だけ配って正常終了」する
+    if ssh -n "${SSH_OPTS[@]}" "${PVE_USER}@${PVE_HOST}" \
          "tar cz -C '${HOST_DIR}/lab' ipoe | ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 ${CIUSER}@'${ll}' 'tar xz -C ~ && chmod +x ~/ipoe/*/*.sh 2>/dev/null || true'"; then
       echo "  ${ll}: OK"
       n=$((n+1))
