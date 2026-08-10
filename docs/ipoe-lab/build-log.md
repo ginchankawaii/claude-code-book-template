@@ -288,6 +288,51 @@ OpenWrt については **vmbr4 側の MAC を vmbr0 の近隣キャッシュか
   管理ブリッジ経由で外に出られるようにする。**既定を 0 にしたのは、会社環境で
   検証機を社内 LAN に足を出すことがポリシー上の問題になりうるため**。
   必要なときだけ明示的に有効化する。
+
+**手順 6: SSH と NIC 名の確認(成功条件 2 / 3)**
+
+```
+ssh labadmin@fe80::be24:11ff:fee5:631b%vmbr0 'hostname; ip -br link'
+```
+
+4 台すべて SSH 成功。NIC 名の実測値:
+
+| VM | 管理 | ラボ側 |
+|---|---|---|
+| 9001 ngn-sim | `eth0` | `ens19`(02:ac:…:01) / `ens20`(02:c0:…:01) |
+| 9002 vne-inet | `eth0` | `ens19`(02:c0:…:02) / `ens20`(02:1e:…:02) |
+| 9003 bras | `eth0` | `ens19`(02:ac:…:03) / `ens20`(02:1e:…:03) |
+| 9004 lab-client | `eth0` | `ens19`(02:c1:…:04) |
+
+**設計時に想定した `eth1` / `eth2` とは一致しなかった。** `eth0` + `ens19` / `ens20` という
+混在パターンで、MAC 判別方式にしていなかったら全スクリプトが動かなかった。
+`detect-ifs.sh` を上の 4 パターンで検証し、いずれも正しく解決することを確認済み
+(ラボ側 NIC はこの時点では DOWN。各 setup スクリプトが `ip link set up` する)。
+
+**⑥ 検証クライアント (9004) を設定するスクリプトが存在しなかった**
+
+`setup-ngn.sh` / `setup-map-br.sh` / `setup-aftr.sh` / `setup-inet.sh` / `setup-bras.sh` は
+あるが、**クライアント用が無い**。cloud-init は管理NIC (`eth0`) しか設定しないので、
+LAN 側 (`ens19`) は **DOWN のまま誰も上げない**。
+
+さらに深刻なのは経路で、既定経路が管理NIC側(家庭 LAN)を向いたままだと
+**`run-checks.sh` の通信が CPE を通らずに家庭 LAN へ抜けてしまい、検証にならない**。
+「PASS したのに実は CPE を通っていない」という最悪の偽陽性になる。
+
+→ `lab/ipoe/client/setup-client.sh` を新規作成:
+
+- `detect-ifs.sh` に `LAN_IF`(`02:c1:*`)を追加して LAN 側 NIC を解決
+- netplan で **MAC 一致**の設定を書く(NIC 名は環境で変わるため)。
+  `dhcp4: true` + `accept-ra: true` + `route-metric: 50`
+  (cloud-init 管理の `eth0` より小さい metric にして既定経路を CPE 側に寄せる)
+- **既定経路を切り替える前に** `curl` / `ping` の不足を導入する
+  (切り替え後は外に出られなくなるため、順序が重要)
+- 適用後に「既定経路が LAN 側を向いているか」「グローバル IPv6 が付いたか」を自己判定して表示
+- `revert` / `show` モードを用意
+
+**副作用として正しい性質**: 既定経路を CPE 側に向けてもクライアントの管理は
+**IPv6 リンクローカルで継続できる**(リンクローカルは既定経路を使わない)。
+`ips` モードでリンクローカル管理に寄せていたことが、ここで効いた。
 - §3.1 のトラッカー B1/B2/B3/B6 を更新、B7/B8 を追加
 - 持ち込み方法を `git clone` 前提から **tar アーカイブ展開**に確定(ホストに git が無いため)。
   この方法は会社環境でもそのまま使えるので、runbook の手順 1 に採用する
@@ -326,12 +371,14 @@ OpenWrt については **vmbr4 側の MAC を vmbr0 の近隣キャッシュか
 | B2 | VMID 9001-9004 / 9010 が空いている | `qm list` | **OK** VMID 100 (CML) のみ存在 |
 | B3 | `vmbr1`〜`vmbr4` が未使用(CML と衝突しない) | `provision.sh preflight` | **OK** すべて未使用。vmbr0 のみ存在 |
 | B4 | `bridge-mcsnoop 0` が実際に効いて RA が通る | VM 間で `ping6` / `tcpdump` で RA 受信 | 設定値は **vmbr1-4 すべて 0** を確認。実際に RA が通るかはサイクル 2 で確認 |
-| B5 | `detect-ifs.sh` の MAC 判定が Ubuntu 24.04 で機能する | VM 内で `. detect-ifs.sh; echo $ACCESS_IF` | |
+| B5 | `detect-ifs.sh` の MAC 判定が Ubuntu 24.04 で機能する | VM 内で `. detect-ifs.sh; echo $ACCESS_IF` | **OK** 実測 NIC 名は `eth0`/`ens19`/`ens20` で想定と違ったが、MAC 判別なので 4 パターンすべて解決。`LAN_IF`(02:c1)を追加 |
 | B6 | `import-from`(PVE 9.1)でディスク取り込みが通る | provision.sh の出力 | **OK** 5 台すべて作成・起動できた |
 | B7 | ホストからイメージをダウンロードできる(`wget` で Ubuntu 600MB / OpenWrt 50MB) | provision.sh の出力 | **OK** Ubuntu 595MB/46秒、OpenWrt 13MB/8秒。ただし展開で gzip 終了コード 2 → スクリプト即死(修正済み) |
 | B8 | `nic11` は何に使われているか(QNAP 10G と推定)。サイクル 4 で誤って使わないため | `ip -4 addr show nic11` / `cat /etc/network/interfaces` | |
 | B9 | `snippets` 対応ストレージが無く guest-agent が入らない | 完了メッセージの注意書き | **該当**。`provision.sh ips`(IPv6 リンクローカル)で代替。guest-agent が必要なら `pvesm set local --content iso,vztmpl,backup,snippets` + 作り直し |
 | B10 | `provision.sh ips` が 4 台(+OpenWrt)を検出できる | `./provision.sh ips` | **OK**(Linux 4 台)。OpenWrt は管理NICが無いので対象外。net0 決め打ちのバグを修正済み |
+| B11 | 4 台すべてに SSH で入れる | `ssh labadmin@fe80::…%vmbr0` | **OK** 鍵認証で 4 台とも成功 |
+| B12 | クライアント (9004) の LAN 側が設定される | `setup-client.sh` → `ip route show default` | **スクリプトが存在しなかった**ため新規作成。**実行はサイクル 2 で検証** |
 
 ### 3.2 IPv6 の配布(サイクル 2)
 
