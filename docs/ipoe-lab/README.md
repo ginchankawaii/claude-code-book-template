@@ -6,7 +6,7 @@ NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネッ�
 - 構築手順: [build.md](build.md)
 - 検証マトリクス・切替シナリオ・トラブル再現レシピ: [test-matrix.md](test-matrix.md)
 - **Proxmox プロトタイプ手順(自宅検証用)**: [proxmox-prototype.md](proxmox-prototype.md)
-- **会社 VMware 構築ランブック(手動作業用・**サイクル 1〜3 の実走をもとに執筆済み**)**: [runbook-vmware.md](runbook-vmware.md)
+- **会社 VMware 構築ランブック(手動作業用・**サイクル 1〜3・5 の実走をもとに執筆済み**)**: [runbook-vmware.md](runbook-vmware.md)
 - 事例調査ノート(実例・失敗談と設計への反映): [research-notes.md](research-notes.md)
 - **構築ログ / PDCA 記録(実走の記録・未検証項目トラッカー・CE 入替手順)**: [build-log.md](build-log.md)
 - **勉強会「虎の巻」(教科書 × ラボ 連動学習ガイド)**: [study-guide.md](study-guide.md)
@@ -138,7 +138,7 @@ NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネッ�
 
 **非対称性に注意**: ラボの網側(Kea/radvd/accel-ppp)は既定では実網 NGN より寛容です。つまり「ラボで FAIL → 現場でも FAIL」はほぼ確実に言えますが、**「ラボで PASS → 現場でも PASS」は保証されません**(実網には DUID-LL 限定・セッション数制限などの癖がある)。
 
-再現できる癖のうち、**BRAS の二重セッション拒否は既定で有効**、**Kea の DUID-LL 限定は既定で無効(opt-in)**です。後者を既定で切っているのは、CPE が既定で DUID-LLT を送ることが多く、最初の疎通確認で切り分けが難しくなるためです([test-matrix.md](test-matrix.md) §3 Phase 1 の手順 5 に有効化方法)。**ラボを一度通したら、実網に近づけるために有効化することを推奨します。**
+再現できる癖のうち、**BRAS の二重セッション拒否は既定で有効**、**Kea の DUID-LL 限定は既定で無効(opt-in)**です。後者を既定で切っているのは、最初の疎通確認で切り分けが難しくなるためです([test-matrix.md](test-matrix.md) §3 Phase 1 の手順 5 に有効化方法)。**ただしサイクル 5 の実測では、OpenWrt は DUID-LL を送るため DROP を有効にしても素通りしました。**参照 CE が OpenWrt のうちは有効化しても罠になりません。**実機 CPE を繋ぐ前には、DROP が無効であることを必ず確認してください**(実機の DUID 種別次第で PD が無応答になります)。
 
 ### 網羅性の担保は「運用」で行う
 

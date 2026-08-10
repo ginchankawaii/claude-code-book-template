@@ -47,7 +47,10 @@
 3. IPoE / IPv4 over IPv6 設定を投入(MAP-E なら自動計算値がラボの期待値と一致するか確認)
 4. IPv6 → IPv4 over IPv6 の順に上がることを確認
 5. PD 方式の場合、CPE が送る DHCPv6 の **DUID 種別を確認**(`tcpdump -ni <ACCESS_IF> udp port 547`)。実網 NGN は **DUID-LL しか受理せず、DUID-LLT/EN だと Solicit が無視され「無応答でハマる」** — 独立した複数の報告がある実網の癖です。
-   - ラボの Kea は**既定ではこの癖を再現しません**(OpenWrt 等は既定で DUID-LLT を送るため、最初の疎通確認で切り分けが困難になるのを避けています)
+   - ラボの Kea は**既定ではこの癖を再現しません**(最初の疎通確認で切り分けが困難になるのを避けています)
+   - **⚠ 実測(サイクル 5): OpenWrt は DUID-LL を送るため、DROP クラスを有効にしても素通りします。**
+     `client-ID hwaddr type 1 …`(= DUID-LL)。「OpenWrt は DUID-LLT を送る」という当初の想定は誤りでした。
+     **OpenWrt を CE にしている限りこの罠は発動しません。**DUID-LLT を送る CPE を使うか、デモ用にテストを反転してください
    - ラボが一度通ったあとに意図的なトラップとして有効化する場合は、`kea-dhcp6.conf` の `client-classes`(DROP クラス)のコメントを外して Kea を再起動します。有効化すると実網同様の**無応答**になります
 6. 切替作業中の**常時接続セッションの断時間を計測**(SSH / VPN / VoIP 相当。PPPoE 断でいつ切れ、IPoE 側でいつ張り直せるか。お客様への「何分止まるか」回答の根拠になる)
 

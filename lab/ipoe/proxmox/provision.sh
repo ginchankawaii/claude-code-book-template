@@ -322,6 +322,26 @@ EOF
     if [ "$(cat "/sys/class/net/${br}/bridge/multicast_snooping" 2>/dev/null || echo 0)" = "1" ]; then
       echo "  警告: ${br} は multicast snooping 有効。RA/DHCPv6 が VM に届かず IPv6 が死にます" >&2
     fi
+    # **uplink の指定は既存ブリッジにも反映する。**
+    # ここを素通りさせると、実機 CPE を繋ぐとき (サイクル 4) に
+    # `ACCESS_UPLINK=<物理NIC> ./provision.sh` を案内どおり再実行しても何も起きず、
+    # 「実機を繋いだのに RA も PPPoE も見えない」で物理層を延々疑うことになる。
+    if [ "$up" != "none" ]; then
+      if [ ! -e "/sys/class/net/${up}" ]; then
+        echo "  ERROR: uplink 用の ${up} が存在しません (ip -br link で名前を確認してください)" >&2
+        exit 1
+      fi
+      if [ -e "/sys/class/net/${br}/brif/${up}" ]; then
+        echo "  ${br}: 既存 (ラボ用)。uplink ${up} は既に接続済み"
+      else
+        ip link set "$up" up
+        ip link set "$up" master "$br"
+        echo "  ${br}: 既存 (ラボ用) に uplink ${up} を追加しました"
+        echo "        注意: これはランタイム設定です。再起動後も残すには" >&2
+        echo "              /etc/network/interfaces の ${br} の bridge-ports を ${up} に変更してください" >&2
+      fi
+      return
+    fi
     echo "  ${br}: 既存 (ラボ用) のためスキップ"
     return
   fi

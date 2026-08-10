@@ -1,8 +1,8 @@
 # 構築ログ / PDCA 記録
 
-**現在サイクル 1〜3・5 と H3 が完了しています**(VM 起動 → IPv6 配布 → **MAP-E / DS-Lite で IPv4 が通り
+**現在サイクル 1〜3・5・6 と H3 が完了しています**(VM 起動 → IPv6 配布 → **MAP-E / DS-Lite で IPv4 が通り
 `run-checks.sh` が両方式で `PASS` するところまで**実測済み)。
-トラブル再現レシピ(R1/R3/R4/R5)まで実走済み。runbook も執筆済みです(Box バンドルのみ未着手)。
+トラブル再現レシピ(R1/R2/R3/R4/R5/R6/D1 の 7 件)まで実走済み。runbook 執筆と持ち込みバンドルも完了。
 **次は実機 CPE の収容(サイクル 4)です。**
 動かせば必ず設計と食い違う箇所が出ます。それを場当たりに直して忘れるのではなく、
 **1 サイクルずつ記録して次に活かす**ためのファイルです。
@@ -1530,7 +1530,7 @@ fi
 
 ---
 
-### サイクル 4・6
+### サイクル 4
 
 <!-- サイクル 1 と同じ形式で追記する -->
 
@@ -1567,7 +1567,7 @@ fi
 |---|---|---|---|
 | N1 | `setup-ngn.sh` の `apt-get` が管理経路経由で通る | 実行して完走するか | **OK** 37 秒で完走。ただし `getent hosts` は AAAA しか返さず、v6 は 3ms で ENETUNREACH → apt が IPv4 に落ちて成功。**v6 既定経路が「無い」から速く失敗した**のが効いている(OpenWrt との差は Do/Check ⑤) |
 | N2 | Kea が起動する(過去に設定ミスで起動しなかった箇所) | `systemctl status kea-dhcp6-server` | **OK** `active (running)`。`kea-dhcp6 -t` の構文検証も通過 |
-| N3 | Kea の `leases6_committed` フックが実際に経路を入れる | PD 後に `ip -6 route` に `via <CE>` が出るか | **未確定**。PD 自体は成立したが、NGN 側の復路は `setup-ngn.sh` が入れる `2001:db8:100a:500::/56 dev ens19`(on-link)で足りており、フック由来の `via <CE>` は確認していない。**サイクル 3 で IPv4 が通らない場合はここを疑う** |
+| N3 | Kea の `leases6_committed` フックが実際に経路を入れる | PD 後に `ip -6 route` に `via <CE>` が出るか | **OK(サイクル 5 で確定)** `committed 2001:db8:100a:500::/56 via fe80::ac:ff:fe00:10 dev ens19` を確認。**ただし `setup-ngn.sh` の on-link がこれを上書きしていた**(3.4-B)。NGN 再起動後はフックが次の Renew まで発火しないので注意 |
 | N4 | AppArmor 許可と `CAP_NET_ADMIN` が効いている | 上が失敗したら `journalctl -u kea-dhcp6-server` と `dmesg \| grep apparmor` | **該当なし**。`kea-dhcp6-server.service.d/pd-route.conf` が読み込まれ、Kea は正常起動。N3 が未確定のため効いているかの証明は保留 |
 | N5 | RA 方式で CPE に /64 が降る | `ip -6 addr` / `tcpdump` | **OK** `eth1` に `2001:db8:1014:300:ac:ff:fe00:10/64`、既定経路も `default from 2001:db8:1014:300::/64` |
 | N6 | PD 方式で CPE に /56 が降る | 同上 + `ip -6 route` | **OK** `ubus` で `2001:db8:100a:500::/56` を確認。`br-lan` には `/60` が切り出される(`ip6assign '60'` のため。条件文の「/64」は誤り) |

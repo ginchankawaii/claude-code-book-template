@@ -74,7 +74,7 @@ IPoE 検証ラボ 持ち込みバンドル
   - VM のエクスポート (数十 GB)
 
   いずれも会社側でダウンロードするか、別途 USB 等で持ち込んでください。
-  取得元は docs/ipoe-lab/runbook-vmware.md §0 と §3 に記載しています。
+  取得元 URL は docs/ipoe-lab/runbook-vmware.md §0 に記載しています。
 EOF
 
 # --- 5. アーカイブ化 ---

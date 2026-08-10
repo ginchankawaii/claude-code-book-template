@@ -39,8 +39,10 @@
 - [ ] **静的 MAC アドレスの割当が許可されている**こと(§3 で使います)
   - 許可されない場合は §3 の代替手順(環境変数で NIC 名を直接指定)を使います
 - [ ] 物理 L2 スイッチ 1 台(特別な設定は不要。MTU 1500 のまま)
-- [ ] Ubuntu Server 24.04 の ISO または OVA
-- [ ] OpenWrt x86/64 のイメージ(`openwrt-24.10.0-x86-64-generic-ext4-combined.img.gz`)
+- [ ] Ubuntu Server 24.04 クラウドイメージ
+      `https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img`
+- [ ] OpenWrt x86/64 のイメージ
+      `https://downloads.openwrt.org/releases/24.10.0/targets/x86/64/openwrt-24.10.0-x86-64-generic-ext4-combined.img.gz`
 - [ ] リポジトリの `lab/ipoe` 一式(§4 の方法で持ち込みます)
 
 > **検証機を社内 LAN に足を出してよいかを先に確認してください。**
@@ -271,6 +273,8 @@ uci set network.mgmt=interface
 uci set network.mgmt.device='eth2'
 uci set network.mgmt.proto='dhcp'
 uci commit network
+/etc/init.d/network reload
+#    ※ 既に ULA が配られてしまっている場合は reload では戻りません。**CPE を再起動**してください
 uci add_list firewall.@zone[1].network='mgmt'     # zone[1] = wan。DHCPサーバは立てない
 uci commit firewall
 /etc/init.d/network reload && /etc/init.d/firewall reload
@@ -310,7 +314,7 @@ uci commit dhcp
 #    IPv6 だけが黙って全滅します (IPv4 は MAP-E トンネル経由なので無傷)。
 #    実網の NGN も ULA は配りません。
 uci set network.globals.ula_prefix=''
-uci commit dhcp
+uci commit network
 /etc/init.d/dnsmasq restart
 ```
 
@@ -437,11 +441,12 @@ EXPECT_SRC4=198.51.100.10 ./ipoe/tests/run-checks.sh | tee $(date +%Y%m%d-%H%M)-
 | MAP-E(PD 方式 / ひかり電話あり) | `198.51.100.10` |
 | MAP-E(RA 方式 / ひかり電話なし) | `198.51.100.20` |
 | DS-Lite | `203.0.113.1`(AFTR で NAT された後のアドレス) |
-| PPPoE(Phase 0) | `100.64.1.0` 等(BRAS のプール。`accel-cmd show sessions` で確認) |
+| PPPoE(Phase 0) | **`203.0.113.2`**(BRAS が INET 側へ masquerade するため。`bras-nat` を削った「ISP NAT なし構成」のときだけ `100.64.1.x` になります) |
 
 **期待される出力**(`EXPECT_SRC4` 指定時は **`PASS=11 FAIL=0`**。未指定なら 10):
 
 ```
+INFO: IPv6 の送信元に 2001:db8:100a:500::cf0 を使います
 --- 疎通 ---
 PASS: IPv4 ping (203.0.113.80)
 PASS: IPv6 ping (2001:db8:cafe::80)
@@ -463,7 +468,12 @@ PASS: IPv6 fragment (2000B)
 --- MTU 実測 ---
 INFO: payload 1472 不可
 INFO: IPv4 パス MTU >= 1460 (payload 1432 通過)     ← 1460 が期待値
-=== 結果: PASS=10 FAIL=0 ===
+--- 出口アドレス (意図した経路を通っているか) ---
+INFO: 出口 IPv4 = 198.51.100.10 / 出口 IPv6 = 2001:db8:100a:500::cf0
+PASS: 出口 IPv4 が 198.51.100.10
+--- DNS フォールバック体感 ---
+INFO: http://www.lab.example/ 所要 41 ms (rc=0)
+=== 結果: PASS=11 FAIL=0 ===
 ```
 
 **`src:` の行がいちばん重要です。** ここが共有 IPv4(`198.51.100.10`)になっていれば
@@ -485,19 +495,92 @@ CPE を通っていない可能性があります(§9-F)。
 
 ## 8. 実機 CPE の接続と検証
 
+> **このセクションだけで完結するように書いてあります。**他のファイルを開かずに進められます。
+
+### 8.0 始める前のチェック(5 項目)
+
+- [ ] **旧 CE を止める。** `/56` は 1 本、BR/AFTR のトンネルは 1 対向しかありません。
+      OpenWrt-CE を繋いだままリースを消すと、Renew の速いほう(ほぼ確実に OpenWrt)が
+      唯一の `/56` を取り直し、実機に PD が降りません
+      → Proxmox なら `qm stop 9010`、VMware なら VM を停止
+- [ ] **Kea の DROP クラスが無効であることを確認。**有効のままだと、実機の DUID 種別次第で
+      **PD が無応答**になります(エラーも出ないので追えません)
+      → NGN-SIM で `grep -c '^ *"client-classes"' /etc/kea/kea-dhcp6.conf` が `0` であること
+- [ ] **物理 NIC が PG-ACCESS のアップリンクに入っていること**(§2)。
+      Proxmox で既にラボを構築済みの場合は
+      `ACCESS_UPLINK=<物理NIC> ./provision.sh` を再実行すると既存ブリッジに追加されます
+- [ ] **検証クライアントをどうするか決める**(§8.1)
+- [ ] 実機のコンソールケーブル
+
+### 8.1 検証クライアントの置き場所(先に決めること)
+
+`run-checks.sh` は **CE の配下**で実行しないと意味がありません。
+実機を CE にすると LAB-CLIENT(仮想)は OpenWrt の LAN 側にいるので**使えなくなります**。
+どちらかを選んでください。
+
+| 方式 | 必要なもの | 手順 |
+|---|---|---|
+| **(a) 物理 PC を実機の LAN ポートに直結**(推奨・簡単) | Linux が動く PC 1 台 | `lab/ipoe/tests/run-checks.sh` をコピーして実行。必要コマンドは `bash` / `curl` / `getent` / `ping` |
+| (b) 仮想クライアントを実機配下に入れる | **2 本目の物理 NIC** | その NIC を PG-CLIENT(vmbr4)のアップリンクにし、実機の LAN ポートを同じ L2 に入れる |
+
+> **(b) は物理 NIC がもう 1 本要ります。**§0 のチェックリストは PG-ACCESS 用の 1 本しか
+> 数えていないので、(b) を選ぶなら追加で確保してください。
+
+### 8.2 接続と設定
+
 1. 物理スイッチに実機を接続(PG-ACCESS のアップリンク物理 NIC と同じスイッチ)
-2. 実機側で IPoE(RA または DHCPv6-PD)を設定し、**WAN 側 IPv6 アドレスを確認**
-3. **VNE 側のトンネルを実機向けに張り替える**
+2. 実機側で IPoE を設定する
+
+**Cisco 892FJ(classic IOS)の DS-Lite 設定骨子**(お客様が同型機とは限りません。参考例):
+
+```
+ipv6 unicast-routing
+ipv6 cef
+!
+interface GigabitEthernet8            ! WAN (PG-ACCESS に繋いだポート)
+ ipv6 address autoconfig              ! RA 方式。PD 方式なら ipv6 dhcp client pd LABPD
+ ipv6 enable
+!
+interface Tunnel0
+ ip address 192.0.0.2 255.255.255.248 ! B4 側 (RFC 6333)
+ tunnel source GigabitEthernet8
+ tunnel mode ipv6                     ! IPv4 over IPv6
+ tunnel destination 2001:db8:8888::1  ! ラボの AFTR
+!
+ip route 0.0.0.0 0.0.0.0 Tunnel0      ! NAT は網側 (AFTR) なのでルータ側 NAT44 は不要
+!
+interface Vlan1                        ! LAN 側
+ ip tcp adjust-mss 1420                ! classic IOS は PMTUD 頼みだと R5 を踏みます。必須
+```
+
+> **892FJ は MAP-E ができません**(classic IOS に CE 機能がない)。
+> MAP-E の CE 役は OpenWrt か IOS XE 機(C1100 系 / Cat8000v)に割り当ててください。
+
+3. **実機の WAN 側 IPv6 アドレスを確認する**
+
+RA 方式(`autoconfig`)の場合、アドレスは EUI-64 で決まるため**事前には分かりません**。
+必ず実測してください。
+
+```
+実機側:  show ipv6 interface GigabitEthernet8        ! GUA を確認
+VNE 側:  sudo tcpdump -ni <CORE_IF> 'ip6 proto 4'    ! encap の送信元から実測する方法
+```
+
+4. **VNE 側のトンネルを実機向けに張り替える**
 
 ```bash
 # DS-Lite
 sudo CE_WAN6=<実機のWAN側IPv6> ./ipoe/vne/setup-aftr.sh
 
-# MAP-E (期待値は build.md §3 の表から取る)
+# MAP-E (IOS XE 機のとき。期待値は §5.4 の表から取る)
 sudo CE_MAP_ADDR=<実機のMAPアドレス> CE_SHARED_V4=<共有IPv4> ./ipoe/vne/setup-map-br.sh
+
+# 使わない方式は止める (残すと旧 CE 宛のトンネルが生きて切り分けを汚します)
+sudo ./ipoe/vne/setup-map-br.sh stop     # DS-Lite だけ検証するとき
+sudo ./ipoe/vne/setup-aftr.sh stop       # MAP-E だけ検証するとき
 ```
 
-4. **PD 方式で CE を入れ替えるときは Kea のリースを消します**(同じプレフィックスを渡すため)
+5. **PD 方式なら Kea のリースを消す**(同じプレフィックスを実機に渡すため)
 
 ```bash
 sudo systemctl stop kea-dhcp6-server
@@ -505,22 +588,35 @@ sudo rm -f /var/lib/kea/kea-leases6.csv*
 sudo systemctl start kea-dhcp6-server
 ```
 
-5. `run-checks.sh` を流して PASS を確認
+6. **復路が入ったことを確認する**(ここを飛ばすと「IPv4 は通るのに IPv6 だけ死ぬ」を踏みます)
 
-**機種ごとの可否**(調査 + 自宅実測):
+```bash
+# NGN-SIM で
+journalctl -t kea-pd-route -n 3          # committed ... via <実機のリンクローカル> が出ること
+ip -6 route show | grep 100a:500         # via が入っていること (dev だけなら NG)
+```
+
+### 8.3 動作確認
+
+§8.1 で決めたクライアントから実行します。**期待する出口アドレスを必ず渡してください。**
+
+```bash
+EXPECT_SRC4=203.0.113.1 ./run-checks.sh | tee $(date +%Y%m%d-%H%M)-jitsuki.log   # DS-Lite
+EXPECT_SRC4=198.51.100.10 ./run-checks.sh | tee ...                              # MAP-E (PD 方式)
+```
+
+### 8.4 機種別の可否(調査 + 自宅実測)
 
 | 機種 | IPoE(RA/PD) | PPPoE | DS-Lite | MAP-E |
 |---|---|---|---|---|
 | Cisco 892FJ(classic IOS 15.x) | ○ | ○ | ○ | **×**(classic IOS に CE 機能なし) |
 | IOS XE(C1100 系 / Cat8000v) | ○ | ○ | ○ | **○**(`nat64 map-e domain` / `nat64 provisioning mode jp01` を確認済み) |
-| OpenWrt | ○ | ○ | ○ | ○ |
+| OpenWrt | ○ | ○ | ○ | ○(ただし実効 16 ポート。§9-J) |
 
-> **892FJ は MAP-E ができません。** MAP-E の CE 役は OpenWrt か IOS XE 機に割り当ててください。
-> IOS XE の MAP-E CLI は自宅の CML(Cat8000v / IOS XE 17.15.01a)で**実装ありを確認済み**です
-> ([build-log.md §3.5-A](build-log.md))。ただし確認したのは**パーサに実装があること**までで、
-> 実際のカプセル化や期待値の一致は未検証です。
-
----
+> IOS XE の MAP-E CLI は自宅の CML(Cat8000v / IOS XE 17.15.01a)で**実装ありを確認済み**です。
+> ただし確認したのは**パーサに実装があること**までで、実際のカプセル化や期待値の一致は未検証です。
+> 会社の実機では `show version` と `show license boot level` を確認したうえで
+> `nat64 map-e ?` を打ち直してください(`network-essentials` だと出ない可能性があります)。
 
 ## 9. トラブルシューティング(自宅で実際に踏んだもの)
 
@@ -615,7 +711,75 @@ cat /proc/sys/net/ipv6/conf/eth1/disable_ipv6 → 1
 ポリシー上不可の場合は、**パッケージを事前に導入したイメージ**を用意してください。
 自宅など外に出られる環境で §5.4-a を実施し、その VM をエクスポートして持ち込みます。
 
-### 9-H. その他の実測メモ
+### 9-I. IPv6 が「たまに全滅」する(ULA フォールバック)
+
+**症状**: IPv4 は普通に通るのに IPv6 だけが全滅する。時間を置くと直ったり再発したりする。
+
+**見分け方**: `run-checks.sh` が次の警告を出します(この判定を入れてあります)。
+
+```
+警告: IPv6 の送信元に ULA (fdf9:...) が選ばれています。
+```
+
+手で見るなら:
+
+```bash
+ip -6 route get 2001:db8:cafe::80      # src が fd.. なら該当
+ip -6 addr show dev <LAN側NIC>          # GUA の preferred_lft が 0 = deprecated なら該当
+```
+
+**原因**: OpenWrt は既定で ULA(`fd00::/8`)を生成して LAN に配ります。委譲プレフィックス由来の
+GUA が deprecated になった瞬間、RFC 6724 の送信元選択が **ULA にフォールバック**します。
+ラボ内に ULA の復路は無いので、パケットは出ていくが返ってきません。
+**IPv4 は MAP-E トンネル経由で送信元選択が絡まないため無傷**で、
+「IPv4 は通るのに IPv6 だけ死ぬ」という紛らわしい形になります。
+
+**対処**: §5.4-b ④ の ULA 無効化。既に配られてしまっている場合は **CPE の再起動**が必要です
+(`ifup wan6` や `odhcpd restart` では戻りません)。
+
+### 9-J. MAP-E で同時接続が 16 で頭打ちになる(OpenWrt の癖)
+
+**症状**: 240 ポート使えるはずなのに、同時接続が 16 本で詰まる。
+
+**原因**: OpenWrt が生成する 15 本の nft `snat` ルールが**すべて同じマッチ条件**のため、
+nftables の終端判定により**先頭ブロック(4176-4191)しか使われません**。
+
+```bash
+nft list ruleset | grep ubus:wanmap    # nat 1 だけ packets が増え、nat 4 以降は 0 のまま
+```
+
+**対処**: これは**参照 CE(OpenWrt)固有の癖**であって、ラボの故障ではありません。
+実機 CE では NAT エンジンがポート集合を正しく扱うはずなので、
+**実機検証のときに必ず数え直してください**。240 は「割当の構造値」です。
+
+### 9-K. IPv4 は通るのに IPv6 だけ片方向で死ぬ(復路の on-link 上書き)
+
+**症状**: クライアントから IPv6 が出ていくが返ってこない。CPE や NGN からの ping は通る。
+**時間を置く(約 37 分)と勝手に直る。**
+
+**見分け方**: NGN-SIM で復路を見ます。
+
+```bash
+ip -6 route show | grep 100a:500
+#  via fe80::...  ← 正常 (Kea のフックが入れたもの)
+#  dev ens19      ← NG (on-link。これだと OpenWrt は NS に応答しないので復路が死ぬ)
+```
+
+**原因**: `setup-ngn.sh` は初期経路として on-link を置きますが、
+PD 方式の正しい復路は Kea のフック(`kea-pd-route.sh`)が入れる `via <CE のリンクローカル>` です。
+**NGN-SIM を再起動するとランタイム経路が消え、setup スクリプトを再実行しても
+on-link のまま**になります(フックは次の Renew = 約 37 分後まで発火しません)。
+
+**対処**: CPE 側で PD を取り直させます。
+
+```bash
+# CPE で
+ifdown wan6 && ifup wan6
+# NGN-SIM で確認
+journalctl -t kea-pd-route -n 3      # committed ... via ... が出ること
+```
+
+### 9-L. その他の実測メモ
 
 - **BusyBox には `timeout` と `ip -d` がありません。** CPE 上では
   `tcpdump -c <数>` と `ip link show` を使ってください

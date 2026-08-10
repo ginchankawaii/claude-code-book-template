@@ -18,14 +18,15 @@
 | VNE+INET | MAP-E BR + DS-Lite AFTR + Web/DNS(スクリプトを同一 VM で順に実行) | 2vCPU / 2GB |
 | BRAS | PPPoE 終端(accel-ppp をソースビルドするため 2GB 推奨) | 2vCPU / 2GB |
 | lab-client | CPE 配下の検証クライアント(`run-checks.sh` 実行用) | 1vCPU / 1GB |
+| INET-SIM(分離時のみ / 9005) | 模擬インターネット。`SPLIT_INET=1` で分離する。**R4 を検証するなら必須** | 1vCPU / 1GB |
 | OpenWrt-CE | リファレンス CPE(MAP-E / DS-Lite / PPPoE を切替) | 1vCPU / 512MB |
 | 実機 CPE | Cisco 892FJ 系(後述。物理 NIC 経由) | — |
 
-合計 8vCPU / 7.5GB 程度(`provision.sh` の割当値と一致させています)。
+合計 **8vCPU / 7.5GB**(同居時)〜 **9vCPU / 8.5GB**(`SPLIT_INET=1` で分離時)程度。`provision.sh` の割当値と一致させています。
 
 ## 0.5 いちばん早い方法: 自動構築スクリプト
 
-以下の §1〜§3 を手作業でやる代わりに、**Proxmox ホスト上で 1 コマンド**打てば「ブリッジ 4 本 + VM 5 台」が数分で立ち上がります。中身は §1〜§3 とまったく同じことをしているので、手順を理解したい場合は先に §1 以降を読んでください。
+以下の §1〜§3 を手作業でやる代わりに、**Proxmox ホスト上で 1 コマンド**打てば「ブリッジ 4 本 + VM 5 台(`SPLIT_INET=1` なら 6 台)」が数分で立ち上がります。中身は §1〜§3 とまったく同じことをしているので、手順を理解したい場合は先に §1 以降を読んでください。
 
 ```bash
 # Proxmox ホスト上で(リポジトリを clone した場所で)
@@ -59,7 +60,7 @@ sudo lab/ipoe/proxmox/provision.sh destroy
 | **事前検証** | PVE 版数・ストレージ種別とスナップショット可否・VMID 9001-9010 の衝突・既存 vmbr1-4 の用途・公開鍵・GUI 未適用のネットワーク変更をチェックし、危険なら中断 |
 | ブリッジ作成 | vmbr1(ACCESS)/ vmbr2(CORE)/ vmbr3(INET)/ vmbr4(CPE配下LAN)を `bridge-mcsnoop 0` 付きで追加。**既存の別用途ブリッジには触らず中断する**(CML の External Connector 等を汚さないため) |
 | イメージ取得 | Ubuntu 24.04 クラウドイメージと OpenWrt をダウンロード(2 回目以降はキャッシュ) |
-| VM 作成 | 9001 ngn-sim / 9002 vne-inet / 9003 bras / 9004 lab-client / 9010 openwrt-ce。cloud-init でユーザ・SSH 鍵・DHCP を設定 |
+| VM 作成 | 9001 ngn-sim / 9002 vne-inet / 9003 bras / 9004 lab-client / 9010 openwrt-ce(+ `SPLIT_INET=1` なら 9005 inet-sim)。cloud-init でユーザ・SSH 鍵・DHCP を設定 |
 | NIC 割当 | 役割ごとに**固定 MAC** を付与(`02:AC:*`=アクセス網、`02:C0:*`=NGN網内、`02:1E:*`=模擬インターネット) |
 
 **固定 MAC がなぜ効くか**: 各 setup スクリプトは [`lab/ipoe/detect-ifs.sh`](../../lab/ipoe/detect-ifs.sh) を読み込み、**MAC から役割を判別して NIC 名を自動で埋めます**。Ubuntu の NIC 名が `ens18` でも `eth1` でも、そのまま `sudo ./setup-ngn.sh pd` で動きます(VMware 側でも同じ MAC を手で設定すれば同じ仕組みが使えます)。
@@ -115,7 +116,7 @@ iface vmbr4 inet manual
 
 ## 2. VM の構築
 
-Ubuntu Server 24.04 の VM を **4 台**作り、NIC を次のとおり割当てます(net0=管理用に既存の vmbr0、net1 以降が検証用)。
+Ubuntu Server 24.04 の VM を **4 台**(`SPLIT_INET=1` 相当の分離構成なら **5 台**)作り、NIC を次のとおり割当てます(net0=管理用に既存の vmbr0、net1 以降が検証用)。
 
 | VM | net1 | net2 |
 |---|---|---|
