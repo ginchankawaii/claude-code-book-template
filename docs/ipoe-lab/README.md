@@ -70,8 +70,14 @@ NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネッ�
 | VNE | MAP-E BR と DS-Lite AFTR を両方収容 | ip6tnl, nftables | 2 / 2GB |
 | INET-SIM | 模擬インターネット(Web / DNS)。v6 だけ落とす等の障害注入も担当 | nginx, dnsmasq | 1 / 1GB |
 | OpenWrt-CE | リファレンス CPE(map / ds-lite パッケージ)。実機を持ち込む前の基準動作確認用 | OpenWrt x86 | 1 / 512MB |
+| LAB-CLIENT | **CPE 配下の検証クライアント。`run-checks.sh` を実行する** | curl, iputils | 1 / 1GB |
 
-合計 8vCPU / 8GB 程度。既存 VMware 基盤の空きで十分収まる規模です。
+合計 9vCPU / 9GB 程度。既存 VMware 基盤の空きで十分収まる規模です。
+
+> **LAB-CLIENT を省略しないでください。** 検証は「CPE を通った通信」で成立します。
+> 管理 LAN に直結したホストから `run-checks.sh` を流すと、通信が CPE を通らずに
+> 管理 LAN へ抜けてしまい、**PASS したのに実は何も検証できていない**という
+> 最悪の偽陽性になります。構築手順は [build.md §5.7](build.md) を参照。
 
 ## 5. vSwitch / ポートグループ設計
 
@@ -80,7 +86,8 @@ NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネッ�
 | PG-ACCESS | アクセス回線 L2 | **無差別モード・偽装転送・MACアドレス変更を「承諾」にする**(PPPoE と実機ブリッジに必須)。実機 CPE は物理スイッチ→物理 NIC 経由でこの PG に収容(構成図は [build.md §5.5](build.md#55-実機-cpe-の接続物理スイッチ経由))  |
 | PG-CORE | NGN 網内(IPv6 のみ) | 内部専用、アップリンク不要 |
 | PG-INET | 模擬インターネット | 内部専用、アップリンク不要 |
-| 管理 | 各 VM の eth0 | 既存の NAT / 管理ネットワークでよい |
+| PG-CLIENT | **CPE 配下の LAN**(OpenWrt-CE の LAN 側 ⇔ LAB-CLIENT) | 内部専用、アップリンク不要。ここに実機 CPE の LAN ポートも収容する |
+| 管理 | 各 VM の eth0 | 既存の NAT / 管理ネットワークでよい。**LAB-CLIENT はここに既定経路を残さないこと**(上の注意) |
 
 ## 6. アドレス計画(すべて文書用アドレス)
 

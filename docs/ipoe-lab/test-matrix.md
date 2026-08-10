@@ -83,6 +83,7 @@
 - 症状: セッション超過時に新規接続断続失敗。80/443 等の待受公開は不可
 - 切り分け: CPE の NAT テーブル使用数。ポート要件がある案件は DS-Lite でなく MAP-E でも不可 → 固定 IP 系か PPPoE 併用を提案
 - 注意: ラボの BR はポート制限を**強制しない**(制限は CE の NAT 実装依存)ため、CE の実装が甘いと症状が出ないことがある。網側で強制して確実に再現したい場合は BR(VNE)に次を追加: `nft add table ip map-enforce; nft 'add chain ip map-enforce fwd { type filter hook forward priority 0; }'; nft 'add rule ip map-enforce fwd iifname "map0" ip saddr 198.51.100.10 tcp sport != { 4176-4191 } drop'`(許可ブロックの数だけ範囲を追記。UDP も同様)
+- **戻し方(必須)**: `nft delete table ip map-enforce`。**演習後に必ず戻すこと。**残したまま次の MAP-E 検証をすると、原因の分からない断続失敗として現れます
 
 ### R4: DS-Lite でポート開放不可
 - 再現: aftr 構成でポートフォワード設定 → 外部(INET-SIM)から到達確認

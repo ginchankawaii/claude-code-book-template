@@ -5,9 +5,27 @@
 > **NIC 名の前提**: Ubuntu 24.04 の既定では NIC 名は `eth1` ではなく `ens18`/`ens160` 等(predictable naming)になります。各スクリプトは環境変数で NIC 名を上書きできます(例: `sudo ACCESS_IF=ens19 CORE_IF=ens20 ./setup-ngn.sh ra`)。`eth1` のまま使いたい場合はカーネル引数に `net.ifnames=0` を追加してください。
 設定ファイルとスクリプトは [`lab/ipoe/`](../../lab/ipoe/) にあります。各 VM にディレクトリごとコピーして実行する想定です。
 
+> **パスの読み替え**: この手順書は**リポジトリのルート基準**で `lab/ipoe/...` と書いています。
+> `deploy.sh` で配布した VM 上では **`~/ipoe/...`** に置かれるので、
+> VM 内では `sudo ./ipoe/ngn/setup-ngn.sh pd` のように読み替えてください。
+>
+> **MAC の規則**(VMware では手動で設定します。[`detect-ifs.sh`](../../lab/ipoe/detect-ifs.sh) がこれで NIC を判別します):
+>
+> | MAC の先頭 | 役割 | 変数 |
+> |---|---|---|
+> | `02:ac:*` | アクセス網(PG-ACCESS) | `ACCESS_IF` |
+> | `02:c0:*` | NGN 網内(PG-CORE) | `CORE_IF` |
+> | `02:1e:*` | 模擬インターネット(PG-INET) | `INET_IF` |
+> | `02:c1:*` | CPE 配下の LAN(PG-CLIENT) | `LAN_IF` |
+>
+> vSphere 側で**静的 MAC の割当を許可**しておく必要があります(既定では自動割当のみの場合があります)。
+> MAC を揃えられない環境では、上の表の変数を環境変数で直接指定してください。
+
 > 構築が終わったら**必ず全 VM のスナップショットを取得**してください。障害注入や壊す系の検証後に数秒で初期状態へ戻せることが、このラボの価値の半分です。
 >
 > **永続性の注意**: setup スクリプトが投入するアドレス・経路・トンネル・nft はランタイム設定です(永続なのは sysctl と systemd unit のみ)。スナップショットは**メモリ込み**で取得し、電源 OFF からの復元や再起動後は該当 VM の setup スクリプトを再実行してください(全スクリプト冪等なので再実行で復旧します)。
+>
+> **例外: `setup-bras.sh` の再実行は数分固まって見えます。** このスクリプトは自分で既定経路を INET-SIM 側へ奪う(`ip route replace default via 203.0.113.80`)ため、2 回目以降は冒頭の `apt-get update` がインターネットに出られずタイムアウトします。パッケージ導入済みなら**待てば完走します**(壊れてはいません)。急ぐなら先に `ip route del default via 203.0.113.80` してから実行してください。
 
 ## 1. NGN-SIM(NGN 網模擬)
 
@@ -30,7 +48,7 @@ sudo lab/ipoe/ngn/setup-ngn.sh pd   # ひかり電話あり相当: DHCPv6-PD 方
 sudo lab/ipoe/bras/setup-bras.sh
 ```
 
-- accel-ppp([`bras/accel-ppp.conf`](../../lab/ipoe/bras/accel-ppp.conf))が eth1 上で PPPoE を終端。認証は [`bras/chap-secrets`](../../lab/ipoe/bras/chap-secrets)(`user1@isp-a.example` / `pass1` など)。CPE 側でサービス名の入力を求められたら `lab-isp`。**空欄でも接続できます**(`accept-blank-service=1` を入れてあるため。これがないと空の Service-Name を送る CPE の PADI が破棄され「応答しない」事故になります)
+- accel-ppp([`bras/accel-ppp.conf`](../../lab/ipoe/bras/accel-ppp.conf))が eth1 上で PPPoE を終端。認証情報は [`bras/chap-secrets`](../../lab/ipoe/bras/chap-secrets)(`user1@isp-a.example` / `pass1` など)。**`chap-secrets` は accel-ppp の認証情報ストア(モジュール名)であって認証方式名ではありません**。PAP / CHAP どちらも受けられる設定で、**OpenWrt を CPE にした実測では PAP でネゴされました**(`PAP authentication succeeded`)。CPE 側でサービス名の入力を求められたら `lab-isp`。**空欄でも接続できます**(`accept-blank-service=1` を入れてあるため。これがないと空の Service-Name を送る CPE の PADI が破棄され「応答しない」事故になります)
 - **accel-ppp は Debian/Ubuntu 公式リポジトリに無い**ため、setup-bras.sh はソースからビルドします(数分)。素早く済ませたい場合の代替は VyOS の `set service pppoe-server`(中身は accel-ppp)
 - MTU/MRU 1454(フレッツ実網値。1492 で組むと実網の MSS 詰まりが再現できない)、動的プール `100.64.1.0/25` + 固定 IP `100.64.1.200`(`kotei@isp-a.example` 用。プールと重複させないため /25 にしている)、上流は eth2 → INET-SIM 経由で NAT
 - PPPoE で断続的なパケットロスが出たら、まず ACCESS 側 NIC のオフロードを無効化(`ethtool -K eth1 tso off gso off gro off`)。virtio オフロードと PPPoE の相性問題が定番原因
@@ -95,13 +113,61 @@ sudo lab/ipoe/inet/setup-inet.sh spoof-aftr   # gw.transix.jp 等 → 2001:db8:8
 
 OpenWrt x86/64 を VM 化し、WAN を PG-ACCESS、LAN を検証クライアント用 PG へ。`map` / `ds-lite` / `ppp-mod-pppoe` パッケージを導入します。
 
-```bash
-opkg update && opkg install map ds-lite
-```
+> **前提: このコマンドは、そのままでは通りません。**(サイクル 2 で実証済み)
+>
+> 1. **ラボ内にインターネットがない。** CPE は PG-ACCESS と LAN にしか足が無いので、
+>    パッケージを取りに行けません。管理用の NIC を一時的に足す必要があります
+> 2. **管理 NIC を足しても、ラボの IPv6 が降りていると `opkg` は全滅します。**
+>    PD で降りる既定経路は**送信元制限付き**(`default from <PD prefix> ...`)で入るため、
+>    CPE は「グローバル IPv6 を持っているのに、そのアドレスでは外に出られない」状態になります。
+>    OpenWrt の `wget`(`uclient-fetch`)は AAAA を選ぶと **A へフォールバックしない**ので、
+>    `wget returned 4` で全リポジトリが落ちます
+>
+> 動く手順(Proxmox の場合。VMware なら ① を「ポートグループを 1 枚追加」に読み替え):
+>
+> ```sh
+> # ① 管理NICを足す (ホットプラグで効くので VM の再起動は不要だった)
+> qm set 9010 --net2 virtio,bridge=vmbr0
+>
+> # ② OpenWrt 側: wan ゾーンの DHCP クライアントとして作る (DHCP サーバは立てない)
+> uci set network.mgmt=interface
+> uci set network.mgmt.device='eth2'
+> uci set network.mgmt.proto='dhcp'
+> uci commit network
+> uci add_list firewall.@zone[1].network='mgmt'     # zone[1] = wan
+> uci commit firewall
+> /etc/init.d/network reload
+> /etc/init.d/firewall reload
+>
+> # ③ ラボの IPv6 を一時的に落としてから opkg (これをしないと通らない)
+> ifdown wan6
+> opkg update
+> opkg install map ds-lite tcpdump-mini
+> ifup wan6
+>
+> # ④ 検証中は管理NICを無効化する (家庭/社内 LAN へ抜ける偽陽性を防ぐ)
+> uci set network.mgmt.disabled='1'
+> uci commit network
+> /etc/init.d/network reload
+> ```
+>
+> 会社環境では、検証機を社内 LAN に足を出すことがポリシー上の問題になり得ます。
+> **手順を進める前に確認してください。** `provision.sh` の `OPENWRT_MGMT` の既定が
+> `0` なのも同じ理由です。
 
 `/etc/config/network` の要点(方式ごとに wan セクションを切替):
 
 ```
+# PPPoE を使う物理NICでは IPv6 を明示的に有効化しておくこと。
+# これが無いと netifd が搬送路の物理NIC(eth1)の disable_ipv6 を 1 にするため、
+# PPPoE を上げた瞬間に IPoE 側 (wan6) が落ち、リンクローカルまで消える。
+# MAP-E / DS-Lite は下で option tunlink 'wan6' を使うので、これも道連れで死ぬ。
+# ※ NGN の RA 自体は PPPoE 中も eth1 に届いている (tcpdump で確認済み)。
+#    「届かない」のではなく「CPE 側が受け取れない設定になる」のが問題
+config device
+        option name 'eth1'
+        option ipv6 '1'
+
 # PPPoE
 config interface 'wan'
         option proto 'pppoe'
@@ -165,6 +231,28 @@ uci commit dhcp && /etc/init.d/odhcpd restart
 - **必須の注意点**: PG-ACCESS のセキュリティ 3 項目(無差別モード・偽装転送・MAC アドレス変更)を「承諾」にすること。忘れると PPPoE と実機ブリッジが動かない
 - 検証用 PC も同じスイッチに繋いでおくと、実機ルータの管理画面アクセスと `tcpdump` 相当のパケット確認(ポートミラー設定時)が同じ場所からできる
 - 検証面を複数持ちたい場合(2 案件並行など)は、物理スイッチを VLAN で分け、PG 側も VLAN ID を付けたポートグループを複数作れば、1 本の物理 NIC でアクセス網を複数本収容できる
+
+## 5.7 検証クライアント(LAB-CLIENT)
+
+**`run-checks.sh` はここで実行します。**管理 LAN に直結したホストから流してはいけません
+(通信が CPE を通らずに管理 LAN へ抜け、**PASS したのに何も検証できていない**偽陽性になります)。
+
+- NIC は 2 枚。管理(eth0)と **CPE 配下の LAN(PG-CLIENT)**。
+  MAC は `02:c1:*` にしておくと [`detect-ifs.sh`](../../lab/ipoe/detect-ifs.sh) が自動で見つけます
+- 設定はスクリプト 1 本:
+
+```bash
+sudo ./ipoe/client/setup-client.sh          # LAN 側を DHCP + RA 受信にし、既定経路を CPE 側へ寄せる
+sudo ./ipoe/client/setup-client.sh show     # 現在のアドレス・経路・DNS を表示するだけ
+sudo ./ipoe/client/setup-client.sh revert   # 元に戻す
+```
+
+- 実行後、出力の最後に **「OK: 既定経路が CPE 側 (…) を向いています」** と
+  **「OK: LAN 側にグローバル IPv6 が付いています」** の 2 行が出ることを確認してください。
+  ここが `注意:` になっている場合、以降の検証結果は信用できません
+- 既定経路を CPE 側に向けるので、このクライアントからは**本物のインターネットに出られなくなります**
+  (ラボとしては正しい状態)。管理は IPv6 リンクローカルで継続できます
+  — リンクローカルは既定経路を使わないためです
 
 ## 6. 動作確認
 

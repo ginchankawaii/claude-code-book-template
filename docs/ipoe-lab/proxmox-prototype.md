@@ -14,9 +14,9 @@
 | BRAS | PPPoE 終端(accel-ppp をソースビルドするため 2GB 推奨) | 2vCPU / 2GB |
 | lab-client | CPE 配下の検証クライアント(`run-checks.sh` 実行用) | 1vCPU / 1GB |
 | OpenWrt-CE | リファレンス CPE(MAP-E / DS-Lite / PPPoE を切替) | 1vCPU / 512MB |
-
-合計 7vCPU / 7.5GB 程度(`provision.sh` の割当値と一致させています)。
 | 実機 CPE | Cisco 892FJ 系(後述。物理 NIC 経由) | — |
+
+合計 8vCPU / 7.5GB 程度(`provision.sh` の割当値と一致させています)。
 
 ## 0.5 いちばん早い方法: 自動構築スクリプト
 
@@ -63,7 +63,7 @@ VM が上がったら、各 VM に `lab/ipoe` をコピーして [§2](#2-vm-の
 
 ## 1. Proxmox 側のネットワーク準備
 
-アップリンクなしの Linux ブリッジを 2 本(アクセス網・網内/模擬インターネット)作ります。プロトタイプでは PG-CORE と PG-INET を 1 本に集約してもよいですが、本番と同じ 3 本にしておくと VMware 移行時に迷いません。
+アップリンクなしの Linux ブリッジを **4 本**(アクセス網・網内・模擬インターネット・CPE 配下 LAN)作ります。プロトタイプでは PG-CORE と PG-INET を 1 本に集約してもよいですが、本番と同じ本数にしておくと VMware 移行時に迷いません。**vmbr4(CPE 配下 LAN)は省略しないでください** — 検証クライアントを CPE の下にぶら下げるために必要で、§3 の OpenWrt 作成コマンドもこれを参照します。
 
 `/etc/network/interfaces` に追記(GUI の場合は Datacenter → Node → Network → Create → Linux Bridge):
 
@@ -91,6 +91,14 @@ iface vmbr3 inet manual
         bridge-fd 0
         bridge-mcsnoop 0
 #INET: 模擬インターネット
+
+auto vmbr4
+iface vmbr4 inet manual
+        bridge-ports none
+        bridge-stp off
+        bridge-fd 0
+        bridge-mcsnoop 0
+#CLIENT: CPE配下のクライアント側LAN
 ```
 
 **Proxmox 固有の落とし穴(調査で複数の再現報告を確認済み)**:
@@ -102,13 +110,18 @@ iface vmbr3 inet manual
 
 ## 2. VM の構築
 
-Ubuntu Server 24.04 の VM を 3 台作り、NIC を次のとおり割当てます(net0=管理用に既存の vmbr0、net1 以降が検証用)。
+Ubuntu Server 24.04 の VM を **4 台**作り、NIC を次のとおり割当てます(net0=管理用に既存の vmbr0、net1 以降が検証用)。
 
 | VM | net1 | net2 |
 |---|---|---|
 | NGN-SIM | vmbr1 (ACCESS) | vmbr2 (CORE) |
 | VNE+INET | vmbr2 (CORE) | vmbr3 (INET) |
 | BRAS | vmbr1 (ACCESS) | vmbr3 (INET) |
+| lab-client | vmbr4 (CLIENT) | — |
+
+`lab-client` は CPE 配下に置く検証クライアントです。**これを省いて管理 LAN 上のホストから
+`run-checks.sh` を流すと、通信が CPE を通らずに抜けて「PASS したのに何も検証できていない」
+状態になります**([build.md §5.7](build.md))。
 
 各 VM に `lab/ipoe/` をコピーして実行:
 
@@ -150,6 +163,10 @@ sudo CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 \
 wget https://downloads.openwrt.org/releases/24.10.0/targets/x86/64/openwrt-24.10.0-x86-64-generic-ext4-combined.img.gz
 gunzip openwrt-*.img.gz
 qemu-img resize -f raw openwrt-*.img 2G      # 空き領域の予約 (rootfs拡張はOpenWrt側で別途)
+# 注意: これは **イメージファイル**を 2G にするだけで、中のパーティション/ファイルシステムは
+# 98MB のままです (サイクル 2 実測: df -h / → /dev/root 98.3M)。
+# map / ds-lite / tcpdump-mini までは実測で収まりましたが (使用 27MB)、
+# それ以上入れる場合は OpenWrt 側でパーティション拡張が別途必要です。
 
 qm create 9010 --name openwrt-ce --memory 512 --cores 1 --ostype l26 \
   --scsihw virtio-scsi-single --serial0 socket \

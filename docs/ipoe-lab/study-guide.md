@@ -20,7 +20,7 @@
 |---|---|
 | 教科書との対応表(§1)・用語集(§4)・壁 Q&A(§3) | **使える**。ラボの実行状態に依存しない |
 | カリキュラムの時間配分(§2) | **仮案。実測していません** |
-| ラボ演習の期待結果 | **ラボは一度も実行されていません**。「⚠未検証」印の箇所は実走で確認が必要 |
+| ラボ演習の期待結果 | **サイクル 2 まで実走済み**(VM 起動 → IPv6 が CPE / クライアントに降りるまで)。演習 2-A のキャプチャ(RS→RA、Solicit→Advertise→Request→Reply)は [build-log.md](build-log.md) に実測出力あり。**MAP-E / DS-Lite 以降は未実行**なので「⚠未検証」印のまま |
 | 会社 VMware ランブック | [runbook-vmware.md](runbook-vmware.md) は**執筆前(ほぼ空)** |
 
 **配布前にやること**: [proxmox-prototype.md](proxmox-prototype.md) §0.5 → §2 → §5 を一巡し、
@@ -147,8 +147,40 @@ python3 docs/ipoe-lab/slides/build-toranomaki.py docs/ipoe-lab/slides/toranomaki
 - これは実網の姿と同じで、**付録 A.1「NTT 閉域網 IPv6 フォールバック問題」/ A.2「マルチプレフィックス問題」の正体**です。
   「ISP の契約とは別に、NGN の IPv6 が勝手に来ている」という状況を最初に体感させるのが、この演習の狙いです。
 
-> **⚠ 実走で確認すること**: 実際に CPE WAN に GUA が付くか、付くならどのプレフィックスか。
-> 結果をこの節に書き込んでから配布してください。
+> **実走結果(サイクル 2 で確認済み。演習の進め方に影響するので必読)**
+>
+> RA は **PPPoE 接続中も CPE の WAN に届いています**。NGN-SIM 側で実測:
+>
+> ```
+> tcpdump -ni eth1 -nn "icmp6[icmp6type]==134"
+> 09:03:28.741815 IP6 fe80::ac:ff:fe00:1 > ff02::1: ICMP6, router advertisement, length 88
+> 09:03:49.314972 IP6 fe80::ac:ff:fe00:1 > ff02::1: ICMP6, router advertisement, length 88
+> ```
+>
+> **ただし OpenWrt を CPE にすると、既定のままでは GUA が付きません。**
+> PPPoE を上げた瞬間に netifd が搬送路の物理 NIC の `disable_ipv6` を 1 にするため、
+> IPoE 側(`wan6`)が落ち、**リンクローカルまで消えます**。
+>
+> ```
+> odhcp6c[6555]: Failed to send RS (Network unreachable)
+> cat /proc/sys/net/ipv6/conf/eth1/disable_ipv6 → 1
+> ```
+>
+> 対処は `/etc/config/network` に 1 セクション足すだけです([build.md §5](build.md) に反映済み):
+>
+> ```
+> config device
+>         option name 'eth1'
+>         option ipv6 '1'
+> ```
+>
+> **演習としてはこれ自体が良い教材です。**「RA は届いているのに IPv6 が付かない」
+> という状況を tcpdump で切り分けさせると、
+> 「届いていない」と「受け取れていない」の違いが体で分かります。
+> 当日の進行では、まず既定のまま踏ませてから対処を入れる順で見せてください。
+>
+> プレフィックスは PD 方式なら `2001:db8:100a:500::/56`(CPE の `br-lan` に `/60` が切り出される)、
+> RA 方式なら CPE WAN に `2001:db8:1014:300::/64` が付きます。
 
 **Temporary アドレスについて**: lab-client(Ubuntu Server)では既定で生成されません。
 見せたい場合は `sudo sysctl -w net.ipv6.conf.<if>.use_tempaddr=2` を打つか、宿題の自宅 PC で確認させてください。
