@@ -206,6 +206,35 @@ config interface 'wandsl'
 
 **MTU 注意**: OpenWrt の map.sh / ds-lite は `option mtu` 未指定だと **1280** に設定します(上記サンプルの `option mtu '1460'` は必須。設定後 `ip link` で確認)。
 
+### 5.6 CPE に必ず入れる 2 つの設定(入れないと名前解決が死にます)
+
+サイクル 3 の実走で、**この 2 つが無いと `run-checks.sh` の DNS が必ず FAIL** することが分かりました。
+どちらも「ping は通るのに名前解決だけ死ぬ」という切り分けにくい症状になります。
+
+```sh
+# ① 送信元制限付きの既定経路をやめる
+#    OpenWrt は PD を受けると  default from <PDプレフィックス> via ...  という
+#    **送信元制限付き**の既定経路を入れる。すると CPE 自身が発信する UDP
+#    (dnsmasq の上流問い合わせ等) が送信元未定のまま経路探索されて
+#    Network unreachable になる。ping は別経路なので通ってしまい紛らわしい。
+uci set network.wan6.sourcefilter='0'
+uci commit network
+ifdown wan6 && ifup wan6
+
+# ② DNS リバインド保護からラボのドメインを除外する
+#    ラボはドキュメント用アドレス (2001:db8::/32 / 203.0.113.0/24) を使うため、
+#    OpenWrt の rebind_protection (既定 1) が上流の応答を
+#      dnsmasq: possible DNS-rebind attack detected: www.lab.example
+#    として破棄する。ラボを使う限り必ず踏む。
+uci add_list dhcp.@dnsmasq[0].rebind_domain='lab.example'
+uci commit dhcp
+/etc/init.d/dnsmasq restart
+```
+
+> `rebind_protection` を丸ごと `0` にしても動きますが、**保護を残したまま
+> ラボのドメインだけ例外にする**上のやり方を推奨します(会社の検証機で
+> 保護を無効にしたまま忘れる事故を防ぐため)。
+
 **RA 方式(ひかり電話なし)のときの LAN 側 IPv6**: /64 が 1 本しか無く PD が無いため、通常のルータ設定のままでは LAN 側に IPv6 を配れません(市販ルータが「IPv6 ブリッジ/パススルー」で対処している部分)。OpenWrt では odhcpd のリレーモードを使います:
 
 ```bash

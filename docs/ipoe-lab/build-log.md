@@ -103,8 +103,8 @@ ssh root@192.168.11.20 'cd /root/ipoe-lab/lab/ipoe/proxmox && ./provision.sh ips
 |---|---|---|---|---|
 | 1 | Proxmox に 5 VM を作って起動する | **完了**(成功条件 4 件すべて達成) | 約 3 分(2 回) | gzip は警告でも終了コード 2 を返し `set -e` で即死する。冪等性の無い分岐に副作用を置くと再実行で隠れる。guest-agent 無しでも IPv6 リンクローカルで VM に入れる |
 | 2 | 4 台の Linux に setup スクリプトを流し、IPv6 が降りるところまで | **完了**(成功条件 6 件すべて達成) | 約 5 分(setup 計 2.6 分 + CPE 設定) | `ssh` は使わなくても stdin を吸うので `while read` の中では `-n` が必須。OpenWrt の `uclient-fetch` は AAAA を選ぶと A へフォールバックしない。PPPoE を上げると netifd が物理NICの IPv6 を無効化するが、**RA 自体は届いている** |
-| 3 | MAP-E / DS-Lite で IPv4 が通り、`run-checks.sh` が PASS するまで | **次はこれ**(前提の V2 は解決済み) | — | — |
-| 4 | 実機 CPE(892FJ)を収容する | 未着手 | — | — |
+| 3 | MAP-E / DS-Lite で IPv4 が通り、`run-checks.sh` が PASS するまで | **完了**(両方式で `PASS=10 FAIL=0`) | 約 90 分(大半は DNS の切り分け) | 期待値表は完全に正しかった。「ping は通るのに DNS だけ死ぬ」に **3 つの独立した原因**が重なりうる: 送信元制限付き既定経路 / dnsmasq の listen インタフェース / CPE のリバインド保護 |
+| 4 | 実機 CPE(892FJ)を収容する | **次はこれ**(CML の Cat8000v も H3 で使用可と判明) | — | — |
 | 5 | トラブル再現レシピ R1/R3/R4/R5 を実走して再現条件を確定 | 未着手 | — | — |
 | 6 | runbook-vmware.md を書き上げ、Box バンドルを作る | 未着手 | — | — |
 
@@ -862,7 +862,269 @@ tcpdump -ni eth1 -nn -c 2 "icmp6[icmp6type]==134"
 
 ---
 
-### サイクル 3〜6
+### サイクル 3: MAP-E / DS-Lite で IPv4 が通り、`run-checks.sh` が PASS するまで
+
+#### Plan
+
+**目的**: CPE 配下のクライアントから **IPv4 over IPv6 で IPv4 が通る**ことを確認する。
+MAP-E と DS-Lite の両方式について、`run-checks.sh` を PASS させる。
+
+**前提(サイクル 2 で確保済み)**:
+
+| 項目 | 状態 |
+|---|---|
+| NGN-SIM | **PD モード**(`2001:db8:100a:500::/56` を委譲) |
+| CPE (OpenWrt) | PD 受領済み。`map` / `ds-lite` / `tcpdump-mini` 導入済み |
+| lab-client | 既定経路が CPE 側。グローバル IPv6 あり |
+| BRAS / INET-SIM | 起動済み |
+
+**PD モードなので、MAP-E の期待値は既定値**([build.md](build.md) §3 の表):
+
+| 項目 | 期待値 |
+|---|---|
+| ユーザプレフィックス | `2001:db8:100a:500::/56` |
+| 共有 IPv4 | `198.51.100.10` |
+| PSID | 5 |
+| CE の MAP アドレス | `2001:db8:100a:500:0:c633:640a:5` |
+| BR アドレス | `2001:db8:9999::1` |
+| 利用可能ポート | 16 × 15 ブロック = 240(PSID=5 なら 4176-4191 等) |
+
+**成功条件**:
+
+1. `setup-map-br.sh` が完走し、`ip -6 tunnel show` に `map0` が出る(V1)
+2. CPE の MAP-E 自動計算値が上の表と一致する(V3)。**一致しない場合は値をそのまま記録し、
+   どちらが正しいかを判定する**(CPE の実装差か、設計値の誤りか)
+3. lab-client から `run-checks.sh` が **FAIL=0** で終わる(V6)
+4. MTU 実測が **1460**(encaplimit ありなら 1452)になる(V7)
+5. DS-Lite に切り替えても IPv4 が通る(V5)
+6. **ラボ内 IPv6 DNS(`2001:db8:cafe::53`)への到達が回復する**(バックログ 8)。
+   サイクル 2 で不達だったのは VNE の CORE 側が未設定だったためという仮説の検証
+
+**やらないこと**: 実機 892FJ(サイクル 4)。CML の Cat8000v をラボに繋ぐ(サイクル 4)。
+トラブル再現レシピ(サイクル 5)。ポート数 240 の実測(V4 はサイクル 5 の R3 とまとめる)。
+
+**記録すること**:
+
+- CPE が自動計算した値の**全文**(期待値表との照合に使う)
+- 各方式の切替所要時間(勉強会の時間割用)
+- **失敗した出力も消さずに残す**
+
+#### Do
+
+**結果: MAP-E / DS-Lite の両方式で `run-checks.sh` が PASS=10 FAIL=0。**
+
+**手順 1: MAP-E BR の起動(9002)** — 所要 **4 秒**
+
+```
+sudo ./ipoe/vne/setup-map-br.sh
+[VNE] MAP-E BR 起動: BR=2001:db8:9999::1, CE=2001:db8:100a:500:0:c633:640a:5, 共有IPv4=198.51.100.10
+
+map0: ip/ipv6 remote 2001:db8:100a:500:0:c633:640a:5 local 2001:db8:9999::1 encaplimit none
+198.51.100.10 dev map0 scope link
+ens19  UP  2001:db8:ff00::2/64        ← CORE 側。サイクル 2 で不達だった next-hop がここで出現
+```
+
+**手順 2: CPE に MAP-E を設定**([build.md](build.md) §5 の値をそのまま投入)
+
+```sh
+uci set network.wanmap=interface
+uci set network.wanmap.proto='map'
+uci set network.wanmap.maptype='map-e'
+uci set network.wanmap.peeraddr='2001:db8:9999::1'
+uci set network.wanmap.ipaddr='198.51.100.0'
+uci set network.wanmap.ip4prefixlen='24'
+uci set network.wanmap.ip6prefix='2001:db8:1000::'
+uci set network.wanmap.ip6prefixlen='40'
+uci set network.wanmap.ealen='16'
+uci set network.wanmap.psidlen='8'
+uci set network.wanmap.offset='4'
+uci set network.wanmap.encaplimit='ignore'
+uci set network.wanmap.mtu='1460'
+uci set network.wanmap.tunlink='wan6'
+uci commit network
+uci add_list firewall.@zone[1].network='wanmap'
+uci commit firewall
+/etc/init.d/network reload && /etc/init.d/firewall reload
+```
+
+**手順 3: 期待値の照合(V3) — 全項目一致**
+
+| 項目 | [build.md](build.md) §3 の期待値 | CPE の自動計算値 |
+|---|---|---|
+| 共有 IPv4 | `198.51.100.10` | `198.51.100.10/32` ✅ |
+| PSID(先頭ポートブロック) | `4176-4191` | `4176-4191` ✅ |
+| CE の MAP アドレス | `2001:db8:100a:500:0:c633:640a:5` | 同一(トンネル端点) ✅ |
+| MTU | 1460 | 1460 ✅ |
+
+```
+map-wanmap@eth1: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1460
+    inet 198.51.100.10/32 scope global map-wanmap
+    link/tunnel6 2001:0db8:100a:0500:0000:c633:640a:0005 peer 2001:0db8:9999::1
+
+nft: snat ip to 198.51.100.10:4176-4191   / :8272-8287 / :12368-12383 / :16464-16479 ...
+```
+
+**手順 4: `run-checks.sh`(MAP-E) — 最終 PASS=10 FAIL=0**
+
+```
+PASS: IPv4 ping / IPv6 ping / A 解決 / AAAA 解決 / HTTP over IPv4 / HTTP over IPv6
+PASS: TCP 5MB over IPv4 / TCP 5MB over IPv6 / IPv4 fragment / IPv6 fragment
+src: 198.51.100.10                          ← 共有 IPv4 で出ている = MAP-E 成立
+INFO: IPv4 パス MTU >= 1460 (payload 1432 通過)   ← V7 期待値どおり
+=== 結果: PASS=10 FAIL=0 ===
+```
+
+**手順 5: DS-Lite への切替** — CPE 側は 1 行ずつ、AFTR は既定値のまま
+
+```sh
+# CPE
+uci set network.wanmap.disabled='1'
+uci set network.wandsl=interface
+uci set network.wandsl.proto='dslite'
+uci set network.wandsl.peeraddr='2001:db8:8888::1'
+uci set network.wandsl.mtu='1460'
+uci set network.wandsl.tunlink='wan6'
+uci commit network
+uci add_list firewall.@zone[1].network='wandsl'
+uci commit firewall
+/etc/init.d/network restart
+
+# VNE (CE_WAN6 の既定値 = CPE の br-lan アドレスで一致したため引数不要だった)
+sudo ./ipoe/vne/setup-aftr.sh
+```
+
+```
+ds-wandsl@eth1: mtu 1460
+    inet 192.0.0.2 peer 192.0.0.1/32        ← RFC 6333 どおり (B4=192.0.0.2 / AFTR=192.0.0.1)
+[VNE] DS-Lite AFTR 起動: AFTR=2001:db8:8888::1, B4=2001:db8:100a:500::1
+=== 結果: PASS=10 FAIL=0 ===
+```
+
+**MAP-E に復帰**(サイクル 4 の開始点として)。`uci set network.wandsl.disabled='1'` +
+`uci set network.wanmap.disabled='0'` + `/etc/init.d/network restart` で戻る。
+
+#### Check
+
+**成功条件は 6 件すべて達成。** ただし **DNS が通るまでに 3 つの原因が重なっていた**。
+どれも「ping は通るのに名前解決だけ死ぬ」という同じ症状に化けるので、切り分け順序ごと残す。
+
+**① CPE 自身が発信する UDP が `Network unreachable` になる(OpenWrt の `sourcefilter`)**
+
+`run-checks.sh` の DNS 2 項目だけが FAIL。CPE から調べると:
+
+```
+ping -c2 2001:db8:cafe::53          → 0% packet loss     (通る!)
+nslookup www.lab.example 2001:db8:cafe::53 → connection timed out
+ip -6 route get 2001:db8:cafe::53   → RTNETLINK answers: Network unreachable
+ip -6 route get 2001:db8:cafe::53 from 2001:db8:100a:500::1 → 成功
+```
+
+原因は OpenWrt が PD 受領時に入れる**送信元制限付きの既定経路**:
+
+```
+default from 2001:db8:100a:500::/56 via fe80::ac:ff:fe00:1 dev eth1  metric 512
+```
+
+`ping` は通るのに UDP は通らない。**送信元未定(`::`)のままの経路探索が失敗する**ためで、
+ICMP ソケットとは経路選択の経路が違う。これが「疎通はあるのに DNS だけ死ぬ」の正体。
+
+→ `uci set network.wan6.sourcefilter='0'` で既定経路から `from` が外れ、送信されるようになった。
+
+```
+default via fe80::ac:ff:fe00:1 dev eth1  metric 512
+ip -6 route get 2001:db8:cafe::53 → src 2001:db8:100a:500:0:c633:640a:5
+tcpdump -ni eth1: 2001:db8:100a:500:0:c633:640a:5.59351 > 2001:db8:cafe::53.53: A? www.lab.example.
+```
+
+**② INET-SIM の dnsmasq が CORE 側から来たクエリを黙って捨てていた(設計バグ)**
+
+送信されるようになっても応答が返らない。NGN(9001)で見ると**転送はできている**:
+
+```
+ens19 In  IP6 2001:db8:100a:500:0:c633:640a:5.36196 > 2001:db8:cafe::53.53: A? www.lab.example.
+ens20 Out IP6 2001:db8:100a:500:0:c633:640a:5.36196 > 2001:db8:cafe::53.53: A? www.lab.example.
+(応答なし。再送も同じ)
+```
+
+VNE(9002)で `-i any` で見ると **`ens19 In` で到達しているのに応答が 1 パケットも出ない**。
+`nft list ruleset` は空でファイアウォールではない。9002 自身からは引ける。
+
+原因は `setup-inet.sh` が書く dnsmasq 設定:
+
+```
+interface=ens20      ← INET 側だけ
+bind-interfaces
+```
+
+**CPE からの DNS クエリは NGN 経由なので CORE 側(`ens19`)に着く。**
+dnsmasq は listen 対象外のインタフェースに届いたクエリを**黙って捨てる**(応答を返さない)。
+さらに厄介なことに、**INET 側で `tcpdump` してもクエリが見えない**(CORE 側に来ているため)ので、
+「どこにも届いていない」ように見える。
+
+→ `interface=${CORE_IF}` を追加する形に `setup-inet.sh` を修正。追加した瞬間に解決した。
+
+**③ CPE の DNS リバインド保護がラボの応答を破棄していた(OpenWrt の既定)**
+
+②を直すと CPE 自身は引けるようになったが、**クライアントからはまだ失敗**する。
+ただし所要が **7937ms → 37ms** と即失敗に変わっており、性質が変わっている。CPE のログ:
+
+```
+daemon.warn dnsmasq[1]: possible DNS-rebind attack detected: www.lab.example
+```
+
+ラボは**ドキュメント用アドレス**(`2001:db8::/32` / `203.0.113.0/24`)を使っている。
+OpenWrt の `rebind_protection`(既定 1)は、上流が「private/予約レンジ」を返す応答を
+**リバインド攻撃とみなして破棄**する。**ラボがドキュメントアドレスを使う限り必ず踏む。**
+
+→ ラボのドメインだけ例外にする(保護は残す):
+
+```sh
+uci add_list dhcp.@dnsmasq[0].rebind_domain='lab.example'
+uci commit dhcp && /etc/init.d/dnsmasq restart
+```
+
+**④ DS-Lite で AFTR の NAT が効かない(VNE と INET-SIM の同居による artifact)**
+
+DS-Lite でも PASS=10 だが、INET-SIM から見た送信元が期待と違う:
+
+| 方式 | INET-SIM から見た送信元 |
+|---|---|
+| MAP-E | `198.51.100.10`(共有 IPv4。正しい) |
+| DS-Lite | **`192.168.1.247`**(クライアントの私設アドレスがそのまま) |
+
+`setup-aftr.sh` の masquerade は `oifname "${INET_IF}"` 条件だが、
+**VNE と INET-SIM が同一 VM(9002)** なので宛先 `203.0.113.80` はローカル配送になり、
+`ens20` から出ていかない = ルールが当たらない。
+
+**本番の 5 VM 構成(INET-SIM を分ける)では発生しない**プロトタイプ固有の現象。
+ただし **「DS-Lite は網側 NAT だからポート開放できない」という教材の中心的な論点が、
+この構成では実演できない**(R4 の再現に影響する)。バックログ 9 へ。
+
+**⑤ `ip -d link` と `timeout` が BusyBox に無い**
+
+OpenWrt 側で `ip -d link show` は使えず(usage が出る)、`timeout` も未実装。
+CPE 上で確認するときは `ip link show` + `tcpdump -c N` を使う。サイクル 2 でも同じ罠を踏んだ。
+
+#### Act
+
+**修正したファイル**:
+
+| ファイル | 内容 |
+|---|---|
+| `lab/ipoe/inet/setup-inet.sh` | dnsmasq の listen に **CORE 側インタフェースを追加**(不具合②)。理由をコメントで明記 |
+| `docs/ipoe-lab/build.md` | CPE 必須設定に `sourcefilter='0'` と `rebind_domain` を追加(不具合①③) |
+| `docs/ipoe-lab/build-log.md` | このセクション。トラッカー V1〜V7 更新、バックログ 9 追加 |
+
+**ラボの引き継ぎ状態**(サイクル 4 の開始点):
+
+- CPE = **MAP-E 有効**(`198.51.100.10/32`)。DS-Lite は `wandsl.disabled='1'` で待機
+- NGN = PD モード / VNE = BR と AFTR の両方が起動済み(同時起動可)
+- CPE に恒久的に入れた設定: `wan6.sourcefilter='0'` / `rebind_domain='lab.example'` /
+  `wan_dev(eth1).ipv6='1'`(サイクル 2)
+
+---
+
+### サイクル 4〜6
 
 <!-- サイクル 1 と同じ形式で追記する -->
 
@@ -910,13 +1172,13 @@ tcpdump -ni eth1 -nn -c 2 "icmp6[icmp6type]==134"
 
 | # | 仮説 / 未確認 | 確認方法 | 結果 |
 |---|---|---|---|
-| V1 | `ip -6 tunnel add ... mode ipip6` が実際に張れる | `setup-map-br.sh` 実行 → `ip -6 tunnel show` | |
+| V1 | `ip -6 tunnel add ... mode ipip6` が実際に張れる | `setup-map-br.sh` 実行 → `ip -6 tunnel show` | **OK** `map0` / `dslite0` とも一発で張れた(所要 4 秒)。`modprobe ip6_tunnel` も問題なし |
 | V2 | OpenWrt に `map` / `ds-lite` パッケージをどう入れるか(**ラボ内にインターネットが無い**) | 管理経路 or 事前導入イメージ。**手順を確定して記録すること** | **解決**。`qm set 9010 --net2 virtio,bridge=vmbr0` は**ホットプラグで効き再起動不要**。ただし `opkg` は `ifdown wan6` してからでないと通らない(uclient-fetch が AAAA を選び A に落ちない)。`map - 7` / `ds-lite - 9` / `tcpdump-mini` 導入済み。手順全文は サイクル 2 の Do 手順 5 |
-| V3 | MAP-E で CPE の自動計算値が期待値表と一致する | `build.md` §3 の表と照合 | |
-| V4 | 実際に使えるポート数が 240 で、飛び飛びである | CPE の状態表示 / 実測 | |
-| V5 | DS-Lite で IPv4 が通る | `run-checks.sh` | |
-| V6 | `run-checks.sh` が全項目 PASS する | 実行 | |
-| V7 | MTU の実測値が 1460(encaplimit ありなら 1452)になる | `ping -M do -s ...` | |
+| V3 | MAP-E で CPE の自動計算値が期待値表と一致する | `build.md` §3 の表と照合 | **OK 完全一致**。共有 IPv4 `198.51.100.10` / 先頭ポートブロック `4176-4191` / MAP アドレス `2001:db8:100a:500:0:c633:640a:5` / MTU 1460 |
+| V4 | 実際に使えるポート数が 240 で、飛び飛びである | CPE の状態表示 / 実測 | **飛び飛びであることは確認**(nft の snat が `4176-4191` `8272-8287` `12368-12383` `16464-16479` … と 4096 間隔)。**240 という総数の実測はサイクル 5(R3)で行う** |
+| V5 | DS-Lite で IPv4 が通る | `run-checks.sh` | **OK** `PASS=10 FAIL=0`。B4=`192.0.0.2` / AFTR=`192.0.0.1`(RFC 6333 どおり)。`CE_WAN6` は既定値(CPE の br-lan)で一致し引数不要だった |
+| V6 | `run-checks.sh` が全項目 PASS する | 実行 | **OK(両方式)** ただし DNS が通るまでに 3 つの原因が重なっていた(Do/Check ①②③)。うち 1 件は `setup-inet.sh` の設計バグ |
+| V7 | MTU の実測値が 1460(encaplimit ありなら 1452)になる | `ping -M do -s ...` | **OK 1460**。`payload 1472 不可 / payload 1432 通過` = パス MTU 1460。`encaplimit none` で張っているので 1452 にはならない |
 
 ### 3.4 トラブル再現レシピ(サイクル 5)
 
@@ -1081,4 +1343,5 @@ CML 側で External Connector として認識させるには **CML の再起動�
 | 5 | 検証マトリクス No.7(VPN)の追加構築 | 低 | 案件で必要になったら |
 | 6 | `setup-bras.sh` の再実行耐性(自分で既定経路を奪うので 2 回目の `apt-get` が死ぬ)。`setup-client.sh` と同じく「経路を切り替える前に必要なものを揃える」形にする | 中 | サイクル 3 完了後 |
 | 7 | OpenWrt の rootfs がイメージ拡張(2G)に追従しておらず 98MB のまま。パーティション/FS の拡張まで `provision.sh` でやる | 中 | 追加パッケージで容量不足が出たら |
-| 8 | ラボ内 IPv6 DNS(`2001:db8:cafe::53`)への到達確認。**アドレス自体は `setup-inet.sh:66` が付与済み**で、サイクル 2 で不達だったのは VNE の CORE 側(`2001:db8:ff00::2`)が未設定だったため。`setup-map-br.sh` / `setup-aftr.sh` 実行後に `run-checks.sh` の名前解決が通るか見る | 高 | サイクル 3 の冒頭で確認 |
+| 8 | ラボ内 IPv6 DNS(`2001:db8:cafe::53`)への到達確認 | 高 | **完了(サイクル 3)**。原因は 3 つ重なっていた(送信元制限付き既定経路 / dnsmasq の listen インタフェース / CPE のリバインド保護)。Do/Check ①②③ 参照 |
+| 9 | **DS-Lite の AFTR NAT が効かない**(VNE と INET-SIM の同居により、宛先がローカル配送になり `oifname` 条件の masquerade が当たらない)。「網側 NAT だからポート開放できない」という教材の中心論点が実演できず、R4 の再現にも影響する。本番の 5 VM 構成では発生しない | 高 | サイクル 5(R4)の前に判断。INET-SIM を別 VM に分けるか、`setup-aftr.sh` の nft 条件を見直すか |

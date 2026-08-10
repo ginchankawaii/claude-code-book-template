@@ -40,16 +40,31 @@ esac
 
 INET_IF="${INET_IF:-eth1}"
 
+# dnsmasq が待ち受けるインタフェース。
+#
+# **CORE 側も必ず含めること。** CPE が引く DNS クエリは NGN 経由で来るので
+# **CORE 側インタフェースに着く**。INET 側だけを listen していると、dnsmasq は
+# 「listen 対象外のインタフェースに届いたクエリ」として**黙って捨てる**。
+# 応答を返さないので、
+#   - ping は通る / HTTP も通る / なのに名前解決だけ死ぬ
+#   - INET 側で tcpdump してもクエリが見えない (CORE 側に来ているため)
+# という非常に切り分けにくい症状になる (サイクル 3 で実際に踏んだ)。
+DNS_LISTEN="interface=${INET_IF}"
+if [ -n "${CORE_IF:-}" ] && [ "${CORE_IF}" != "${INET_IF}" ]; then
+  DNS_LISTEN="${DNS_LISTEN}
+interface=${CORE_IF}"
+fi
+
 # dnsmasq は systemd-resolved のスタブ (127.0.0.53:53) と衝突してインストール直後の
 # 起動に失敗しうるため、設定を **先に** 置いてから導入する。
-# interface= + bind-interfaces により dnsmasq は INET 側 NIC にしか bind しないので、
-# これだけで 127.0.0.53 との衝突は回避できる。
+# interface= + bind-interfaces により dnsmasq は指定した NIC にしか bind しないので、
+# これだけで 127.0.0.53 との衝突は回避できる (管理 NIC は含めないこと)。
 # (DNSStubListener=no はしない: /etc/resolv.conf が stub-resolv.conf のままだと
 #  この直後の apt-get が名前解決できず失敗する)
 mkdir -p /etc/dnsmasq.d
 cat > /etc/dnsmasq.d/lab.conf <<EOF
 no-resolv
-interface=${INET_IF}
+${DNS_LISTEN}
 bind-interfaces
 local-ttl=3600
 address=/www.lab.example/203.0.113.80
