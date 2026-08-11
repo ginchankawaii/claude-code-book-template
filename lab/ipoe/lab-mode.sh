@@ -90,8 +90,15 @@ detect() {
   fi
   if [ -n "$NGN" ]; then
     # radvd の設定に prefix が書かれていれば RA 方式、無ければ PD 方式
-    p="$(rsh "$NGN" "grep -c '^[[:space:]]*prefix 2001:' /etc/radvd.conf 2>/dev/null || echo 0" 2>/dev/null || echo 0)"
-    case "$p" in
+    #
+    # **`grep -c ... || echo 0` と書いてはいけない。**
+    # grep -c はマッチ 0 件のとき「0」を出力した上で終了コード 1 を返すので、
+    # `|| echo 0` も走って出力が "0\n0" の 2 行になる。すると下の case が
+    # `0)` ではなく `*)` に落ちて、**PD 方式を必ず RA と誤判定する**。
+    # (フェーズ5 レビューで発覚。RA 側しか実走していなかったため見逃していた)
+    p="$(rsh "$NGN" "grep -c '^[[:space:]]*prefix 2001:' /etc/radvd.conf 2>/dev/null" 2>/dev/null || true)"
+    p="${p%%[!0-9]*}"          # 念のため先頭の数字だけ取る (CR や余計な行への保険)
+    case "${p:-0}" in
       0) state_set v6mode pd ;;
       *) state_set v6mode ra ;;
     esac
@@ -139,27 +146,46 @@ case "${1:-status}" in
   ra|pd)
     need NGN "NGN-SIM"
     echo "[lab-mode] NGN-SIM を $1 方式に切り替えます..."
-    # **Kea のリースを先に消す。** 残っていると Renew で旧プレフィックスが返り、
-    # 「切り替えたのに CPE が前のプレフィックスのまま」になる (実走で踏んだ)
-    rsh "$NGN" "sudo rm -f /var/lib/kea/kea-leases6.csv* 2>/dev/null; sudo ./ipoe/ngn/setup-ngn.sh $1" \
+    # **Kea は止めてから消す。** 動いたまま消すと、消した直後の Renew で
+    # memfile が旧リースを書き戻すことがある (test-matrix R9 が要求する順序)
+    rsh "$NGN" "sudo systemctl stop isc-kea-dhcp6-server 2>/dev/null; sudo rm -f /var/lib/kea/kea-leases6.csv*; sudo ./ipoe/ngn/setup-ngn.sh $1" \
       || die "NGN-SIM の切り替えに失敗しました"
     state_set v6mode "$1"
     echo
     echo "  → 切り替えました。**受講者に CPE の再接続を指示してください。**"
     echo "       OpenWrt : ifdown wan6 && ifup wan6"
     echo "       892FJ   : conf t → interface GigabitEthernet0 → shutdown / no shutdown"
+    # **MAP-E 中に IPv6 の配り方を変えたら BR も張り直しが要る。**
+    # CE のプレフィックスが変われば MAP アドレスも変わるので、BR のトンネル
+    # 終点が古いままだと IPv4 が全断する (バナーは期待値を出し続けるので気づけない)
+    if [ "$(state_get ipv4mode)" = "mape" ]; then
+      echo
+      echo "  ⚠ いまは MAP-E です。**CE のアドレスが変わるので BR を張り直してください:**"
+      echo "       ./lab-mode.sh mape"
+    fi
     banner
     ;;
 
   mape)
     need VNE "VNE"
-    echo "[lab-mode] IPv4 の運び方を MAP-E にします (AFTR は止めます)..."
-    rsh "$VNE" "sudo ./ipoe/vne/setup-aftr.sh stop 2>/dev/null; sudo ./ipoe/vne/setup-map-br.sh" \
+    # **BR のトンネル終点は NGN-SIM の方式で変わる** (build.md §3 の表)。
+    #   pd → CE=2001:db8:100a:500:0:c633:640a:5 / 共有 IPv4=198.51.100.10 (既定値)
+    #   ra → CE=2001:db8:1014:300:0:c633:6414:3 / 共有 IPv4=198.51.100.20
+    # 既定値のまま RA 方式で起動すると、案内だけ出て IPv4 は絶対に通らない
+    detect
+    map_env=""
+    if [ "$(state_get v6mode)" = "ra" ]; then
+      map_env="CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 "
+      echo "[lab-mode] IPv4 の運び方を MAP-E にします (RA 方式用のパラメータで起動)..."
+    else
+      echo "[lab-mode] IPv4 の運び方を MAP-E にします (PD 方式用のパラメータで起動)..."
+    fi
+    rsh "$VNE" "sudo ./ipoe/vne/setup-aftr.sh stop 2>/dev/null; sudo ${map_env}./ipoe/vne/setup-map-br.sh" \
       || die "MAP-E BR の起動に失敗しました"
     state_set ipv4mode mape
     echo
     echo "  → **受講者に CPE 側を MAP-E に設定させてください。**"
-    echo "     CPE に入れる値は build.md §5 の表のとおりです。"
+    echo "     CPE に入れる値は build.md §3 の表のとおりです (方式ごとに違います)。"
     banner
     ;;
 
@@ -214,8 +240,24 @@ case "${1:-status}" in
 
   restore)
     echo "[lab-mode] 注入した障害を戻します..."
-    [ -n "$VNE" ]  && rsh "$VNE"  "sudo ./ipoe/vne/setup-aftr.sh restore-pmtu" 2>/dev/null
-    [ -n "$INET" ] && rsh "$INET" "sudo ./ipoe/inet/setup-inet.sh restore" 2>/dev/null
+    # **戻せたかどうかを必ず確かめる。**
+    # 昔はここで終了コードを捨てていたので、SSH が届かなくても「障害の注入: なし」と
+    # 表示され、実機には drop ルールが残ったままになった。次の演習が原因不明で FAIL する
+    restore_ng=""
+    if [ -n "$VNE" ]; then
+      rsh "$VNE" "sudo ./ipoe/vne/setup-aftr.sh restore-pmtu" || restore_ng="${restore_ng} VNE"
+    fi
+    if [ -n "$INET" ]; then
+      rsh "$INET" "sudo ./ipoe/inet/setup-inet.sh restore" || restore_ng="${restore_ng} INET-SIM"
+    fi
+    if [ -n "$restore_ng" ]; then
+      echo
+      echo "  ⚠ **戻しに失敗しました:${restore_ng}**"
+      echo "     障害は入ったままです。状態も『戻していない』ままにします。"
+      echo "     SSH が届くか確認して、もう一度 ./lab-mode.sh restore を実行してください。"
+      banner
+      exit 1
+    fi
     state_set fault ""
     echo
     echo "  → **CPE 側の戻しは受講者にやらせてください。**戻し忘れが次の演習を壊します:"

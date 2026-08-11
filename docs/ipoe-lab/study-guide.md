@@ -25,7 +25,7 @@
 | 会社 VMware ランブック | [runbook-vmware.md](runbook-vmware.md) は**執筆済み**(サイクル 1〜6 の実走ベース)。§8 の実機 892FJ 手順は実機で最後まで通してあります(サイクル 4) |
 
 **配布前にやること**: [proxmox-prototype.md](proxmox-prototype.md) §0.5 → §2 → §5 を一巡し、
-本ガイドの「⚠未検証」印の演習を 1 本ずつ実走して、期待結果と所要時間を確定してください。
+**時間配分だけが未確定です**(演習の期待結果はサイクル 5 までで実走済み)。第1回で各演習の所要時間を実測してください。
 第1回はパイロット実施とし、**実測が取れるまで第2回以降の日程を確定しない**ことを強く推奨します。
 
 ---
@@ -237,7 +237,7 @@ sudo tcpdump -nn -i <ACCESS_IF> 'icmp6 or udp port 546 or udp port 547'
 - `setup-ngn.sh` は毎回 `apt-get update && apt-get install` を走らせます。**管理経路からインターネットに出られること**が前提で、
   出られないと演習中にスクリプトが落ちます。事前に一度実行してパッケージを入れておいてください。
 
-**見てほしいこと**: RS → RA が飛ぶか。PD なら Solicit → Advertise → Request → Reply の 4 往復が見えるか。
+**見てほしいこと**: RS → RA が飛ぶか。PD なら Solicit → Advertise → Request → Reply の 4 メッセージ (2 往復)が見えるか。
 `ip -6 route` と CPE の LAN 側アドレスを比べ、**RA 方式だと LAN に配れる /64 が無い**ことを確認する
 (だから PD が必要。ラボでは odhcpd の relay で回避している。[build.md](build.md) §5)。
 
@@ -477,7 +477,7 @@ psid-len = ea-len − (32 − IPv4プレフィックス長) = 16 − (32 − 24)
 
 ```
 素の Ethernet                    1500
-  − PPPoE ヘッダ 8               → 1492 …… ただし PPPoE の MRU 上限で実質 1454 が多い
+  − PPPoE ヘッダ 8               → 1492 …… ただしフレッツ網では BAS が MRU 1454 を通知するので実質 1454
   − IPv6 ヘッダ 40(トンネル)   → 1460 …… MAP-E / DS-Lite
   − encaplimit(Dst Options)8   → 1452 …… ip6tnl の既定で付く。実機 BR/CE で片方向断の原因(R11)
 ```

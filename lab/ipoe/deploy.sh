@@ -48,7 +48,7 @@ deploy_host() {
   echo "[deploy] ${PVE_USER}@${PVE_HOST}:${HOST_DIR}/lab/ipoe へ配布"
   tar cz -C "${REPO_ROOT}/lab" ipoe \
     | ssh "${SSH_OPTS[@]}" "${PVE_USER}@${PVE_HOST}" \
-        "mkdir -p '${HOST_DIR}/lab' && tar xz -C '${HOST_DIR}/lab' && { chmod +x '${HOST_DIR}'/lab/ipoe/*/*.sh 2>/dev/null || true; }"
+        "mkdir -p '${HOST_DIR}/lab' && tar xz -C '${HOST_DIR}/lab' && { chmod +x '${HOST_DIR}'/lab/ipoe/*.sh '${HOST_DIR}'/lab/ipoe/*/*.sh 2>/dev/null || true; }"
   echo "  ホスト: OK"
 }
 
@@ -70,11 +70,14 @@ deploy_vms() {
     # -n は必須: 付けないと ssh が while の stdin (<<< "$lls") を読み尽くし、
     # 2 台目以降のループが回らず「1 台だけ配って正常終了」する
     if ssh -n "${SSH_OPTS[@]}" "${PVE_USER}@${PVE_HOST}" \
-         "tar cz -C '${HOST_DIR}/lab' ipoe | ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 ${CIUSER}@'${ll}' 'tar xz -C ~ && { chmod +x ~/ipoe/*/*.sh 2>/dev/null || true; }'"; then
+         "tar cz -C '${HOST_DIR}/lab' ipoe | ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 ${CIUSER}@'${ll}' 'tar xz -C ~ && { chmod +x ~/ipoe/*.sh ~/ipoe/*/*.sh 2>/dev/null || true; }'"; then
       echo "  ${ll}: OK"
       n=$((n+1))
     else
-      echo "  ${ll}: 失敗 (起動直後か鍵未登録の可能性)" >&2
+      echo "  ${ll}: 失敗 (起動直後 / 鍵未登録 / VM 再作成でホスト鍵が変わった)" >&2
+      # destroy → 再 provision すると MAC 固定のためアドレスは同じまま、ホスト鍵だけ変わる。
+      # accept-new は「未知のホスト」しか受理しないので、古い鍵が残っていると必ず弾かれる
+      echo "        VM を作り直した場合: ホスト上で ssh-keygen -R '${ll}' を実行してから再試行" >&2
     fi
   done <<< "$lls"
   echo "  VM ${n} 台に配布しました"

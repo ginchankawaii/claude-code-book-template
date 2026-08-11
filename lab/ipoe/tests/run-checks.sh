@@ -7,6 +7,7 @@
 #     EXPECT_SRC4=198.51.100.10 ./run-checks.sh      # MAP-E (PD 方式)
 #     EXPECT_SRC4=198.51.100.20 ./run-checks.sh      # MAP-E (RA 方式)
 #     EXPECT_SRC4=203.0.113.1   ./run-checks.sh      # DS-Lite (AFTR で NAT された場合)
+#     EXPECT_SRC4=203.0.113.2   ./run-checks.sh      # PPPoE (BRAS で NAT された場合)
 #
 #   指定しないと「疎通はしているが、意図した経路ではない」状態を見逃します。
 #   サイクル 3 で実際に、DS-Lite の AFTR NAT が効かず私設アドレスのまま出ていたのに

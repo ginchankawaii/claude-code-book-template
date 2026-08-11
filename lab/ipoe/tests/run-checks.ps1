@@ -91,8 +91,24 @@ if (-not $SkipV6) {
 }
 
 Write-Output "--- Reachability ---"
-Check "IPv4 ping ($V4_TARGET)" { ping.exe -4 -n 2 -w 2000 $V4_TARGET | Out-Null; $LASTEXITCODE -eq 0 }
-CheckV6 "IPv6 ping ($V6_TARGET)" { ping.exe -6 -n 2 -w 2000 $V6_TARGET | Out-Null; $LASTEXITCODE -eq 0 }
+# ping.exe の終了コードだけで判定してはいけない。
+# Windows の ping は "Destination host unreachable" (経路が壊れていて、手前のルータが
+# 到達不能を返した状態) も Received に数え、終了コード 0 を返すことがある。
+# それでは「経路が壊れているのに PASS」という、このラボが一番嫌う偽陽性になる。
+# **本物の応答にだけ現れる TTL= を見て判定する。**
+function PingOk {
+    param([string]$Family, [string]$Target, [string]$ExtraArgs = "")
+    $out = if ($ExtraArgs) {
+        ping.exe $Family -n 2 -w 2000 $ExtraArgs.Split(" ") $Target 2>&1
+    } else {
+        ping.exe $Family -n 2 -w 2000 $Target 2>&1
+    }
+    if ($LASTEXITCODE -ne 0) { return $false }
+    # 日本語版 Windows でも TTL= / ttl= の表記は変わらない
+    return (($out -join "`n") -match '(?i)\bttl\s*=')
+}
+Check "IPv4 ping ($V4_TARGET)" { PingOk "-4" $V4_TARGET }
+CheckV6 "IPv6 ping ($V6_TARGET)" { PingOk "-6" $V6_TARGET }
 
 Write-Output "--- DNS ---"
 Clear-DnsClientCache -ErrorAction SilentlyContinue
@@ -133,8 +149,8 @@ Check "TCP 5MB over IPv4" { BigOk "-4" "http://$V4_TARGET/big.bin" }
 CheckV6 "TCP 5MB over IPv6" { BigOk "-6" "http://[$V6_TARGET]/big.bin" }
 
 Write-Output "--- Fragmentation (large ICMP without DF) ---"
-Check "IPv4 fragment (2000B)" { ping.exe -4 -n 2 -w 2000 -l 2000 $V4_TARGET | Out-Null; $LASTEXITCODE -eq 0 }
-CheckV6 "IPv6 fragment (2000B)" { ping.exe -6 -n 2 -w 2000 -l 2000 $V6_TARGET | Out-Null; $LASTEXITCODE -eq 0 }
+Check "IPv4 fragment (2000B)" { PingOk "-4" $V4_TARGET "-l 2000" }
+CheckV6 "IPv6 fragment (2000B)" { PingOk "-6" $V6_TARGET "-l 2000" }
 
 Write-Output "--- Path MTU (ping with DF) ---"
 foreach ($size in 1472, 1432, 1426) {

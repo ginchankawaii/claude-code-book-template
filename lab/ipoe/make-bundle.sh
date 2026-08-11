@@ -23,7 +23,10 @@ mkdir -p "${WORK}"
 echo "[bundle] ${WORK} に集めます"
 
 # --- 1. スクリプトと設定 (これが本体) ---
+rm -rf "${WORK}/lab"          # 同じ分内に再実行したとき lab/lab に入れ子コピーされるのを防ぐ
 cp -r "${REPO_ROOT}/lab" "${WORK}/lab"
+# 実環境の接続先と状態ファイルは配らない (中身は環境ごとに違うし、持ち出す意味がない)
+rm -f "${WORK}/lab/ipoe/lab-hosts.conf" "${WORK}/lab/ipoe/.lab-mode"
 
 # --- 2. 手順書・設計・記録 ---
 mkdir -p "${WORK}/docs"

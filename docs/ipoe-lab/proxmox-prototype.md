@@ -286,13 +286,20 @@ configure terminal
 
 | 見えたもの | 意味 |
 |---|---|
-| `nat64 map-e domain` と `nat64 provisioning mode jp01` が両方通る | **MAP-E 実装あり**。CE 役に使える |
+| `nat64 map-e domain` と `nat64 provisioning mode jp01` が両方通る | **MAP-E の CLI あり**。ただし CE 役に使えるとは限らない(下の ⚠ 参照) |
 | `nat64` はあるが `map-e` が出ない | NAT64 のみ。MAP-E は不可(DS-Lite 止まり) |
 | `nat64` 自体が無い | ライセンスかイメージ種別の問題。`show license boot level` を確認 |
 
 ライセンスは 3 段階で切り分けます: ① `show license boot level` が `network-essentials` なら
 `license boot level network-advantage` に上げて再起動して再確認 → ② それでも出なければ
 イメージ種別(no-payload-encryption 版など)を確認 → ③ それでも出なければ仮想では非対応と結論。
+
+> **⚠ 実走結果(サイクル 7): CLI が通っても、CE 役には使えませんでした。**
+> CML 2.9.0 / Cat8000v **IOS XE 17.15.01a** で `nat64 map-e domain` と
+> `nat64 provisioning mode jp01` は**両方 running-config に入り**、`show nat64 map-e` の
+> 導出値(共有 IPv4 / PSID / ポート数 240)も設計値と完全に一致しました。
+> **しかし `port-parameters` を投入した時点で QFP(転送エンジン)がクラッシュし、転送できません。**
+> **「CLI がある」と「動く」は別物です。**詳細は [build-log.md](build-log.md) サイクル 7 / バックログ 10。
 
 > **タイムボックス: 合計 30 分**。ここで詰まっても本題(ラボ一巡)は進むので、
 > 30 分で結論が出なければ「仮想では未確認」として先に進み、会社の物理 IOS XE 機で確認してください。
@@ -317,7 +324,7 @@ CML の **External Connector** を使ってアクセス網(vmbr1)に足を出し
 
 | | 自宅 Proxmox | 会社 VMware |
 |---|---|---|
-| CML | **あり** → Cat8000v / CSR1000v を CE に使える | **なし** |
+| CML | **あり**—ただし Cat8000v は MAP-E の転送が QFP クラッシュで不可（CE 役には使えない。サイクル 7） | **なし** |
 | 実機 | 892FJ のみ(MAP-E 非対応) | **豊富にある** ← ここが本命 |
 | 主な CE 調達 | OpenWrt VM + CML の IOS XE + 892FJ | **物理ポートに実機を挿す** + OpenWrt VM |
 | MAP-E の CE | OpenWrt / CML の IOS XE(要検証) | 実機(顧客同型機・IOS XE 機など) |
