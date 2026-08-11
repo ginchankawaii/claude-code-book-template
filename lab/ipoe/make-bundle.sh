@@ -70,7 +70,10 @@ IPoE 検証ラボ 持ち込みバンドル
   docs/ipoe-lab/research-notes.md   事例調査ノート
 
 【勉強会をやるとき】
-  docs/ipoe-lab/study-guide.md      教科書 × ラボ 連動学習ガイド
+  docs/ipoe-lab/study-guide.md      教科書 × ラボ 連動学習ガイド (3回シリーズ)
+  docs/ipoe-lab/slides/setsumeikai.md  説明会 1時間版 (座学)。pptx もあります
+  docs/ipoe-lab/slides/handson.md      ハンズオン 150分 (触って壊して直す)。pptx もあります
+      ※ ハンズオンは講師自身が一度全部やってから使ってください
 
 【スクリプト】
   lab/ipoe/                         各 VM にディレクトリごとコピーして実行します
