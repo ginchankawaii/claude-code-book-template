@@ -305,6 +305,42 @@ fi
 # ============================================================ ブリッジ
 echo "[1/4] ブリッジを準備します"
 NEED_RELOAD=0
+# uplink に指定された物理 NIC が「使用中でないか」を確かめる。
+#
+# **ここを素通りさせるのがこのラボで最悪の事故です。**
+# 管理 NIC やストレージ NIC を誤って指定すると、その網がラボのアクセス網と
+# L2 でつながり、**NGN-SIM の RA と DHCPv6-PD が社内 LAN に流出**します。
+# 既存ブリッジの衝突は上でチェックしているのに、uplink 側だけ無防備でした。
+#
+# **限界**: 検出できるのは「IP を持つ」「既に別ブリッジの port」の 2 つだけです。
+# **未使用に見えるが実は用途がある NIC は止められません。**挿す前に必ず現物を確認してください。
+check_uplink_free() {  # $1=NIC 名 $2=ブリッジ名
+  local up="$1" br="$2" m
+  if [ -e "/sys/class/net/${up}/master" ]; then
+    m="$(basename "$(readlink -f "/sys/class/net/${up}/master")" 2>/dev/null || echo '?')"
+    if [ "$m" != "$br" ]; then
+      cat >&2 <<EOF
+ERROR: ${up} は既に ${m} に接続されています。
+       ラボのアクセス網に足すと、${m} 側の網と L2 でつながり
+       NGN-SIM の RA / DHCPv6 が流出します。
+       対処: 空いている物理 NIC を指定してください (ip -br link で確認)
+EOF
+      exit 1
+    fi
+  fi
+  if ip -4 addr show dev "$up" 2>/dev/null | grep -q 'inet ' \
+     || ip -6 addr show dev "$up" scope global 2>/dev/null | grep -q 'inet6 '; then
+    cat >&2 <<EOF
+ERROR: ${up} には IP アドレスが付いています (管理 NIC の可能性)。
+       $(ip -br addr show dev "$up" 2>/dev/null)
+       ラボのアクセス網に足すと、その網と L2 でつながり
+       NGN-SIM の RA / DHCPv6 が流出します。
+       対処: 空いている物理 NIC を指定してください (ip -br link で確認)
+EOF
+    exit 1
+  fi
+}
+
 ensure_bridge() {  # $1=ブリッジ名 $2=用途コメント $3=uplink(省略可)
   local br="$1" note="$2" up="${3:-none}"
   if grep -qE "^iface[[:space:]]+${br}[[:space:]]" /etc/network/interfaces 2>/dev/null; then
@@ -331,6 +367,7 @@ EOF
         echo "  ERROR: uplink 用の ${up} が存在しません (ip -br link で名前を確認してください)" >&2
         exit 1
       fi
+      check_uplink_free "$up" "$br"
       if [ -e "/sys/class/net/${br}/brif/${up}" ]; then
         echo "  ${br}: 既存 (ラボ用)。uplink ${up} は既に接続済み"
       else
@@ -345,6 +382,7 @@ EOF
     echo "  ${br}: 既存 (ラボ用) のためスキップ"
     return
   fi
+  [ "$up" = "none" ] || check_uplink_free "$up" "$br"
   cat >> /etc/network/interfaces <<EOF
 
 auto ${br}

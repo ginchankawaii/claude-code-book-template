@@ -222,13 +222,13 @@ config interface 'wanmap'
 ipv6 unicast-routing
 ipv6 cef
 !
-interface GigabitEthernet8            ! WAN (vmbr1へ接続したポート)
+interface GigabitEthernet0            ! WAN (vmbr1へ接続したポート。892FJ 実機で確認済み)
  ipv6 address autoconfig              ! RA方式。PD方式なら ipv6 dhcp client pd LABPD
  ipv6 enable
 !
 interface Tunnel0
  ip address 192.0.0.2 255.255.255.248 ! B4側 (RFC6333)
- tunnel source GigabitEthernet8
+ tunnel source GigabitEthernet0
  tunnel mode ipv6                     ! IPv4 over IPv6
  tunnel destination 2001:db8:8888::1  ! ラボのAFTR
 !
@@ -238,7 +238,7 @@ ip route 0.0.0.0 0.0.0.0 Tunnel0     ! NATは網側(AFTR)なのでルータで�
 **重要: AFTR 側のトンネル対向合わせ。** RA 方式(`autoconfig`)の 892FJ の WAN アドレスは EUI-64 で決まるため事前に分かりません。ラボの AFTR は対向不一致の decap を破棄するので、892FJ 起動後に実アドレスを確認して AFTR を再実行します:
 
 ```bash
-# 892FJ 側: show ipv6 interface gi8 で GUA を確認(または VNE 側で実測):
+# 892FJ 側: show ipv6 interface GigabitEthernet0 で GUA を確認(または VNE 側で実測):
 # VNE 側: tcpdump -ni eth1 'ip6 proto 4' で encap の送信元を見る
 sudo CE_WAN6=<確認した GUA> lab/ipoe/vne/setup-aftr.sh
 ```

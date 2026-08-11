@@ -3,7 +3,8 @@
 > **このファイルだけを見て上から順に実行すれば完成する**ことを目標にしています。
 > 会社環境では AI 支援が使えないため、判断が必要な箇所には**推奨をひとつ**書いてあります。
 >
-> 記載内容は自宅 Proxmox での実走(サイクル 1〜3・5)で**実際に動いたもの**です。
+> 記載内容は自宅 Proxmox での実走(サイクル 1〜6)で**実際に動いたもの**です。
+> §8 の実機 892FJ 手順も、実機で最後まで通したもの(サイクル 4)です。
 > 詰まった箇所は §9 に「症状 → 原因 → 対処」で残してあります。
 > 経緯の全文は [build-log.md](build-log.md) にあります。
 
@@ -183,6 +184,24 @@ qemu-img convert -f raw -O vmdk openwrt-*.img openwrt-ce.vmdk
 
 ## 4. スクリプトの持ち込み
 
+### (a) 持ち込みバンドルから展開する(会社ではこちら)
+
+**会社は GitHub に繋がらない前提**なので、`make-bundle.sh` で作った tar.gz を
+USB / Box 等で持ち込み、Proxmox または VMware のホストで展開します。
+
+```bash
+cd /root
+tar xzf ipoe-lab-bundle-<日時>.tar.gz
+mv -f ipoe-lab-bundle-<日時> ipoe-lab
+chmod +x ipoe-lab/lab/ipoe/*/*.sh
+```
+
+> バンドルの中身と、どの版から作られたかは `VERSION.txt` と `README.txt` にあります。
+> **Ubuntu クラウドイメージと OpenWrt イメージはバンドルに含まれていません**(容量のため)。
+> 取得元 URL は §0 にあります。会社側でダウンロードするか、別途持ち込んでください。
+
+### (b) GitHub から取得する(外に出られる環境なら)
+
 `git` が入っていない環境でも通る方法です(自宅の Proxmox ホストがそうでした)。
 
 ```bash
@@ -191,6 +210,8 @@ curl -fsSL "https://github.com/<owner>/<repo>/archive/refs/heads/<branch>.tar.gz
 mv -f <repo>-<branch をダッシュ化した名前> ipoe-lab
 chmod +x ipoe-lab/lab/ipoe/*/*.sh
 ```
+
+### (c) 各 VM へ配る
 
 各 Linux VM に `lab/ipoe` ディレクトリごとコピーします。SSH が使えるなら:
 
@@ -432,7 +453,7 @@ sudo ./ipoe/client/setup-client.sh
 
 ```bash
 # 期待する出口アドレスを必ず渡してください。渡さないと「疎通はしているが
-# 意図した経路ではない」状態 (§9-H) を見逃します
+# 意図した経路ではない」状態 (§9-L 末尾) を見逃します
 EXPECT_SRC4=198.51.100.10 ./ipoe/tests/run-checks.sh | tee $(date +%Y%m%d-%H%M)-checks.log
 ```
 
@@ -497,8 +518,16 @@ CPE を通っていない可能性があります(§9-F)。
 
 > **このセクションだけで完結するように書いてあります。**他のファイルを開かずに進められます。
 
-### 8.0 始める前のチェック(5 項目)
+### 8.0 始める前のチェック(6 項目)
 
+- [ ] **NGN-SIM を RA 方式に切り替える。** §5.1 のとおり構築していると **PD 方式**のままです。
+      **PD 方式の radvd はプレフィックスを配らない**ため、§8.2 の `ipv6 address autoconfig` では
+      **グローバルアドレスが 1 つも取れません**(サイクル 4 で実際に踏みました)
+      → NGN-SIM で `sudo ./ipoe/ngn/setup-ngn.sh ra`
+      → 症状は `show ipv6 interface GigabitEthernet0` が
+        `No global unicast address is configured` のまま。RA は届いているので原因が見えません
+      → **PD 方式のまま実機を試したい場合**は、DHCPv6-PD に対応した CPE が必要です。
+        892FJ の `autoconfig` では成立しません
 - [ ] **旧 CE を止める。** `/56` は 1 本、BR/AFTR のトンネルは 1 対向しかありません。
       OpenWrt-CE を繋いだままリースを消すと、Renew の速いほう(ほぼ確実に OpenWrt)が
       唯一の `/56` を取り直し、実機に PD が降りません
@@ -509,6 +538,10 @@ CPE を通っていない可能性があります(§9-F)。
 - [ ] **物理 NIC が PG-ACCESS のアップリンクに入っていること**(§2)。
       Proxmox で既にラボを構築済みの場合は
       `ACCESS_UPLINK=<物理NIC> ./provision.sh` を再実行すると既存ブリッジに追加されます
+      > **指定を間違えないでください。**管理 NIC やストレージ NIC を指定すると、
+      > **その網がラボのアクセス網と L2 でつながり、NGN-SIM の RA と DHCPv6 が社内 LAN に流出します。**
+      > `provision.sh` は使用中に見える NIC(IP を持つ / 既に別ブリッジの port)を拒否しますが、
+      > **未使用に見えるが実は用途がある NIC は止められません**。挿す前に §2 で確認してください
 - [ ] **検証クライアントをどうするか決める**(§8.1)
 - [ ] 実機のコンソールケーブル(9600/8/N/1)
 - [ ] **`lab/ipoe/tests/` をクライアント PC にコピー**(Windows なら `run-checks.ps1`、Linux なら `run-checks.sh`)
@@ -544,10 +577,15 @@ CPE を通っていない可能性があります(§9-F)。
    ipconfig /renew
    ```
 
-2. **IPv6 が有効になっているか確認する(会社支給 PC はとくに要注意)**
+2. **(例外構成のときだけ)IPv6 が有効になっているか確認する**
 
-   このラボは IPv6 が主役です。**Windows のイメージによっては IPv6 が切ってあります。**
-   上の `-Dhcp Enabled` は **IPv4 にしか効かない**ので、別に確認してください。
+   > **既定の構成では不要です。**§8.2 の設定は **`Vlan1`(LAN 側)に IPv6 を持たせません。**
+   > お客様の LAN は IPv4 のままにするのが実務の既定だからです(理由は §8.3 冒頭)。
+   > **この構成ではクライアントに IPv6 が付かないのが正しい状態**なので、
+   > ここを頑張っても手順 4 の「グローバル IPv6」は**構成上いつまでも付きません**。
+   >
+   > **LAN 側にも IPv6 を配る要件がある場合だけ**、以下を確認してください
+   > (その場合は PD 方式 + `Vlan1` への `ipv6 address` / RA 設定が別途必要です)。
 
    ```powershell
    # (a) アダプタで IPv6 が有効か
@@ -571,16 +609,30 @@ CPE を通っていない可能性があります(§9-F)。
    > 会社の管理ポリシーで戻される場合もあります。
    > その場合はこの PC を諦めて、**Linux のライブ USB で起動する**ほうが早いです。
 
-3. **Wi-Fi は切ってください。** 有線と両方生きていると、既定経路が Wi-Fi 側に向いて
-   **CPE を通らない通信を「PASS」と誤判定**します(§9-F と同じ事故)
+3. **Wi-Fi は切らなくて構いません。**
+
+   有線側はラボなので**インターネットに出られません**。作業者は手順書を見たり連絡したりする
+   ために Wi-Fi が要ります。**切れという指示は現場では成立しません。**
+
+   両方生きていても判定は壊れません。`203.0.113.0/24` は TEST-NET-3 で
+   **Wi-Fi 側からは絶対に到達しない**ため、通れば CPE を通った証拠になります。
+   影響するのは **DNS の引き先だけ**なので、名前解決を確認するときは**サーバを明示**してください。
+
+   ```
+   nslookup www.lab.example 203.0.113.53
+   ```
 
 4. アドレスが降りたか確認
 
    ```powershell
    ipconfig /all
    # IPv4: 192.168.100.x / デフォルトゲートウェイ 192.168.100.1
-   # IPv6: 2001:db8:... のグローバルアドレスが付いていること
+   # IPv6: 既定の構成では付きません (付かないのが正しい状態です)
    ```
+
+   > **アドレスが降りてこない場合**(`169.254.x.x` の APIPA になる)は §9-M を見て、
+   > **静的 IP で先に進んでください。**自宅の実機では Windows 11 が取得できませんでした。
+   > DHCP は検証の本体ではないので、ここで止まる必要はありません。
 
 5. 実行(PowerShell。管理者権限は不要)
 
@@ -588,12 +640,12 @@ CPE を通っていない可能性があります(§9-F)。
    # 実行ポリシーで弾かれる場合はこの窓だけ緩める
    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
-.un-checks.ps1 -ExpectSrc4 203.0.113.1 | Tee-Object -FilePath jitsuki-checks.log
+   .\run-checks.ps1 -SkipV6 -ExpectSrc4 203.0.113.1 | Tee-Object -FilePath jitsuki-checks.log
    ```
 
 > **`run-checks.ps1` は英語表記です。**日本語を含む `.ps1` は Windows PowerShell 5.1 で
 > 文字化けし、証跡ログが読めなくなるため、意図的に ASCII だけで書いてあります。
-> 判定内容は `.sh` 版とまったく同じです。
+> 判定内容は `.sh` 版と同じです(`-SkipV6` / `SKIP_V6=1` の意味も同じ)。
 
 ### 8.2 892FJ の初期化と設定
 
@@ -686,7 +738,7 @@ interface GigabitEthernet0
  no ip address
  ipv6 address autoconfig default
  ipv6 enable
- ipv6 nd ra suppress
+ ipv6 nd ra suppress all
  no shutdown
 !
 ! ---- LAN: 検証クライアントを繋ぐ側 ----
@@ -719,7 +771,7 @@ write memory
 > LAN を `192.168.100.0/24` にしているのは、OpenWrt-CE の `192.168.1.0/24` と
 > Proxmox 管理 LAN の `192.168.11.0/24` を避けるためです。
 
-> **`ipv6 nd ra suppress` を WAN 側に入れているのは意図的です。**
+> **`ipv6 nd ra suppress all` を WAN 側に入れているのは意図的です。**
 > `ipv6 unicast-routing` を有効にすると 892FJ 自身がアクセス網へ RA を撒き、
 > **実網でやってはいけない状態**になります(§9-N)。
 > **LAN 側(`Vlan1`)には入れないでください** — 配下が SLAAC できなくなります。
@@ -728,9 +780,9 @@ write memory
 > 自宅の実機では Windows 11 が取得できませんでした。検証の本体ではないので、
 > ここで止まる必要はありません。
 
-#### (5) WAN 側 IPv6 アドレスを確認して、こちらに知らせてください
+#### (5) WAN 側 IPv6 アドレスを控えて、VNE の AFTR を張り替える
 
-**ここで一度止まります。**RA 方式(`autoconfig`)のアドレスは EUI-64 で決まるため、
+**ここで一度 892FJ から離れます。**RA 方式(`autoconfig`)のアドレスは EUI-64 で決まるため、
 **事前には分かりません**。実測した値で VNE 側のトンネルを張り替える必要があります。
 
 ```
@@ -744,14 +796,21 @@ GigabitEthernet0 is up, line protocol is up
     2001:DB8:1014:300:XXXX:XXFF:FEXX:XXXX, subnet is 2001:DB8:1014:300::/64   ← これ
 ```
 
-**この `2001:DB8:...` の行を教えてください。**受け取ったら私が VNE 側の AFTR を
-その値で張り替えます(`sudo CE_WAN6=<値> ./ipoe/vne/setup-aftr.sh`)。
+**この `2001:DB8:...` の値を控えてください。**そのうえで **VNE VM にログインし**、
+AFTR をその値で張り替えます(892FJ 上ではありません)。
 
-> グローバルアドレスが出ない場合は §9-E / §9-K を見てください。
+```bash
+sudo CE_WAN6=2001:db8:1014:300:xxxx:xxff:fexx:xxxx ./ipoe/vne/setup-aftr.sh
+```
+
+> **グローバルアドレスが出ない場合**、まず疑うのは **NGN-SIM が PD 方式のまま**であることです
+> (§8.0 の 1 項目め)。`No global unicast address is configured` と出て、
+> しかも RA 自体は届いているので原因が見えません。
+> それでも出ない場合は §9-E / §9-K を見てください。
 > `show ipv6 interface GigabitEthernet0 | include Router advertisement` で
 > RA を受けているかも確認できます。
 
-#### (6) トンネルを張る(私が AFTR を張り替えたあと)
+#### (6) トンネルを張る(AFTR を張り替えたあと)
 
 ```
 configure terminal
@@ -1123,10 +1182,12 @@ Router# show ipv6 interface GigabitEthernet0
 
 ```
 interface GigabitEthernet0
- ipv6 nd ra suppress
+ ipv6 nd ra suppress all
 ```
 
-> 版によっては `ipv6 nd suppress-ra` です。`ipv6 nd ?` で確認してください。
+> **`all` を付けてください。**`all` 無しだと定期 RA は止まりますが、
+> **RS への応答 (solicited RA) は返る**版があります。抑止しきれません。
+> 版によっては `ipv6 nd suppress-ra` です。`ipv6 nd ?` で候補を確認してください。
 
 **LAN 側(`Vlan1`)には絶対に入れないでください。**配下のクライアントが SLAAC できなくなります。
 LAN を IPv4 のみで運用する場合でも、入れるのは WAN 側だけにしておくのが安全です。

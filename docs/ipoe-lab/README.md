@@ -6,7 +6,7 @@ NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネッ�
 - 構築手順: [build.md](build.md)
 - 検証マトリクス・切替シナリオ・トラブル再現レシピ: [test-matrix.md](test-matrix.md)
 - **Proxmox プロトタイプ手順(自宅検証用)**: [proxmox-prototype.md](proxmox-prototype.md)
-- **会社 VMware 構築ランブック(手動作業用・**サイクル 1〜3・5 の実走をもとに執筆済み**)**: [runbook-vmware.md](runbook-vmware.md)
+- **会社 VMware 構築ランブック(手動作業用・**サイクル 1〜6 の実走 + 実機 892FJ 検証をもとに執筆済み**)**: [runbook-vmware.md](runbook-vmware.md)
 - 事例調査ノート(実例・失敗談と設計への反映): [research-notes.md](research-notes.md)
 - **構築ログ / PDCA 記録(実走の記録・未検証項目トラッカー・CE 入替手順)**: [build-log.md](build-log.md)
 - **勉強会「虎の巻」(教科書 × ラボ 連動学習ガイド)**: [study-guide.md](study-guide.md)

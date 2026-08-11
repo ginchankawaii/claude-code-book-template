@@ -35,7 +35,9 @@ cp -r "${REPO_ROOT}/docs/ipoe-lab" "${WORK}/docs/ipoe-lab"
   if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
     echo "コミット: $(git -C "$REPO_ROOT" rev-parse HEAD)"
     echo "ブランチ: $(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
-    if ! git -C "$REPO_ROOT" diff --quiet; then
+    # --cached も見る。ステージ済みの変更だけだと diff --quiet は 0 を返すため、
+    # 「未コミットを含む」警告がすり抜ける (deploy.sh と同じ判定に揃えた)
+    if ! git -C "$REPO_ROOT" diff --quiet || ! git -C "$REPO_ROOT" diff --cached --quiet; then
       echo "警告: 未コミットの変更を含んだ状態で作成されています"
     fi
   else

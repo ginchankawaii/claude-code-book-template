@@ -66,6 +66,12 @@ sed "s/^interface=eth1/interface=${ACCESS_IF}/" "${LABDIR}/accel-ppp.conf" > /et
 install -D -m 600 "${LABDIR}/chap-secrets" /etc/ppp/chap-secrets
 
 # PPPoE プールを INET へ NAT (実網の ISP NAT なし構成を再現するなら削ること)
+#
+# **必ず消してから入れる。** table{chain{rule}} 形式は既存チェインに追記されるため、
+# 再実行のたびにルールが増える。masquerade の重複自体は無害だが、条件を変えて
+# 再実行したとき **古いルールが先にマッチして修正が効かない**。
+# setup-aftr.sh が同じ理由で delete しているのに、こちらだけ抜けていた。
+nft delete table ip bras-nat 2>/dev/null || true
 nft -f - <<EOF
 table ip bras-nat {
   chain postrouting {
@@ -81,3 +87,5 @@ echo "[BRAS] PPPoE 待受開始 (${ACCESS_IF}, AC=LAB-BRAS)。セッション確
 echo "  MSS clamp を BNG 側で行う ISP を模擬する場合 (検証変数。既定は clamp なし):"
 echo "    nft 'add chain ip bras-nat fwd { type filter hook forward priority 0; }'"
 echo "    nft add rule ip bras-nat fwd tcp flags syn tcp option maxseg size set rt mtu"
+echo "  ※ 上の MSS clamp チェインは bras-nat テーブル内に作るため、"
+echo "     このスクリプトを再実行すると delete で一緒に消えます。都度入れ直してください。"

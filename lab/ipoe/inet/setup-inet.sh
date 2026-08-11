@@ -6,6 +6,8 @@
 #          setup-inet.sh restore    … 復旧
 #          setup-inet.sh spoof-aftr … 市販ルータのDS-Lite自動設定向けに transix系AFTRの
 #                                     FQDNをラボAFTRへ向ける (ラボ内DNSのみの偽装)
+#                                     **初期構築を済ませてから実行すること。**
+#                                     dnsmasq 未導入の状態で叩くと restart で落ちる
 set -euo pipefail
 
 # 役割別 MAC から NIC 名を自動解決 (provision.sh で作った VM 向け。未設定の変数だけ埋める)

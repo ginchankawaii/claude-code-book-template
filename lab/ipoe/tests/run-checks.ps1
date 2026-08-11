@@ -65,23 +65,29 @@ Get-NetRoute -DestinationPrefix '::/0' -ErrorAction SilentlyContinue |
 
 # Warm up the path (not counted). First packet can time out while neighbours resolve.
 ping.exe -4 -n 1 -w 3000 $V4_TARGET | Out-Null
-ping.exe -6 -n 1 -w 3000 $V6_TARGET | Out-Null
+if (-not $SkipV6) { ping.exe -6 -n 1 -w 3000 $V6_TARGET | Out-Null }
 
 # Source address sanity check. If a ULA (fd00::/8) is picked, every IPv6 test
 # below will time out and the reason is very hard to see from the symptoms.
-$src6 = ""
-try {
-    $r = Find-NetRoute -RemoteIPAddress $V6_TARGET -ErrorAction Stop
-    $src6 = ($r | Where-Object { $_.IPAddress } | Select-Object -First 1).IPAddress
-} catch { }
-if ($src6 -match '^(fd|fc)') {
-    Write-Output "WARNING: IPv6 source is a ULA ($src6)."
-    Write-Output "         The lab has no return path for ULA, so all IPv6 checks will FAIL."
-    Write-Output "         Fix: disable ULA on the CPE (uci set network.globals.ula_prefix='')"
-} elseif ($src6) {
-    Write-Output "INFO: IPv6 source address = $src6"
-} else {
-    Write-Output "WARNING: could not determine an IPv6 source address (no global IPv6?)"
+#
+# Skipped entirely under -SkipV6: on an IPv4-only LAN there is SUPPOSED to be no
+# global IPv6, so the "could not determine" warning below would fire on every run
+# and train the reader to ignore warnings in the evidence log.
+if (-not $SkipV6) {
+    $src6 = ""
+    try {
+        $r = Find-NetRoute -RemoteIPAddress $V6_TARGET -ErrorAction Stop
+        $src6 = ($r | Where-Object { $_.IPAddress } | Select-Object -First 1).IPAddress
+    } catch { }
+    if ($src6 -match '^(fd|fc)') {
+        Write-Output "WARNING: IPv6 source is a ULA ($src6)."
+        Write-Output "         The lab has no return path for ULA, so all IPv6 checks will FAIL."
+        Write-Output "         Fix: disable ULA on the CPE (uci set network.globals.ula_prefix='')"
+    } elseif ($src6) {
+        Write-Output "INFO: IPv6 source address = $src6"
+    } else {
+        Write-Output "WARNING: could not determine an IPv6 source address (no global IPv6?)"
+    }
 }
 
 Write-Output "--- Reachability ---"
