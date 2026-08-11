@@ -1768,6 +1768,19 @@ Windows クライアント用に `run-checks.ps1` を新規作成。
   → `check_uplink_free()` を追加(既存ブリッジ経路・新規作成経路の両方に適用)。
   **検出できるのは「IP を持つ」「既に別ブリッジの port」の 2 つだけ**で、
   未使用に見えて実は用途がある NIC は止められない。その旨も runbook §8.0 に明記した
+**ガードの動作確認**(実機で試した):
+
+```
+ACCESS_UPLINK=nic0  → vmbr1: 既存 (ラボ用)。uplink nic0 は既に接続済み   ← 正常系は通る
+ACCESS_UPLINK=nic2  → ERROR: nic2 は既に vmbr0 に接続されています         ← 管理 NIC を拒否
+ACCESS_UPLINK=nic11 → ERROR: nic11 には IP アドレスが付いています
+                             nic11  UP  10.10.10.20/24 ...                ← ストレージ網を拒否
+```
+
+**どちらも `ip link set` を打つ前に停止**し、vmbr2〜4 の処理にも進まなかった。
+`nic11` は QNAP のストレージ網(10G / MTU 9000)で、
+誤指定すればストレージ網とアクセス網が L2 で直結していた。
+
 - `setup-bras.sh`: `nft -f -` が既存チェインに追記されるため再実行でルールが増えていた。
   `setup-aftr.sh` は同じ理由で delete しているのに bras だけ抜けていた → `nft delete table` を追加
 - `run-checks.ps1`: `-SkipV6` でも IPv6 送信元チェックが走り、**正しい構成なのに毎回 WARNING** が
