@@ -49,6 +49,11 @@ cp -r "${REPO_ROOT}/docs/ipoe-lab" "${WORK}/docs/ipoe-lab"
 cat > "${WORK}/README.txt" <<'EOF'
 IPoE 検証ラボ 持ち込みバンドル
 
+【まずこれを見る】
+  docs/ipoe-lab/topology.png        検証ラボ 構成図 (svg 版も同じ場所にあります)
+      上の枠が仮想基盤 (VMware/Proxmox の中)、枠の下が物理 (物理スイッチ・
+      実機 CPE・検証 PC)。方式ごとにどこを通るかと、出口アドレスも図中にあります。
+
 【まずこれを読む】
   docs/ipoe-lab/runbook-vmware.md
       会社 VMware での構築手順。上から順に実行すれば完成します。

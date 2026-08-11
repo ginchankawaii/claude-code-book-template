@@ -33,6 +33,8 @@ _spec.loader.exec_module(_t)
 Presentation, Inches = _t.Presentation, _t.Inches
 title_slide, section_slide = _t.title_slide, _t.section_slide
 bullet_slide, table_slide, diagram_slide = _t.bullet_slide, _t.table_slide, _t.diagram_slide
+image_slide = _t.image_slide
+_TOPOLOGY = os.path.join(_HERE, "..", "topology.png")
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(_HERE, "handson.pptx")
 
@@ -72,6 +74,32 @@ def build():
             "・受講者がサーバに触ろうとしたら止める。ここを混ぜると学びが薄まる。",
             "・「3 つめ(いま何が起きたか)が本体です」と最初に言い切っておくと、",
             "  受講者がコマンドの写経で満足しなくなる。",
+        ],
+    )
+
+    image_slide(
+        prs,
+        _TOPOLOGY,
+        1330 / 1180,
+        side=[
+            (0, "検証ラボの全体像", "b"),
+            (1, "NTT の網も VNE も、全部 Linux VM で作ってあります", ""),
+            (1, "実機の CPE は 物理 NIC 経由で PG-ACCESS に繋ぎます", ""),
+            (0, "今日あなたが触るのは 2 つだけ", "b"),
+            (1, "赤枠の 実機 CPE と 検証用 PC です", ""),
+            (1, "青枠のサーバ側は 司会が動かします", ""),
+            (0, "覚えておくと迷わない", "b"),
+            (1, "PG-ACCESS … アドレスが配られる場所", ""),
+            (1, "VNE … IPv4 を IPv6 から取り出す場所", ""),
+            (1, "INET-SIM … 行き先。出口アドレスを教えてくれる", ""),
+            (0, "図の一番下を見てください", "w"),
+            (1, "方式ごとにどこを通るかと、出口アドレスが書いてあります", ""),
+        ],
+        notes=[
+            "【司会へ】",
+            "・**このページは飛ばさないこと。**ここが頭に入っていないと以降が全部ぼやける。",
+            "・ホワイトボードにも同じ絵を描いて、演習中ずっと残しておくとよい。",
+            "・「いまどこの話か」を毎回この絵で指すこと。",
         ],
     )
 

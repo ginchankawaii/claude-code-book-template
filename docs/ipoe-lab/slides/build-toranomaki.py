@@ -197,6 +197,53 @@ def bullet_slide(prs, title, bullets, footer=None, notes=None):
     return _notes(s, notes)
 
 
+def image_slide(prs, image_path, aspect, side=None, footer=None, notes=None):
+    """画像を 1 枚置く。**aspect は 横/縦**(画像を読まずに配置を決めるため明示させる)。
+
+    side を渡すと、画像を左に寄せて右に補足を並べる。
+    構成図のような縦長の絵をワイド画面に載せると左右が余るので、そこを使う。
+    """
+    s = prs.slides.add_slide(prs.slide_layouts[6])
+    SH = 7.5 - 0.5          # 上下 0.25 ずつ空ける
+    if side:
+        max_w = 8.5
+    else:
+        max_w = 12.6
+    h = SH
+    w = h * aspect
+    if w > max_w:
+        w = max_w
+        h = w / aspect
+    x = 0.3 if side else (13.333 - w) / 2
+    y = (7.5 - h) / 2
+    s.shapes.add_picture(image_path, Inches(x), Inches(y), Inches(w), Inches(h))
+
+    if side:
+        bx = x + w + 0.3
+        box = _textbox(s, bx, 0.6, max(2.0, 13.0 - bx), 6.3)
+        tf = box.text_frame
+        tf.word_wrap = True
+        for i, (ind, text, st) in enumerate(side):
+            p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+            p.level = ind
+            size = 15 - 2 * ind
+            color, bold = NAVY if ind == 0 else GRAY, False
+            if st == "b":
+                bold = True
+            elif st == "w":
+                color, bold = WARN, True
+            elif st == "c":
+                color = RGBColor(0x0B, 0x60, 0x40)
+            r = _put(p, text, size, bold, color)
+            if st == "c":
+                r.font.name = "Consolas"
+            p.space_after = Pt(8 if ind == 0 else 5)
+    if footer:
+        fb = _textbox(s, 0.3, 7.0, 12.7, 0.4)
+        _put(fb.text_frame.paragraphs[0], footer, 11, False, ACCENT)
+    return _notes(s, notes)
+
+
 def qa_slide(prs, wall_no, question, answer, dissent=None, ref=None, notes=None):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     tb = _textbox(s, 0.55, 0.3, 12.2, 0.7)

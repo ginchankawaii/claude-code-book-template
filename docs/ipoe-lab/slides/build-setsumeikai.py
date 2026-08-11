@@ -35,6 +35,8 @@ bullet_slide = _t.bullet_slide
 table_slide = _t.table_slide
 diagram_slide = _t.diagram_slide
 branch_slide = _t.branch_slide
+image_slide = _t.image_slide
+_TOPOLOGY = os.path.join(_HERE, "..", "topology.png")
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(_HERE, "setsumeikai.pptx")
 
@@ -623,6 +625,28 @@ def build():
     # ================= 第4部 =================
     section_slide(prs, "第4部", "検証環境で実際に見たもの",
                   "ここから先は全部、自分たちで測った値です")
+
+    image_slide(
+        prs,
+        _TOPOLOGY,
+        1330 / 1180,
+        side=[
+            (0, "何を再現しているのか", "b"),
+            (1, "NTT の網 (NGN)、ISP の PPPoE 終端、VNE、インターネット", ""),
+            (1, "全部 Linux VM です。実機の CPE も物理 NIC で繋げます", ""),
+            (0, "アドレスは全部ドキュメント用です", "b"),
+            (1, "2001:db8::/32 / 198.51.100.0/24 / 203.0.113.0/24", ""),
+            (1, "本物の誰かに迷惑をかけない設計にしてあります", ""),
+            (0, "図の一番下が今日の要点です", "w"),
+            (1, "方式ごとに通る場所が違い、出口アドレスも違います", ""),
+            (1, "だから 出口アドレスを見れば経路が分かる のです", ""),
+        ],
+        notes=[
+            "【話す人へ】",
+            "・全部を説明しないこと。**「箱がたくさんあるが、要は網と VNE を自分で作った」**で十分。",
+            "・図の一番下 (方式ごとの経路と出口アドレス) だけは指差して読むこと。第3部の伏線になる。",
+        ],
+    )
 
     diagram_slide(
         prs,

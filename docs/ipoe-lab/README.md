@@ -3,6 +3,7 @@
 PPPoE から IPoE(IPv4 over IPv6)への切替案件で発生するトラブルを、**案件前に社内 VMware 基盤で再現・検証する**ためのラボ設計です。
 NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネットをすべて Linux VM で模擬し、実機 CPE(お客様と同型のルータ)を物理 NIC 経由で収容できます。
 
+- **構成図(まずこれを見る)**: [topology.svg](topology.svg) / [topology.png](topology.png) — 上が仮想基盤、下が物理(実機 CPE・検証 PC)。方式ごとの経路と出口アドレスも図中に記載
 - 構築手順: [build.md](build.md)
 - 検証マトリクス・切替シナリオ・トラブル再現レシピ: [test-matrix.md](test-matrix.md)
 - **Proxmox プロトタイプ手順(自宅検証用)**: [proxmox-prototype.md](proxmox-prototype.md)

@@ -83,6 +83,8 @@ NTT の NGN 網、ISP の BRAS、VNE(MAP-E の BR と DS-Lite の AFTR)、イン
 
 ## 3. 構成
 
+(人が見る用の構成図は `docs/ipoe-lab/topology.png`。以下はテキスト版で、AI に貼るのはこちらで足ります)
+
 ```
                      [管理セグメント (各VMのeth0)]
 
@@ -275,5 +277,6 @@ OpenWrt の癖。nft の snat が終端判定で、15 本のルールが同じ�
 | 実機 CPE を繋ぐとき | `runbook-vmware.md` §8 |
 | なぜそうなっているか | `build-log.md`(実走の一次記録。全部ここにあります) |
 | 全体設計・アドレス計画 | `README.md` |
+| 構成が絵で見たい | `topology.png` / `topology.svg`(上が仮想基盤、下が物理) |
 | 検証シナリオ・障害再現レシピ | `test-matrix.md` |
 | 勉強会をやるとき | `study-guide.md` / `slides/setsumeikai.md` |

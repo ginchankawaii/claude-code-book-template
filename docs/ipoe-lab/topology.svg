@@ -1,0 +1,168 @@
+<svg viewBox="0 0 1330 1180" xmlns="http://www.w3.org/2000/svg" font-family="'Meiryo UI','Yu Gothic UI',system-ui,sans-serif">
+  <style>
+    .bg    { fill: #ffffff; }
+    .hv    { fill: #f4f7fa; stroke: #1f3355; stroke-width: 2.5; stroke-dasharray: 10 5; }
+    .hvt   { fill: #1f3355; font-size: 17px; font-weight: 700; }
+    .hvs   { fill: #45607f; font-size: 12px; }
+    .bus   { fill: #dce8f4; stroke: #1f3355; stroke-width: 2; }
+    .busl  { fill: #1f3355; font-size: 14px; font-weight: 700; }
+    .busa  { fill: #45607f; font-size: 11.5px; }
+    .vm    { fill: #ffffff; stroke: #007acc; stroke-width: 2; }
+    .real  { fill: #fff4e8; stroke: #c0392b; stroke-width: 2.5; }
+    .sw    { fill: #fdeee9; stroke: #c0392b; stroke-width: 2.5; }
+    .vmt   { fill: #1f3355; font-size: 14.5px; font-weight: 700; }
+    .vms   { fill: #555555; font-size: 11px; }
+    .nic   { fill: #007acc; font-size: 10.5px; font-weight: 700; }
+    .link  { stroke: #45607f; stroke-width: 2; fill: none; }
+    .plink { stroke: #c0392b; stroke-width: 3.5; fill: none; }
+    .ttl   { fill: #1f3355; font-size: 25px; font-weight: 700; }
+    .sub   { fill: #555555; font-size: 13px; }
+    .note  { fill: #555555; font-size: 12px; }
+    .warn  { fill: #c0392b; font-size: 12px; font-weight: 700; }
+    .lg    { fill: #ffffff; stroke: #b9c6d4; stroke-width: 1.5; }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="1330" height="1180"/>
+
+  <text class="ttl" x="30" y="38">IPoE 検証ラボ 構成図</text>
+  <text class="sub" x="30" y="60">上が仮想基盤(NTT の網・ISP・VNE をすべて VM で模擬)。下が物理。物理 NIC で両者をつなぎ、実機の CPE を収容する</text>
+
+  <!-- ===================== ハイパーバイザ ===================== -->
+  <rect class="hv" x="30" y="80" width="1160" height="736" rx="10"/>
+  <text class="hvt" x="52" y="108">ハイパーバイザ (VMware ESXi / Proxmox VE)</text>
+  <text class="hvs" x="52" y="128">この枠の中は全部 仮想マシンと仮想スイッチ。各 VM の管理用 NIC (eth0) は別セグメントなので図では省略</text>
+
+  <!-- 検証クライアント (仮想) -->
+  <rect class="vm" x="60" y="150" width="210" height="50" rx="6"/>
+  <text class="vmt" x="165" y="171" text-anchor="middle">LAB-CLIENT</text>
+  <text class="vms" x="165" y="189" text-anchor="middle">検証クライアント (VM)</text>
+
+  <rect class="bus" x="60" y="226" width="210" height="30" rx="4"/>
+  <text class="busl" x="165" y="246" text-anchor="middle">vmbr4  PG-LAN</text>
+  <path class="link" d="M165 200 L165 226"/>
+
+  <!-- CPE 役 (仮想) -->
+  <rect class="vm" x="60" y="282" width="210" height="58" rx="6"/>
+  <text class="vmt" x="165" y="304" text-anchor="middle">OpenWrt-CE</text>
+  <text class="vms" x="165" y="321" text-anchor="middle">CPE 役 (VM)</text>
+  <text class="vms" x="165" y="335" text-anchor="middle">MAP-E / DS-Lite / PPPoE</text>
+  <path class="link" d="M165 256 L165 282"/>
+
+  <!-- PG-ACCESS -->
+  <rect class="bus" x="60" y="376" width="1000" height="48" rx="4"/>
+  <text class="busl" x="80" y="396">vmbr1  PG-ACCESS 　NGN アクセス網 L2　MTU 1500</text>
+  <text class="busa" x="80" y="414">RA / DHCPv6-PD はここを流れる。PPPoE フレームもこの L2 を BRAS まで素通しする</text>
+  <path class="link" d="M165 340 L165 376"/>
+
+  <!-- NGN-SIM / BRAS -->
+  <rect class="vm" x="60" y="460" width="240" height="72" rx="6"/>
+  <text class="vmt" x="180" y="483" text-anchor="middle">NGN-SIM</text>
+  <text class="vms" x="180" y="501" text-anchor="middle">NTT の網の代わり</text>
+  <text class="vms" x="180" y="517" text-anchor="middle">radvd (RA) / Kea (DHCPv6-PD)</text>
+  <path class="link" d="M180 424 L180 460"/>
+  <text class="nic" x="187" y="444">eth1</text>
+
+  <rect class="vm" x="820" y="460" width="240" height="72" rx="6"/>
+  <text class="vmt" x="940" y="483" text-anchor="middle">BRAS</text>
+  <text class="vms" x="940" y="501" text-anchor="middle">ISP の PPPoE 終端</text>
+  <text class="vms" x="940" y="517" text-anchor="middle">accel-ppp。切替前の状態を作る</text>
+  <path class="link" d="M940 424 L940 460"/>
+  <text class="nic" x="947" y="444">eth1</text>
+
+  <!-- PG-CORE -->
+  <rect class="bus" x="60" y="566" width="600" height="48" rx="4"/>
+  <text class="busl" x="80" y="586">vmbr2  PG-CORE 　NGN 網内 IPv6</text>
+  <text class="busa" x="80" y="604">2001:db8:ff00::/64</text>
+  <path class="link" d="M180 532 L180 566"/>
+  <text class="nic" x="187" y="552">eth2</text>
+
+  <!-- VNE / INET-SIM -->
+  <rect class="vm" x="60" y="650" width="280" height="86" rx="6"/>
+  <text class="vmt" x="200" y="673" text-anchor="middle">VNE</text>
+  <text class="vms" x="200" y="691" text-anchor="middle">MAP-E の BR / DS-Lite の AFTR</text>
+  <text class="vms" x="200" y="707" text-anchor="middle">BR   2001:db8:9999::1</text>
+  <text class="vms" x="200" y="723" text-anchor="middle">AFTR 2001:db8:8888::1</text>
+  <path class="link" d="M200 614 L200 650"/>
+  <text class="nic" x="207" y="634">eth1</text>
+
+  <rect class="vm" x="660" y="650" width="300" height="86" rx="6"/>
+  <text class="vmt" x="810" y="673" text-anchor="middle">INET-SIM</text>
+  <text class="vms" x="810" y="691" text-anchor="middle">模擬インターネット</text>
+  <text class="vms" x="810" y="707" text-anchor="middle">Web 203.0.113.80 / DNS 203.0.113.53</text>
+  <text class="vms" x="810" y="723" text-anchor="middle">アクセス元アドレスを表示してくれる</text>
+
+  <!-- PG-INET -->
+  <rect class="bus" x="60" y="756" width="1000" height="48" rx="4"/>
+  <text class="busl" x="80" y="776">vmbr3  PG-INET 　模擬インターネット</text>
+  <text class="busa" x="80" y="794">203.0.113.0/24 + 2001:db8:cafe::/64</text>
+  <path class="link" d="M200 736 L200 756"/>
+  <text class="nic" x="207" y="750">eth2</text>
+  <path class="link" d="M810 736 L810 756"/>
+  <path class="link" d="M1010 532 L1010 756"/>
+  <text class="nic" x="1017" y="552">eth2</text>
+  <text class="note" x="690" y="584">BRAS は PG-CORE を通らず、直接 PG-INET へ抜ける</text>
+  <text class="note" x="690" y="604">(PPPoE の NAT は BRAS 側でやるため)</text>
+
+  <!-- ===================== 物理 NIC (仮想と物理の境界) ===================== -->
+  <path class="plink" d="M1060 400 L1120 400 L1120 880"/>
+  <circle cx="1120" cy="816" r="7" fill="#c0392b"/>
+  <text class="warn" x="1136" y="404">物理 NIC</text>
+  <text class="warn" x="1136" y="422">(uplink)</text>
+  <text class="warn" x="1136" y="820">ここが境界</text>
+
+  <!-- ===================== 物理 ===================== -->
+  <text class="hvt" x="52" y="866">物理 (ラックや机の上にある実物)</text>
+
+  <rect class="sw" x="960" y="880" width="300" height="52" rx="6"/>
+  <text class="vmt" x="1110" y="902" text-anchor="middle">物理スイッチ</text>
+  <text class="vms" x="1110" y="920" text-anchor="middle">仮想側の PG-ACCESS と同じ L2 になる</text>
+
+  <rect class="real" x="960" y="972" width="300" height="70" rx="6"/>
+  <text class="vmt" x="1110" y="995" text-anchor="middle">検証 CPE (実機)</text>
+  <text class="vms" x="1110" y="1013" text-anchor="middle">Cisco 892FJ / C1111-8P など</text>
+  <text class="vms" x="1110" y="1029" text-anchor="middle">お客様と同型機を持ち込んで試す</text>
+  <path class="plink" d="M1110 932 L1110 972"/>
+
+  <rect class="real" x="960" y="1082" width="300" height="62" rx="6"/>
+  <text class="vmt" x="1110" y="1104" text-anchor="middle">検証 PC (実機)</text>
+  <text class="vms" x="1110" y="1122" text-anchor="middle">CPE の LAN ポートに直結</text>
+  <text class="vms" x="1110" y="1137" text-anchor="middle">Windows でも可</text>
+  <path class="plink" d="M1110 1042 L1110 1082"/>
+
+  <!-- ===================== 凡例 ===================== -->
+  <rect class="lg" x="740" y="150" width="440" height="196" rx="6"/>
+  <text class="vmt" x="762" y="174">この図の読み方</text>
+  <rect class="vm" x="762" y="188" width="26" height="16" rx="3"/>
+  <text class="note" x="798" y="201">青枠 = 仮想マシン。ハイパーバイザの中</text>
+  <rect class="real" x="762" y="214" width="26" height="16" rx="3"/>
+  <text class="note" x="798" y="227">赤枠 = 実物。手で触れる機器</text>
+  <rect class="bus" x="762" y="240" width="26" height="16" rx="3"/>
+  <text class="note" x="798" y="253">水色の帯 = 仮想スイッチ (ポートグループ)</text>
+  <path class="plink" d="M762 276 L788 276"/>
+  <text class="note" x="798" y="280">赤い線 = 物理の配線</text>
+  <text class="warn" x="762" y="306">VNE と INET-SIM は必ず別 VM に分けること</text>
+  <text class="note" x="762" y="324">同居させると DS-Lite の網側 NAT が効かず、</text>
+  <text class="note" x="762" y="340">「疎通するのに経路が違う」状態になる</text>
+
+  <!-- ===================== 方式ごとの経路 ===================== -->
+  <rect class="lg" x="30" y="880" width="890" height="264" rx="6"/>
+  <text class="hvt" x="52" y="908">方式ごとに、どこを通るか</text>
+  <text class="note" x="52" y="928">出口アドレスを見れば、どの経路を通ったか分かります。疎通確認だけでは分かりません</text>
+
+  <text class="nic" x="52" y="962">PPPoE (切替前)</text>
+  <text class="note" x="200" y="962">CPE → PG-ACCESS → BRAS → PG-INET</text>
+  <text class="note" x="620" y="962">NAT は BRAS</text>
+  <text class="warn" x="620" y="980">出口 203.0.113.2</text>
+
+  <text class="nic" x="52" y="1020">MAP-E</text>
+  <text class="note" x="200" y="1020">CPE → PG-ACCESS → PG-CORE → VNE(BR) → PG-INET</text>
+  <text class="note" x="620" y="1020">NAT は CPE 自身</text>
+  <text class="warn" x="620" y="1038">出口 198.51.100.10 (PD 方式)</text>
+
+  <text class="nic" x="52" y="1078">DS-Lite</text>
+  <text class="note" x="200" y="1078">経路は MAP-E と同じ。VNE では AFTR が受ける</text>
+  <text class="note" x="620" y="1078">NAT は網側 (AFTR)</text>
+  <text class="warn" x="620" y="1096">出口 203.0.113.1</text>
+
+  <text class="note" x="52" y="1126">どの方式でも、CPE は実機と OpenWrt のどちらでも使えます。実機なら物理 NIC 経由、OpenWrt なら vmbr1 に直結です</text>
+</svg>
