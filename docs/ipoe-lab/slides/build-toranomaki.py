@@ -3,6 +3,19 @@
 
   usage: pip install python-pptx && python3 build-toranomaki.py [出力パス]
 
+pip が使えない / システムに手を入れたくない環境 (Proxmox ホスト等) では、
+wheel を落として展開し PYTHONPATH で読ませれば、パッケージを 1 つも
+インストールせずに実行できる:
+
+  mkdir -p ~/pptxlib ~/wheels && cd ~/wheels
+  # python-pptx / lxml / pillow / XlsxWriter / typing_extensions の wheel を取得
+  # (lxml と pillow は cp3XX-manylinux-x86_64 の版を選ぶこと)
+  python3 -c "import zipfile,glob,os; [zipfile.ZipFile(w).extractall(os.path.expanduser('~/pptxlib')) for w in glob.glob('*.whl')]"
+  PYTHONPATH=~/pptxlib python3 build-toranomaki.py
+
+Proxmox ホストで apt から入れようとすると libc6 と dpkg の更新を
+巻き込む (65 パッケージ)。ハイパーバイザでやってはいけない。
+
 内容の正本は docs/ipoe-lab/study-guide.md。本スクリプトはそれを
 プレゼン形式に落としたもの。内容を直す場合は study-guide.md も併せて直すこと。
 
