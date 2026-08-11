@@ -1662,18 +1662,33 @@ ip route 0.0.0.0 0.0.0.0 Tunnel0
 → `ipv6 nd ra suppress all`(版により `ipv6 nd suppress-ra`)を **WAN 側だけ**に入れる。
   **LAN 側(Vlan1)に入れてはいけない**(配下のクライアントが SLAAC できなくなる)。
 
-**投入して実測した**: NGN-SIM のアクセス側で 240 秒(RA 間隔 200 秒の 1 周期以上)
-キャプチャしたところ、RA は 15 件観測されたが**すべて NGN-SIM(`02:ac:00:00:00:01`)由来**で、
-**892FJ(`e4:aa:5d:82:36:4a`)由来は 0 件**だった。定期 RA は止まっている。
+**投入して実測した**(2 段階で確認):
+
+**(1) 定期 RA** — NGN-SIM のアクセス側で 240 秒(RA 間隔 200 秒の 1 周期以上)キャプチャ。
+RA は 15 件観測されたが**すべて NGN-SIM(`02:ac:00:00:00:01`)由来**で、
+**892FJ(`e4:aa:5d:82:36:4a`)由来は 0 件**。
 
 ```
 sudo timeout 240 tcpdump -nni ens19 -e 'icmp6 and ip6[40]==134'
 ```
 
-**ただし投入したのは `all` 無しの `ipv6 nd ra suppress`。**
-fable のレビュー指摘のとおり、**`all` を付けないと RS への応答(solicited RA)は返る版があり**、
-今回は RS を送って確かめていない。**確認できたのは「定期 RA が止まったこと」だけ**。
-runbook(§8.2 / §9-N)は `all` 付きに直したが、**自宅の実機はまだ `all` 無し**(バックログ 13)。
+**(2) solicited RA** — `all` 無しだと **RS への応答は返る版がある**(fable の指摘)ので、
+`all` を付け直したうえで RS を撒いて確かめた。
+
+```
+sudo apt-get install -y ndisc6
+sudo timeout 20 tcpdump -Unni ens19 -e 'icmp6 and (ip6[40]==133 or ip6[40]==134)' &
+sudo rdisc6 -m -r 3 -w 2000 ens19
+```
+
+```
+02:17:30.728843  02:ac:00:00:00:01 > 33:33:00:00:00:02  router solicitation    ← RS 送出
+02:17:30.972484  02:ac:00:00:00:01 > 33:33:00:00:00:01  router advertisement   ← NGN-SIM が 244ms で応答
+                 892FJ 由来: 0 件
+```
+
+892FJ は `ipv6 unicast-routing` 有効で同一リンク上にいるため、抑止が効いていなければ
+solicited RA を返すはず。**定期 RA と RS 応答の両方が止まっていることを確認した。**
 
 **③ IOS の DHCP サーバが ACK を返しているのに Windows が受け取れない**
 
@@ -2012,4 +2027,4 @@ CML 側で External Connector として認識させるには **CML の再起動�
 | 10 | **OpenWrt の MAP-E が実効 16 ポートしか使えない**(nft の snat が終端判定で、15 本のルールが同じマッチ条件のため先頭ブロックしか使われない)。ラボ固有の癖か OpenWrt のバグかは未確認。実機 CPE では NAT エンジンがポート集合を正しく扱うはずなので、**実機検証時に必ず数え直すこと** | 中 | **サイクル 4 では実施できず**。892FJ は classic IOS で **MAP-E 非対応**のため比較対象にならなかった。CML の Cat8000v なら可能(H3 で `nat64 map-e domain` の実装を確認済み)。**ラボ固有の癖の可能性が残ったまま**なので、演習で「MAP-E は 240 ポート」と教える前に必ず確認すること |
 | 11 | 方式・モードを往復させた後、`run-checks.sh` の IPv6 系が不安定になる | 中 | **完了(3.4-A)**。原因は **2 つ重なっていた**。① CPE の ULA へのフォールバック(ULA 無効化で解消)② **`setup-ngn.sh` が Kea フックの via 復路を on-link で上書き**(3.4-B。こちらが本命) |
 | 12 | **892FJ の IOS DHCP サーバから Windows 11 がアドレスを取れない**。サーバは `DHCPOFFER` / `DHCPACK` を送っているのにクライアントが `DHCPREQUEST` を再送し続け、APIPA(`169.254.x.x`)のまま。ログに `unicasting BOOTREPLY to client ... (192.168.100.6)` とあり、**まだ保持していないアドレス宛にユニキャストで返している**のが原因と見られる。L2 は正常(`Fa0 up/up` / `Access Mode VLAN: 1` / プール 254 アドレス)。検証は静的 IP で回避済み | 中 | サイクル 4 で発生。**ラボの不具合ではなく実機と Windows の相互接続**。切替当日に踏みうるので §9-M に切り分けを追記する |
-| 13 | **892FJ の WAN 側(GigabitEthernet0)で RA を抑止する**。`ipv6 unicast-routing` を入れると CPE 自身がアクセス網へ RA を撒く(`ND router advertisements are sent every 200 seconds`)。実網でやってはいけない挙動で、NGN-SIM や BRAS が CPE をルータとして学習してしまう。`ipv6 nd ra suppress all`(版により `ipv6 nd suppress-ra`)を **WAN 側だけ**に入れる。**`all` が必要**(無いと RS への応答は返る版がある)。**LAN 側(Vlan1)に入れてはいけない**(配下が SLAAC できなくなる) | 高 | サイクル 4 で発見。**runbook §8.2 と §9-N には反映済み**。自宅の実機には `all` 無しの版を投入したので、次に触れるとき `all` 付きに入れ直すこと |
+| 13 | **892FJ の WAN 側(GigabitEthernet0)で RA を抑止する**。`ipv6 unicast-routing` を入れると CPE 自身がアクセス網へ RA を撒く(`ND router advertisements are sent every 200 seconds`)。実網でやってはいけない挙動で、NGN-SIM や BRAS が CPE をルータとして学習してしまう。`ipv6 nd ra suppress all`(版により `ipv6 nd suppress-ra`)を **WAN 側だけ**に入れる。**`all` が必要**(無いと RS への応答は返る版がある)。**LAN 側(Vlan1)に入れてはいけない**(配下が SLAAC できなくなる) | 高 | **完了(サイクル 4 Check ②)**。runbook §8.2 / §9-N に反映し、自宅の実機にも `all` 付きで投入済み。定期 RA(240 秒キャプチャ)と RS 応答(`rdisc6` で誘発)の**両方が止まっている**ことを実測で確認した |
