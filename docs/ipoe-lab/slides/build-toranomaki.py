@@ -105,8 +105,28 @@ def section_slide(prs, num, title, goal):
     return s
 
 
+def _text_width(text):
+    """全角を 1.0、半角を 0.5 として文字幅を数える (日本語混在の折り返し見積もり用)"""
+    w = 0.0
+    for ch in text:
+        w += 0.5 if ord(ch) < 0x2E80 else 1.0
+    return w
+
+
+def _wrapped_lines(text, size_pt, box_in):
+    """そのフォントサイズ・箱幅で何行に折り返されるかの概算"""
+    per_line = max(6.0, (box_in * 72.0) / (size_pt * 1.03))
+    w = _text_width(text)
+    return max(1, int(w / per_line) + (1 if w % per_line else 0))
+
+
 def bullet_slide(prs, title, bullets, footer=None):
-    """bullets: [(indent, text, style)] style: '' / 'b'(太字) / 'w'(警告赤) / 'c'(コード)"""
+    """bullets: [(indent, text, style)] style: '' / 'b'(太字) / 'w'(警告赤) / 'c'(コード)
+
+    **箱からはみ出さないよう、行数を見積もってフォントと行間を自動で詰める。**
+    枚数が増えても手で調整しなくて済むようにするため。既定の行間は広めに取ってある
+    (読み上げながら目で追う資料なので、詰まっていると行を見失う)。
+    """
     s = prs.slides.add_slide(prs.slide_layouts[6])
     tb = _textbox(s, 0.55, 0.35, 12.2, 0.9)
     _put(tb.text_frame.paragraphs[0], title, 28, True, NAVY)
@@ -115,13 +135,30 @@ def bullet_slide(prs, title, bullets, footer=None):
     rule.fill.fore_color.rgb = ACCENT
     rule.line.fill.background()
 
-    box = _textbox(s, 0.65, 1.5, 12.0, 5.3)
+    BOX_H = 5.15 if footer else 5.45          # インチ。footer があるぶん本文を短くする
+    BOX_W = 12.0
+
+    def _plan(shrink):
+        """このフォント縮小量で、本文が何インチになるかを返す"""
+        total = 0.0
+        for ind, text, _st in bullets:
+            size = max(12, 20 - 3 * ind - shrink)
+            gap = max(3, (10 if ind == 0 else 6) - shrink)
+            lines = _wrapped_lines(text, size, BOX_W - 0.35 * ind)
+            total += (lines * size * 1.30 + gap) / 72.0
+        return total
+
+    shrink = 0
+    while shrink < 9 and _plan(shrink) > BOX_H:
+        shrink += 1
+
+    box = _textbox(s, 0.65, 1.5, BOX_W, BOX_H)
     tf = box.text_frame
     tf.word_wrap = True
     for i, (ind, text, st) in enumerate(bullets):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         p.level = ind
-        size = 20 - 3 * ind
+        size = max(12, 20 - 3 * ind - shrink)
         color, bold = NAVY if ind == 0 else GRAY, False
         if st == "b":
             bold = True
@@ -132,11 +169,13 @@ def bullet_slide(prs, title, bullets, footer=None):
         r = _put(p, text, size, bold, color)
         if st == "c":
             r.font.name = "Consolas"
-        p.space_after = Pt(7 if ind == 0 else 4)
+        p.space_after = Pt(max(3, (10 if ind == 0 else 6) - shrink))
 
     if footer:
-        fb = _textbox(s, 0.65, 6.85, 12.0, 0.5)
-        _put(fb.text_frame.paragraphs[0], footer, 12, False, ACCENT)
+        fb = _textbox(s, 0.65, 6.80, 12.0, 0.55)
+        ftf = fb.text_frame
+        ftf.word_wrap = True
+        _put(ftf.paragraphs[0], footer, 11 if _text_width(footer) > 55 else 12, False, ACCENT)
     return s
 
 
@@ -199,7 +238,23 @@ def table_slide(prs, title, headers, rows, widths, footer=None, fsize=12):
     _put(tb.text_frame.paragraphs[0], title, 26, True, NAVY)
 
     nrow, ncol = len(rows) + 1, len(headers)
-    h = min(5.7, 0.42 * nrow)
+
+    # **セルが折り返すと PowerPoint が行を勝手に伸ばし、表がスライドからはみ出す。**
+    # 行数と、各セルが列幅に対して何行になるかを見積もって、収まるまで文字を縮める。
+    AVAIL = 5.5   # インチ。表に使える高さ
+    while fsize > 8:
+        est = 0.0
+        for r, row in enumerate([headers] + rows):
+            ln = 1
+            for c, val in enumerate(row):
+                w = widths[c] if c < len(widths) else 2.0
+                ln = max(ln, _wrapped_lines(str(val).lstrip("!"), fsize, max(0.8, w - 0.25)))
+            est += max(0.34, ln * fsize * 1.45 / 72.0)
+        if est <= AVAIL:
+            break
+        fsize -= 1
+
+    h = min(AVAIL, max(0.34 * nrow, est if 'est' in dir() else 0.42 * nrow))
     gf = s.shapes.add_table(nrow, ncol, Inches(0.55), Inches(1.25), Inches(12.2), Inches(h))
     tbl = gf.table
     tbl.first_row = False
@@ -226,9 +281,10 @@ def table_slide(prs, title, headers, rows, widths, footer=None, fsize=12):
             cell.fill.solid()
             cell.fill.fore_color.rgb = WHITE if r % 2 else RGBColor(0xF2, 0xF6, 0xFA)
     if footer:
-        # 行が伸びても重ならないよう、折り返しが起きうるセル数に応じて余白を足す
-        grow = 0.30 * max(0, max(len(v) // 34 for row in rows for v in row))
-        fb = _textbox(s, 0.55, min(6.6, 1.45 + h + grow), 12.2, 0.6)
+        # 表が下に伸びても重ならないよう、見積もった高さの下に余白を空けて置く。
+        # est は上のループで求めた「折り返しを含む実際の高さ」なので、これを使う。
+        top = min(6.75, 1.25 + max(h, est if "est" in dir() else h) + 0.28)
+        fb = _textbox(s, 0.55, top, 12.2, 0.6)
         tf = fb.text_frame
         tf.word_wrap = True
         _put(tf.paragraphs[0], footer, 12, False, ACCENT)
