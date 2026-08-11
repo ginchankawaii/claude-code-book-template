@@ -30,11 +30,17 @@ set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CONF="${LAB_HOSTS_CONF:-${HERE}/lab-hosts.conf}"
-[ -f "$CONF" ] && . "$CONF"
 
-NGN="${NGN:-}"
-VNE="${VNE:-}"
-INET="${INET:-}"
+# **環境変数のほうを優先する。**
+# 先に環境変数を退避してから conf を読み、あとで書き戻す。
+# こうしないと「VNE=... ./lab-mode.sh restore」のような 1 回だけの上書きが
+# conf に黙って潰され、**指定したつもりの相手とは違うホストに繋ぎに行く。**
+# (フェーズ5 の実走確認中に踏んだ。テストが成立せず、原因も見えなかった)
+_env_NGN="${NGN:-}"; _env_VNE="${VNE:-}"; _env_INET="${INET:-}"
+[ -f "$CONF" ] && . "$CONF"
+NGN="${_env_NGN:-${NGN:-}}"
+VNE="${_env_VNE:-${VNE:-}}"
+INET="${_env_INET:-${INET:-}}"
 SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10)
 
 # 状態はこのファイルに覚えておく (status 表示と、期待値の案内に使う)

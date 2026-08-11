@@ -100,7 +100,7 @@ python3 docs/ipoe-lab/slides/build-toranomaki.py docs/ipoe-lab/slides/toranomaki
 | R3 | MAP-E ポート制限 | 24.3 A+P (p.423) / 24.4 / 19.4 | 使用ポートを割当範囲内に寄せる。無理なら固定 IP か PPPoE 併用 |
 | R4 | DS-Lite でポート開放不可 | 24.1 / 19.3 (p.356) | 方式変更(MAP-E 系 VNE)、固定 IP 契約、PPPoE 併用のいずれか |
 | R5 | MTU ブラックホール | 第10章 / 9.2 (p.208) / 14.9 (p.279) | **TCP MSS clamp**、CPE の MTU 手動設定(1460 等)。経路の ICMP 通過確認 |
-| R6 | DNS フォールバック遅延 | 17.2 / 15.3 Happy Eyeballs (p.288) / 付録 A.1 | 該当 FQDN の AAAA を止める / IPv6 経路を直す |
+| R6 | DNS フォールバック遅延 | 17.2 IPv6 から IPv4 へのフォールバック (p.326) / 15.3 Happy Eyeballs (p.288) / 付録 A.1 | 該当 FQDN の AAAA を止める / IPv6 経路を直す |
 | R7 | 二重終端(HGW 内蔵 + 配下ルータ) | 付録 B / 13.2 (p.251) | **どちらを終端にするか設計で確定**。配下はブリッジ or PD 要求停止 |
 | R8 | v6 オプション未契約相当 | 付録 A.2 | 契約状態を確認。未契約なら申込 |
 | R9 | プレフィックス変更で LAN 側が追従しない | 7.8 (p.173) / 13.3 (p.257) | 固定前提の設計をやめる。lifetime を理解した設計に |
