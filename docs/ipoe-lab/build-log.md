@@ -1864,7 +1864,7 @@ client (Ubuntu) --- Gi2 [ Cat8000v = MAP-E CE ] Gi1 --- BR 役 (Ubuntu)
 | 書いたもの | 結果 |
 |---|---|
 | `default-mapping-rule` サブモード | **存在しない**。`border-relay-address` が DMR を兼ねる |
-| `port-parameters share-ratio 256 port-offet-bits 4 start-port 4096` | 拒否(ドキュメント表記どおりだが通らない) |
+| `port-parameters share-ratio 256 port-offet-bits 4 start-port 4096` | 拒否。**ただしこれは公式ガイドの表記 `port-offet-bits` (s が抜けている) をそのまま試したもの**なので、拒否は当然。綴りを直した下の行も拒否されるので結論は変わらない |
 | `port-parameters share-ratio 256 contiguous-ports 16 start-port 4096` | 拒否 |
 | `port-parameters share-ratio 256 start-port 4096 port-offset-bits 4` | 拒否 |
 | **`port-parameters share-ratio 256 start-port 4096`** | **通る** |

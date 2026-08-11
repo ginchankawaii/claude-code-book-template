@@ -365,6 +365,7 @@ HGW が PD を取るので、配下でも PD を要求すると**二重終端**(
 | BIGLOBE IPv6 オプション | BIGLOBE 系 | **MAP-E** | 限定的(割り当てられたポートのみ) |
 | transix | インターネットマルチフィード | **DS-Lite** | 不可(固定 IP 契約が別途必要) |
 | クロスパス(Xpass) | アルテリア・ネットワークス | **DS-Lite** | 不可(固定 IP 契約が別途必要) |
+| ソフトバンク光 IPv6 高速ハイブリッド | BBIX | **独自方式**(4rd/SAM 系) | 光BBユニット前提。**本資料の設計対象外** |
 | v6 コネクト | 朝日ネット | **DS-Lite** | 不可(固定 IP 契約が別途必要) |
 
 **出典**: [ヤマハ RTpro「動作確認済み IPv6 IPoE + IPv4 over IPv6 接続サービス」](https://www.rtpro.yamaha.co.jp/RT/docs/ipoe_46/available_ipoe_46.html)、
@@ -396,6 +397,7 @@ HGW が PD を取るので、配下でも PD を要求すると**二重終端**(
 |---|---|
 | transix | `gw.transix.jp` |
 | クロスパス | `dgw.xpass.jp` |
+| v6 コネクト | `dslite.v6connect.net`(要確認。案件では実際に引いて確かめること) |
 
 ---
 
@@ -404,7 +406,7 @@ HGW が PD を取るので、配下でも PD を要求すると**二重終端**(
 ```
  お客様PC ── CPE(お客様のルータ)── [NGN: NTTの網] ── VNE ── ISP ── インターネット
               ↑ ひかり電話ありなら              ↑ IPv6の上でIPv4を通す事業者
-                HGW がここに入る                  (JPNE / インターネットマルチフィード等)
+                HGW がここに入る                  (JPIX(旧 JPNE)/ インターネットマルチフィード等)
 ```
 
 | 略語 | 読み | ざっくり言うと | ラボの担当 |
@@ -412,7 +414,7 @@ HGW が PD を取るので、配下でも PD を要求すると**二重終端**(
 | **CPE** | シーピーイー | Customer Premises Equipment = お客様側に置くルータ | OpenWrt-CE VM / 実機 |
 | **HGW** | エイチジーダブリュー | ひかり電話ルータ(ホームゲートウェイ)。**機種により IPoE を自分で終端する** | (ラボでは CPE 2 台直列で模擬。R7) |
 | **NGN** | エヌジーエヌ | Next Generation Network = NTT東西のIP網。ISP とは別の会社の設備 | **NGN-SIM** VM |
-| **VNE** | ブイエヌイー | Virtual Network Enabler = IPv6 の上で IPv4 を通すサービスの提供事業者。ISP はここを借りている | **VNE** VM |
+| **VNE** | ブイエヌイー | Virtual Network Enabler = **NGN 上の IPv6(IPoE)接続を ISP に卸す事業者**。多くは IPv4 over IPv6(MAP-E / DS-Lite)もセットで提供する。ISP はここを借りている | **VNE** VM |
 | **BRAS** | ブラス | Broadband Remote Access Server = PPPoE を終端する ISP 側の装置 | **BRAS** VM |
 | **NTE** | エヌティーイー | 網終端装置。PPPoE が必ず通る箱で、ここが夕方混む | (ラボには無い。BRAS が代役) |
 | **CE / BR** | シーイー / ビーアール | MAP-E の宅内側(CE)と網側(BR) | CE=CPE、BR=VNE VM |
@@ -463,7 +465,7 @@ psid-len = ea-len − (32 − IPv4プレフィックス長) = 16 − (32 − 24)
 
 | サービス | 方式 | 使えるポート数 |
 |---|---|---|
-| v6プラス(JPNE) | MAP-E(draft-03互換) | **240**(16×15、offset=4 相当) |
+| v6プラス(JPIX。旧 JPNE) | MAP-E(draft-03互換) | **240**(16×15、offset=4 相当) |
 | OCNバーチャルコネクト(NTT Com) | MAP-E(draft-03互換) | **1008**(16×63、offset=6 相当) |
 
 > **240 は少ないです。** ブラウザは 1 タブで数十本張ります。台数の多い拠点や監視系があると足りません。
@@ -633,7 +635,7 @@ psid-len = ea-len − (32 − IPv4プレフィックス長) = 16 − (32 − 24)
 | AFTR | AFTR、DS-Lite の NAT | AFTR |
 | Path MTU discovery | PMTUD、MTU 探索 | path-mtu-discovery |
 | 網終端装置 | NTE、終端装置 | — |
-| VNE 事業者 | VNE、JPNE / BBIX / xpass など | — |
+| VNE 事業者 | VNE、JPIX(旧 JPNE)/ BBIX / xpass など | — |
 
 **注意**: 「**v6 プラス**」「**transix**」「**クロスパス**」「**IPv6 オプション**」はすべて
 **サービス名(商品名)** であって方式名ではありません。教科書には出てきません。
