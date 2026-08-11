@@ -21,7 +21,8 @@
 
 param(
     [string]$ExpectSrc4 = "",
-    [string]$ExpectSrc6 = ""
+    [string]$ExpectSrc6 = "",
+    [switch]$SkipV6
 )
 
 $V4_TARGET = "203.0.113.80"
@@ -38,6 +39,16 @@ function Check {
     try { $ok = [bool](& $Test) } catch { $ok = $false }
     if ($ok) { Write-Output "PASS: $Name"; $script:Pass++ }
     else     { Write-Output "FAIL: $Name"; $script:Fail++ }
+}
+
+# LAN is IPv4-only in most real projects: the reason for moving off PPPoE is
+# speed (PPPoE congestion), not IPv6 adoption. Re-addressing the LAN would mean
+# firewall and application rework, so customers keep IPv4 inside.
+# In that setup IPv6 from the client is SUPPOSED to fail - do not count it.
+function CheckV6 {
+    param([string]$Name, [scriptblock]$Test)
+    if ($SkipV6) { Write-Output "SKIP: $Name (-SkipV6 / LAN is IPv4 only)"; return }
+    Check $Name $Test
 }
 
 Write-Output "=== IPoE switch check $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ==="
@@ -75,7 +86,7 @@ if ($src6 -match '^(fd|fc)') {
 
 Write-Output "--- Reachability ---"
 Check "IPv4 ping ($V4_TARGET)" { ping.exe -4 -n 2 -w 2000 $V4_TARGET | Out-Null; $LASTEXITCODE -eq 0 }
-Check "IPv6 ping ($V6_TARGET)" { ping.exe -6 -n 2 -w 2000 $V6_TARGET | Out-Null; $LASTEXITCODE -eq 0 }
+CheckV6 "IPv6 ping ($V6_TARGET)" { ping.exe -6 -n 2 -w 2000 $V6_TARGET | Out-Null; $LASTEXITCODE -eq 0 }
 
 Write-Output "--- DNS ---"
 Clear-DnsClientCache -ErrorAction SilentlyContinue
@@ -90,7 +101,7 @@ try { $body6 = (curl.exe -6 -fs --connect-timeout 5 "http://[$V6_TARGET]/") -joi
 if ($body4) { Write-Output $body4 }
 if ($body6) { Write-Output $body6 }
 Check "HTTP over IPv4" { $body4 -ne "" }
-Check "HTTP over IPv6" { $body6 -ne "" }
+CheckV6 "HTTP over IPv6" { $body6 -ne "" }
 
 Write-Output "--- Exit address (are we really going through the CPE?) ---"
 $s4 = ""
@@ -113,11 +124,11 @@ function BigOk {
     } finally { Remove-Item $tmp -ErrorAction SilentlyContinue }
 }
 Check "TCP 5MB over IPv4" { BigOk "-4" "http://$V4_TARGET/big.bin" }
-Check "TCP 5MB over IPv6" { BigOk "-6" "http://[$V6_TARGET]/big.bin" }
+CheckV6 "TCP 5MB over IPv6" { BigOk "-6" "http://[$V6_TARGET]/big.bin" }
 
 Write-Output "--- Fragmentation (large ICMP without DF) ---"
 Check "IPv4 fragment (2000B)" { ping.exe -4 -n 2 -w 2000 -l 2000 $V4_TARGET | Out-Null; $LASTEXITCODE -eq 0 }
-Check "IPv6 fragment (2000B)" { ping.exe -6 -n 2 -w 2000 -l 2000 $V6_TARGET | Out-Null; $LASTEXITCODE -eq 0 }
+CheckV6 "IPv6 fragment (2000B)" { ping.exe -6 -n 2 -w 2000 -l 2000 $V6_TARGET | Out-Null; $LASTEXITCODE -eq 0 }
 
 Write-Output "--- Path MTU (ping with DF) ---"
 foreach ($size in 1472, 1432, 1426) {

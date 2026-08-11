@@ -17,6 +17,13 @@ V4_TARGET="203.0.113.80"
 V6_TARGET="2001:db8:cafe::80"
 DNS_NAME="www.lab.example"
 BIG_MIN_BYTES="${BIG_MIN_BYTES:-5000000}"   # big.bin は 5MB。404 を掴んで PASS しないための下限
+# LAN 側に IPv6 を配らない構成 (実務の既定) では IPv6 を判定から外す。
+#   SKIP_V6=1 ./run-checks.sh
+# PPPoE→IPoE の切替動機は「PPPoE が遅い」であって IPv6 化ではないため、
+# **お客様の LAN は IPv4 のままにするのが通常**です。LAN を IPv6 化すると
+# アドレス再設計・FW 見直し・アプリ検証が発生するので、要件でない限りやりません。
+# その構成では IPv6 が通らないのが**正しい状態**で、FAIL として数えると誤解を招きます。
+SKIP_V6="${SKIP_V6:-0}"
 PASS=0; FAIL=0
 
 check() {  # check <名称> <コマンド...>
@@ -26,6 +33,15 @@ check() {  # check <名称> <コマンド...>
   else
     echo "FAIL: $name"; FAIL=$((FAIL+1))
   fi
+}
+
+# LAN が IPv4 のみの構成では IPv6 項目を判定に数えない (INFO として残す)
+check_v6() {
+  if [ "$SKIP_V6" = "1" ]; then
+    echo "SKIP: $1 (SKIP_V6=1 / LAN は IPv4 のみの構成)"
+    return 0
+  fi
+  check "$@"
 }
 
 echo "=== IPoE 切替チェック $(date '+%F %T') ==="
@@ -45,6 +61,7 @@ ping -c1 -W3 "$V6_TARGET" >/dev/null 2>&1 || true
 # RFC 6724 の送信元選択が **OpenWrt 既定の ULA (fd00::/8)** にフォールバックし、
 # ラボ内に ULA の復路が無いため IPv6 が全滅した。IPv4 は MAP-E トンネル経由で
 # 送信元選択が絡まないため無傷 →「IPv4 は通るのに IPv6 だけ死ぬ」という紛らわしい形になる。
+if [ "$SKIP_V6" != "1" ]; then
 SRC6_SEL="$(ip -6 route get "$V6_TARGET" 2>/dev/null | sed -n 's/.* src \([0-9a-f:]*\).*/\1/p')"
 case "${SRC6_SEL:-}" in
   fd*|fc*)
@@ -55,10 +72,11 @@ case "${SRC6_SEL:-}" in
   "") echo "警告: IPv6 の送信元アドレスを決定できません (グローバル IPv6 が無い可能性)" >&2 ;;
   *)  echo "INFO: IPv6 の送信元に ${SRC6_SEL} を使います" ;;
 esac
+fi
 
 echo "--- 疎通 ---"
 check "IPv4 ping (${V4_TARGET})"      ping -c2 -W2 "$V4_TARGET"
-check "IPv6 ping (${V6_TARGET})"      ping -c2 -W2 "$V6_TARGET"
+check_v6 "IPv6 ping (${V6_TARGET})"      ping -c2 -W2 "$V6_TARGET"
 
 echo "--- DNS ---"
 # キャッシュを落としてから引く。ラボの dnsmasq は local-ttl=3600 なので、
@@ -79,7 +97,7 @@ BODY4="$(curl -4 -fs --connect-timeout 5 "http://${V4_TARGET}/" 2>/dev/null)"
 BODY6="$(curl -6 -fs --connect-timeout 5 "http://[${V6_TARGET}]/" 2>/dev/null)"
 printf '%s\n' "$BODY4" "$BODY6"
 check "HTTP over IPv4"                test -n "$BODY4"
-check "HTTP over IPv6"                test -n "$BODY6"
+check_v6 "HTTP over IPv6"                test -n "$BODY6"
 
 echo "--- 出口アドレス (意図した経路を通っているか) ---"
 SRC4="$(printf '%s\n' "$BODY4" | awk '/^src:/{print $2; exit}')"
@@ -103,11 +121,11 @@ big_ok() {  # big_ok <-4|-6> <URL>
   [ -n "$n" ] && [ "$n" -ge "$BIG_MIN_BYTES" ] 2>/dev/null
 }
 check "TCP 5MB over IPv4"             big_ok -4 "http://${V4_TARGET}/big.bin"
-check "TCP 5MB over IPv6"             big_ok -6 "http://[${V6_TARGET}]/big.bin"
+check_v6 "TCP 5MB over IPv6"             big_ok -6 "http://[${V6_TARGET}]/big.bin"
 
 echo "--- フラグメント (DF なし大 ICMP。相互接続試験で実装バグが出た領域) ---"
 check "IPv4 fragment (2000B)"         ping -c2 -W2 -s 2000 "$V4_TARGET"
-check "IPv6 fragment (2000B)"         ping -c2 -W2 -s 2000 "$V6_TARGET"
+check_v6 "IPv6 fragment (2000B)"         ping -c2 -W2 -s 2000 "$V6_TARGET"
 
 echo "--- MTU 実測 (DF 付き ping, payload = MTU-28) ---"
 for size in 1472 1432 1426; do   # 1500 / 1460(MAP-E,DS-Lite) / 1454(PPPoE)
