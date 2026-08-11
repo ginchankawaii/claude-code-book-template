@@ -19,6 +19,9 @@ Proxmox ホストで apt から入れようとすると libc6 と dpkg の更新
 内容の正本は docs/ipoe-lab/study-guide.md。本スクリプトはそれを
 プレゼン形式に落としたもの。内容を直す場合は study-guide.md も併せて直すこと。
 
+**話す人向けの指示はスライド本体に書かないこと。**「〜と宣言してください」「生徒役は若手に」
+のような講師への指示は **notes= に渡してノートへ**。投影すると聴衆に見えてしまいます。
+
 フォントは Windows 標準の「Meiryo UI」を指定している (会社 PC で開く前提)。
 Mac/Linux で開く場合は自動で代替フォントになる。
 """
@@ -69,7 +72,22 @@ def _textbox(slide, x, y, w, h):
     return tb
 
 
-def title_slide(prs, title, subtitle, lines):
+def _notes(s, notes):
+    """**話す人向けの指示は必ずここへ。**
+    スライド本体に「〜と宣言してください」「ここは 5 分かけて」と書くと、
+    **投影されて聴衆に見えてしまう。**司会への指示はノートに置くこと。
+    """
+    if not notes:
+        return s
+    tf = s.notes_slide.notes_text_frame
+    lines = notes if isinstance(notes, (list, tuple)) else [notes]
+    for i, ln in enumerate(lines):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.text = ln
+    return s
+
+
+def title_slide(prs, title, subtitle, lines, notes=None):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     band = _textbox(s, 0.6, 1.6, 12.1, 1.4)
     tf = band.text_frame
@@ -84,10 +102,10 @@ def title_slide(prs, title, subtitle, lines):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         _put(p, ln, 14, False, GRAY)
         p.space_after = Pt(8)
-    return s
+    return _notes(s, notes)
 
 
-def section_slide(prs, num, title, goal):
+def section_slide(prs, num, title, goal, notes=None):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     bg = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(13.333), Inches(7.5))
     bg.fill.solid()
@@ -102,7 +120,7 @@ def section_slide(prs, num, title, goal):
     p = tf.add_paragraph()
     p.space_before = Pt(16)
     _put(p, "ゴール: " + goal, 16, False, RGBColor(0xD5, 0xE5, 0xF2))
-    return s
+    return _notes(s, notes)
 
 
 def _text_width(text):
@@ -120,7 +138,7 @@ def _wrapped_lines(text, size_pt, box_in):
     return max(1, int(w / per_line) + (1 if w % per_line else 0))
 
 
-def bullet_slide(prs, title, bullets, footer=None):
+def bullet_slide(prs, title, bullets, footer=None, notes=None):
     """bullets: [(indent, text, style)] style: '' / 'b'(太字) / 'w'(警告赤) / 'c'(コード)
 
     **箱からはみ出さないよう、行数を見積もってフォントと行間を自動で詰める。**
@@ -176,10 +194,10 @@ def bullet_slide(prs, title, bullets, footer=None):
         ftf = fb.text_frame
         ftf.word_wrap = True
         _put(ftf.paragraphs[0], footer, 11 if _text_width(footer) > 55 else 12, False, ACCENT)
-    return s
+    return _notes(s, notes)
 
 
-def qa_slide(prs, wall_no, question, answer, dissent=None, ref=None):
+def qa_slide(prs, wall_no, question, answer, dissent=None, ref=None, notes=None):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     tb = _textbox(s, 0.55, 0.3, 12.2, 0.7)
     _put(tb.text_frame.paragraphs[0], f"つまずきの壁 {wall_no}", 22, True, ACCENT)
@@ -228,10 +246,10 @@ def qa_slide(prs, wall_no, question, answer, dissent=None, ref=None):
         tf = fb.text_frame
         tf.word_wrap = True
         _put(tf.paragraphs[0], "教科書 / ラボ: " + ref, 12, False, ACCENT)
-    return s
+    return _notes(s, notes)
 
 
-def table_slide(prs, title, headers, rows, widths, footer=None, fsize=12):
+def table_slide(prs, title, headers, rows, widths, footer=None, fsize=12, notes=None):
     """セルの値が "!" で始まると、その 1 セルだけ赤の太字で強調する ("!" は表示されない)"""
     s = prs.slides.add_slide(prs.slide_layouts[6])
     tb = _textbox(s, 0.55, 0.3, 12.2, 0.8)
@@ -288,10 +306,10 @@ def table_slide(prs, title, headers, rows, widths, footer=None, fsize=12):
         tf = fb.text_frame
         tf.word_wrap = True
         _put(tf.paragraphs[0], footer, 12, False, ACCENT)
-    return s
+    return _notes(s, notes)
 
 
-def branch_slide(prs, title, root, left, right, note=None):
+def branch_slide(prs, title, root, left, right, note=None, notes=None):
     """root から left / right へ分岐する図。root/left/right は (label, sublabel)"""
     s = prs.slides.add_slide(prs.slide_layouts[6])
     tb = _textbox(s, 0.55, 0.3, 12.2, 0.8)
@@ -330,10 +348,10 @@ def branch_slide(prs, title, root, left, right, note=None):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             _put(p, ln, 14, ln.startswith("※"), WARN if ln.startswith("※") else GRAY)
             p.space_after = Pt(6)
-    return s
+    return _notes(s, notes)
 
 
-def diagram_slide(prs, title, boxes, note=None):
+def diagram_slide(prs, title, boxes, note=None, notes=None):
     """boxes: [(label, sublabel)] を横一列に並べて矢印でつなぐ"""
     s = prs.slides.add_slide(prs.slide_layouts[6])
     tb = _textbox(s, 0.55, 0.3, 12.2, 0.8)
@@ -370,7 +388,7 @@ def diagram_slide(prs, title, boxes, note=None):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             _put(p, ln, 14, ln.startswith("※"), WARN if ln.startswith("※") else GRAY)
             p.space_after = Pt(6)
-    return s
+    return _notes(s, notes)
 
 def build():
     prs = Presentation()
@@ -412,7 +430,7 @@ def build():
 
     bullet_slide(
         prs,
-        "この教材の現在のステータス(講師は必読)",
+        "この教材の現在のステータス",
         [
             (0, "使える部分", "b"),
             (1, "教科書との対応表 / 用語集 / つまずきの壁 Q&A — ラボの状態に依存しない", ""),
@@ -425,6 +443,12 @@ def build():
             (1, "proxmox-prototype.md §0.5 → §2 → §5 を一巡する", ""),
             (1, "実施前に test-matrix §4 の「⚠ 実測」注記を必ず読む (5 件が想定と違った)", ""),
             (1, "第1回はパイロット実施。実測が取れるまで第2回以降の日程を確定しない", ""),
+        ],
+        notes=[
+            "【講師へ】このページは必読。**受講者には投影しなくてよい。**",
+            "・時間配分は実測していない仮案。休憩と質疑の余白が無いので、そのままだと溢れる。",
+            "・実施前に test-matrix §4 の「⚠ 実測」注記を必ず読むこと。5 件が想定と違った。",
+            "・第1回はパイロットとして回し、実測が取れるまで第2回以降の日程を確定しないこと。",
         ],
     )
 
@@ -912,7 +936,7 @@ def build():
 
     bullet_slide(
         prs,
-        "2-7. 演習 2-B: DUID の罠(講師が仕掛ける)",
+        "2-7. 演習 2-B: DUID の罠",
         [
             (0, "OpenWrt は DUID-LL を送るので DROP を素通りする (サイクル 5 実測)", "w"),
             (1, "README.md / test-matrix.md §3 Phase 1 手順 5", ""),
@@ -1209,7 +1233,13 @@ def build():
 
     # ---------------- 壁 Q&A ----------------
     section_slide(prs, "つまずきの壁", "現場で実際に出る質問と答え方",
-                  "生徒役は若手にやらせる。時間割の外で各回 +15〜20 分")
+                  "現場で実際に出る質問と、その答え方",
+                  notes=[
+                      "【講師へ】",
+                      "・**生徒役は若手にやらせること。**講師が両方やると聞き流される。",
+                      "・時間割の外。各回の後ろに +15〜20 分で回す。",
+                      "・全部やらない。その回で出た質問に近いものを 2〜3 個選ぶ。",
+                  ])
 
     qa_slide(prs, 1, "IPoE って NTT がやってるサービス名ですか?",
              ["いや、IP over Ethernet の略。PPP を挟まずに Ethernet に直接 IP を載せる接続方式の名前。",
