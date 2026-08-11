@@ -1,10 +1,12 @@
 # 構築ログ / PDCA 記録
 
-**サイクル 1〜6 がすべて完了しています。**(VM 起動 → IPv6 配布 → **MAP-E / DS-Lite で IPv4 が通り
+**サイクル 1〜7 が完了しています。**(VM 起動 → IPv6 配布 → **MAP-E / DS-Lite で IPv4 が通り
 `run-checks.sh` が両方式で `PASS` するところまで**実測済み)。
 トラブル再現レシピ(R1/R2/R3/R4/R5/R6/D1 の 7 件)まで実走済み。runbook 執筆と持ち込みバンドルも完了。
 **実機 Cisco 892FJ での DS-Lite 検証(サイクル 4)も完了**し、実機 Windows 11 から
 出口 `203.0.113.1` / MTU 1460 / 5MB 完走を確認しました(H1 / H2 確定)。
+**CML(Cat8000v / IOS XE 17.15.01a)での MAP-E 検証(サイクル 7)も実施済み**ですが、
+目的だった実効ポート数は**測れませんでした**(MAP-E を有効にすると転送エンジンが落ちるため)。
 残っている未確認は §3 のトラッカーと §5 のバックログにあります。
 
 動かせば必ず設計と食い違う箇所が出ます。それを場当たりに直して忘れるのではなく、
@@ -112,6 +114,7 @@ ssh root@192.168.11.20 'cd /root/ipoe-lab/lab/ipoe/proxmox && ./provision.sh ips
 | 4 | 実機 CPE(892FJ)を収容する | **完了**(成功条件 4 件すべて達成。H1 / H2 確定) | 約 120 分 | 見た目では 10G と 1G の RJ45 を区別できない。**NIC 名は udev でリネームされているので名前から物理位置を逆算できない**。RA 方式でないと `ipv6 address autoconfig` は何も取得しない。classic IOS は `ip tcp adjust-mss` が無いと 5MB 転送で詰まる |
 | 5 | トラブル再現レシピを実走して再現条件を確定 | **完了**(R1/R2/R3/R4/R5/R6/D1 の 7 件) | 約 150 分 | **4 件とも「レシピのままでは想定と違った」**。R3 は 240 でなく 16 で詰まる / R4 は待受の対照実験が無いと誤判定する / R5 は MSS clamp と PMTU キャッシュの 2 つを外さないと再現しない |
 | 6 | runbook-vmware.md を書き上げ、Box バンドルを作る | **完了**(runbook 執筆 + `make-bundle.sh`) | — | 実走の一次記録があれば runbook は一気に書ける。逆に記録が無いと書けない。**同居構成(VNE+INET)をそのまま会社に持ち込ませない**注意書きが最重要だった |
+| 7 | CML の Cat8000v で MAP-E の実効ポート数を数える | **完了**(ただし目的は未達。理由は下記) | 約 90 分 | **設定が入ることと動くことは別物。**`show nat64 map-e` が完璧な値を返す裏で転送エンジン(QFP)が落ちていた。ドキュメントに「非対応」と書いてある構成もパーサは通す。CML の cat8000v は設定の 1 行目が `platform console serial` でないと startup-config として認識されない |
 
 ---
 
@@ -1803,9 +1806,143 @@ ACCESS_UPLINK=nic11 → ERROR: nic11 には IP アドレスが付いています
 - `make-bundle.sh`: `git diff --quiet` がステージ済み変更を見ておらず「未コミット」警告がすり抜けていた
   → `--cached` も見る
 
-**`ipv6 nd ra suppress` は `all` が要る**(Check ② 参照)。runbook は直したが実機は未投入。
+**`ipv6 nd ra suppress` は `all` が要る**(Check ② 参照)。runbook を直し、実機にも投入して実測済み。
 
 <!-- サイクル 1 と同じ形式で追記する -->
+
+---
+
+### サイクル 7: CML の Cat8000v で MAP-E の実効ポート数を数える(バックログ 10)
+
+#### Plan
+
+**目的**: バックログ 10 の決着。仮想ラボの OpenWrt は設計 240 ポートに対し**実効 16** しか
+使えなかった。これが **OpenWrt 固有の癖なのか、MAP-E 一般の話なのか**が分からないままで、
+勉強会で「MAP-E は 240 ポート」と教えてよいかが決められない。
+
+892FJ は classic IOS で MAP-E 非対応のためサイクル 4 では比較できなかった。
+CML の Cat8000v(IOS XE 17.15.01a)で確認する。
+
+**成功条件**: 実機 CE が **240 個の外側ポートを使えることを実測で示す**(または使えないことを示す)。
+
+**構成**(CML 上に 3 ノード):
+
+```
+client (Ubuntu) --- Gi2 [ Cat8000v = MAP-E CE ] Gi1 --- BR 役 (Ubuntu)
+192.168.1.10           192.168.1.1  2001:db8:100a:500::1     ::9
+```
+
+クライアントから**送信元ポートを 400 個ばらけさせて UDP を撃ち**、WAN 側リンクを
+キャプチャして実際に使われた外側ポートを数える。ラボと同じ MAP-E パラメータを使う
+(rule /40 / ea-len 16 / PSID 長 8 / offset 4 / PSID 5 → 198.51.100.10 / 4176-4191)。
+
+#### Do
+
+**CML の API だけで完結させた**(GUI を使わない)。使ったエンドポイント:
+
+| 用途 | エンドポイント |
+|---|---|
+| ラボ・ノード・リンク作成 | `POST /labs` / `/labs/{id}/nodes` / `/labs/{id}/interfaces` / `/labs/{id}/links` |
+| 設定投入 | `PATCH /labs/{id}/nodes/{id}` の `configuration` |
+| **コンソールログ取得** | `GET /labs/{id}/nodes/{id}/consoles/0/log` |
+| **リンクのパケットキャプチャ** | `PUT /labs/{id}/links/{id}/capture/start` → `GET /pcap/{key}/packets` |
+
+**手順 1: 設定が入らない(2 回はまった)**
+
+① `configuration` を渡してノードを作ったのに `No startup-config, starting autoinstall/pnp/ztp...`。
+  → CML の cat8000v は **設定の 1 行目が `platform console serial` である必要がある**。
+② 設定を入れ直そうとすると
+  `Cannot modify node attributes configuration in state STOPPED`。
+  → 一度起動したノードは STOPPED では設定を変えられない。
+  **`stop` → `wipe_disks`(状態が DEFINED に戻る)→ `PATCH` → `start` の順**でなければならない。
+
+**手順 2: 構文が違う(公式ドキュメントと実機がずれていた)**
+
+[IOS XE 17.x の設定ガイド](https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/ip-addressing/b-ip-addressing/m_iadnat-map-e1.html)
+に従って書いたが 3 か所で `% Invalid input detected`。
+
+| 書いたもの | 結果 |
+|---|---|
+| `default-mapping-rule` サブモード | **存在しない**。`border-relay-address` が DMR を兼ねる |
+| `port-parameters share-ratio 256 port-offet-bits 4 start-port 4096` | 拒否(ドキュメント表記どおりだが通らない) |
+| `port-parameters share-ratio 256 contiguous-ports 16 start-port 4096` | 拒否 |
+| `port-parameters share-ratio 256 start-port 4096 port-offset-bits 4` | 拒否 |
+| **`port-parameters share-ratio 256 start-port 4096`** | **通る** |
+| `port-parameters share-ratio 256 port-offset-bits 4` | 通る |
+
+**再起動 1 回が 10 分**かかるので、**候補構文を別々の `nat64 map-e domain` に入れて 1 回のブートで
+まとめて試した**(domain 11〜15)。通ったものだけ `show nat64 map-e` に値が入るので一発で分かる。
+
+**手順 3: 導出値は設計と完全一致した**
+
+```
+MAP-E Domain 1
+      Ip-v6-address 2001:DB8:100A:500::9
+      Ip-v6-prefix 2001:DB8:100A:500::/56
+      Ip-v4-prefix 198.51.100.10/32
+      Local-Ip-v4-prefix 192.168.1.0/24
+         Share-ratio 256   Contiguous-ports 16   Start-port 4096
+         Share-ratio-bits 8   Contiguous-ports-bits 4   Port-offset-bits 4
+      Port-set-id 5
+```
+
+**`share-ratio` と `start-port` だけ与えれば、`Contiguous-ports 16` と `Port-offset-bits 4` は
+IOS XE が自分で導出する。**手計算(15 ブロック × 16 = 240)と一致した。
+
+**手順 4: しかしパケットが 1 つも流れない**
+
+WAN 側リンクのキャプチャが **0 パケット**。クライアント側は `sent=400 err=0` で撃てている。
+コンソールログを見て理由が分かった。
+
+```
+03:32:19  %SYS-5-CONFIG_P: Configured programmatically by process CVAC Process
+03:33:17  %PMAN-0-PROCFAILCRIT: A critical process qfp_ucode_c8kv has failed (rc 134)
+03:33:27  %PMAN-5-EXITACTION: Critical process qfp_ucode_c8kv fault on fp_0_0 (rc=134)
+```
+
+**設定投入の約 60 秒後に転送エンジン(QFP)が落ちてルータが再起動していた。**
+
+#### Check
+
+**① 原因の切り分け(対照実験)**
+
+| ブート | MAP-E の状態 | QFP クラッシュ |
+|---|---|---|
+| 設定なし(1 回目・2 回目) | — | **無し** |
+| `map-e domain` はあるが `port-parameters` が構文エラーで入らなかった | 機能していない | **無し** |
+| `port-parameters` が通った(プローブ 6 ドメイン) | 機能する | **発生** |
+| `port-parameters` が通った(正しい `/56` の 1 ドメインのみ) | 機能する | **発生** |
+
+**`port-parameters` が通って MAP-E が実際に機能する状態になった瞬間に落ちる。**
+ドキュメントに「非対応」と明記されている **`/64` の BMR が原因ではない**
+(それを外して正しい `/56` 1 本だけにしても落ちる)。
+
+**② 言えること / 言えないこと**
+
+- 言えること: **CML の Cat8000v 17.15.01a では MAP-E の転送は検証できない**
+- 言えること: **設定構文と導出値は正しい**。`show nat64 map-e` は期待どおりの値を返す
+- **言えないこと: 実機の IOS XE がどうか。**仮想プラットフォーム固有の可能性が高いが、断定しない
+
+**③ ドキュメントの「非対応」はパーサでは弾かれない**
+
+「BMR の prefix length 64 は非対応」と明記されているのに、`/64` を入れても**設定は通り、
+`show` にも正常に表示された**。**設定が入ったことは動作の保証にならない。**
+
+**④ この件の一番の教訓(勉強会で必ず伝えること)**
+
+**`show` が正しい値を返すことと、実際に転送できることは別物。**
+今回は `show nat64 map-e` が完璧な値を返している裏で、転送エンジンが死んでいた。
+**検証は必ずパケットを流して測るところまでやる。設定確認で終わらせない。**
+
+これはサイクル 3 の「`run-checks.sh` が PASS するのに実は CPE を通っていなかった」と同じ構図で、
+**このラボで 2 回目**の同種の失敗である。
+
+#### Act
+
+- **バックログ 10 は未解決のまま。**実機の IOS XE か、RTX 等の別 CE が必要
+- 勉強会では **「設計上 240 ポート」とだけ言い、「実測で 240 使えた」とは言わないこと**
+- CML ラボ `B10-mape-portcount` は停止して残してある(再開すれば同じ実験を再現できる)
+- 虎の巻(pptx)の第4部に、この結果を 3 枚で追加した
 
 ---
 
@@ -2024,7 +2161,7 @@ CML 側で External Connector として認識させるには **CML の再起動�
 | 7 | OpenWrt の rootfs がイメージ拡張(2G)に追従しておらず 98MB のまま。パーティション/FS の拡張まで `provision.sh` でやる | 中 | 追加パッケージで容量不足が出たら |
 | 8 | ラボ内 IPv6 DNS(`2001:db8:cafe::53`)への到達確認 | 高 | **完了(サイクル 3)**。原因は 3 つ重なっていた(送信元制限付き既定経路 / dnsmasq の listen インタフェース / CPE のリバインド保護)。Do/Check ①②③ 参照 |
 | 9 | **DS-Lite の AFTR NAT が効かない**(VNE と INET-SIM の同居による) | 高 | **完了(3.3-A)**。INET-SIM を 9005 に分離して解消。`provision.sh` に `SPLIT_INET=1` を追加 |
-| 10 | **OpenWrt の MAP-E が実効 16 ポートしか使えない**(nft の snat が終端判定で、15 本のルールが同じマッチ条件のため先頭ブロックしか使われない)。ラボ固有の癖か OpenWrt のバグかは未確認。実機 CPE では NAT エンジンがポート集合を正しく扱うはずなので、**実機検証時に必ず数え直すこと** | 中 | **サイクル 4 では実施できず**。892FJ は classic IOS で **MAP-E 非対応**のため比較対象にならなかった。CML の Cat8000v なら可能(H3 で `nat64 map-e domain` の実装を確認済み)。**ラボ固有の癖の可能性が残ったまま**なので、演習で「MAP-E は 240 ポート」と教える前に必ず確認すること |
+| 10 | **OpenWrt の MAP-E が実効 16 ポートしか使えない**(nft の snat が終端判定で、15 本のルールが同じマッチ条件のため先頭ブロックしか使われない)。ラボ固有の癖か OpenWrt のバグかは未確認。実機 CPE では NAT エンジンがポート集合を正しく扱うはずなので、**実機検証時に必ず数え直すこと** | 中 | **未解決(サイクル 7 で試したが測れず)**。892FJ は MAP-E 非対応。CML の Cat8000v は**設定構文と導出値は設計と完全一致した(240 = 15 × 16)**が、**MAP-E を有効にすると転送エンジン(QFP)が落ちて再起動**するため転送を測れなかった。**実機の IOS XE か RTX 等の別 CE が必要。**演習では「設計上 240」とだけ言い、「実測で 240 使えた」とは言わないこと |
 | 11 | 方式・モードを往復させた後、`run-checks.sh` の IPv6 系が不安定になる | 中 | **完了(3.4-A)**。原因は **2 つ重なっていた**。① CPE の ULA へのフォールバック(ULA 無効化で解消)② **`setup-ngn.sh` が Kea フックの via 復路を on-link で上書き**(3.4-B。こちらが本命) |
 | 12 | **892FJ の IOS DHCP サーバから Windows 11 がアドレスを取れない**。サーバは `DHCPOFFER` / `DHCPACK` を送っているのにクライアントが `DHCPREQUEST` を再送し続け、APIPA(`169.254.x.x`)のまま。ログに `unicasting BOOTREPLY to client ... (192.168.100.6)` とあり、**まだ保持していないアドレス宛にユニキャストで返している**のが原因と見られる。L2 は正常(`Fa0 up/up` / `Access Mode VLAN: 1` / プール 254 アドレス)。検証は静的 IP で回避済み | 中 | サイクル 4 で発生。**ラボの不具合ではなく実機と Windows の相互接続**。切替当日に踏みうるので §9-M に切り分けを追記する |
 | 13 | **892FJ の WAN 側(GigabitEthernet0)で RA を抑止する**。`ipv6 unicast-routing` を入れると CPE 自身がアクセス網へ RA を撒く(`ND router advertisements are sent every 200 seconds`)。実網でやってはいけない挙動で、NGN-SIM や BRAS が CPE をルータとして学習してしまう。`ipv6 nd ra suppress all`(版により `ipv6 nd suppress-ra`)を **WAN 側だけ**に入れる。**`all` が必要**(無いと RS への応答は返る版がある)。**LAN 側(Vlan1)に入れてはいけない**(配下が SLAAC できなくなる) | 高 | **完了(サイクル 4 Check ②)**。runbook §8.2 / §9-N に反映し、自宅の実機にも `all` 付きで投入済み。定期 RA(240 秒キャプチャ)と RS 応答(`rdisc6` で誘発)の**両方が止まっている**ことを実測で確認した |
