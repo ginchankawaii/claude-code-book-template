@@ -686,6 +686,7 @@ interface GigabitEthernet0
  no ip address
  ipv6 address autoconfig default
  ipv6 enable
+ ipv6 nd ra suppress
  no shutdown
 !
 ! ---- LAN: 検証クライアントを繋ぐ側 ----
@@ -717,6 +718,15 @@ write memory
 >
 > LAN を `192.168.100.0/24` にしているのは、OpenWrt-CE の `192.168.1.0/24` と
 > Proxmox 管理 LAN の `192.168.11.0/24` を避けるためです。
+
+> **`ipv6 nd ra suppress` を WAN 側に入れているのは意図的です。**
+> `ipv6 unicast-routing` を有効にすると 892FJ 自身がアクセス網へ RA を撒き、
+> **実網でやってはいけない状態**になります(§9-N)。
+> **LAN 側(`Vlan1`)には入れないでください** — 配下が SLAAC できなくなります。
+>
+> **DHCP でアドレスが取れない場合は §9-M を見て、静的 IP で先へ進んでください。**
+> 自宅の実機では Windows 11 が取得できませんでした。検証の本体ではないので、
+> ここで止まる必要はありません。
 
 #### (5) WAN 側 IPv6 アドレスを確認して、こちらに知らせてください
 
@@ -806,15 +816,47 @@ ping 203.0.113.80                    ! ルータ自身から (Tunnel0 経由)
 
 
 §8.1 で決めたクライアントから実行します。**期待する出口アドレスを必ず渡してください。**
+渡さないと「疎通はしているが CPE を通っていない」状態を PASS と読んでしまいます(§9-F)。
+
+```powershell
+# Windows PC の場合 (PowerShell)
+.\run-checks.ps1 -SkipV6 -ExpectSrc4 203.0.113.1 | Tee-Object -FilePath jitsuki-checks.log
+```
 
 ```bash
-# Windows PC の場合 (PowerShell)
-.\run-checks.ps1 -ExpectSrc4 203.0.113.1 | Tee-Object -FilePath jitsuki-checks.log
-
 # Linux PC の場合
-EXPECT_SRC4=203.0.113.1 ./run-checks.sh | tee $(date +%Y%m%d-%H%M)-jitsuki.log
+SKIP_V6=1 EXPECT_SRC4=203.0.113.1 ./run-checks.sh | tee $(date +%Y%m%d-%H%M)-jitsuki.log
+```
+
+スクリプトが動かない環境なら、**この 4 つだけでも押さえてください**(コマンド プロンプトで可)。
 
 ```
+curl.exe http://203.0.113.80/
+nslookup www.lab.example 203.0.113.53
+ping -f -l 1432 203.0.113.80
+ping -f -l 1472 203.0.113.80
+```
+
+#### 自宅の実機(892FJ + Windows 11)で得た実測値
+
+| 確認 | 実測 | 何を示すか |
+|---|---|---|
+| `curl.exe http://203.0.113.80/` | **`src: 203.0.113.1`** | **AFTR で網側 NAT された = DS-Lite 成立**。ここが本命 |
+| `ping 203.0.113.80` | 0% 損失 / **TTL=62** | 2 ホップ減 = トンネルを経由している |
+| `nslookup www.lab.example 203.0.113.53` | `203.0.113.80` + `2001:db8:cafe::80` | ラボ DNS に到達 |
+| `ping -f -l 1432`(= MTU 1460) | 通過 | トンネルの MTU が確保できている |
+| `ping -f -l 1472`(= MTU 1500) | **`192.168.100.1 からの応答: パケットの断片化が必要ですが、DF が設定されています`** | **CPE が Frag-Needed を生成 = PMTUD 正常** |
+| `curl.exe .../big.bin` | `size=5242880` / 1.15 秒 | MSS clamp が効いている(黒穴なし) |
+
+**`-l 1472` は失敗するのが正解です。**ここで成功する場合、MTU が想定どおりになっていません。
+
+> **`src:` を見ずに `ping` の成功だけで判断しないでください。**
+> `203.0.113.0/24` は TEST-NET-3 なので疎通そのものは強い証拠ですが、
+> **どの経路で出たか**を示すのは `src:` だけです。
+>
+> **検証 PC の Wi-Fi は切らなくて構いません。**有線側はラボなので外に出られず、
+> 作業者は手順書や連絡のために Wi-Fi が要ります。影響するのは **DNS の引き先だけ**なので、
+> 上のように `nslookup <名前> 203.0.113.53` と**サーバを明示すれば回避できます**。
 
 ### 8.4 機種別の可否(調査 + 自宅実測)
 
@@ -1007,6 +1049,87 @@ journalctl -t kea-pd-route -n 3      # committed ... via ... が出ること
   逆の結果になり得ます**(開放できてしまう)。
   **`EXPECT_SRC4=<期待する出口アドレス> ./run-checks.sh` を必ず付けて実行してください** —
   この種の偽陽性を検出できる唯一の項目です
+
+### 9-M. 892FJ の DHCP サーバから Windows がアドレスを取れない
+
+**症状**: `ipconfig /all` が `169.254.x.x`(APIPA)のまま。892FJ 側は正常に見える。
+
+```
+Router# show ip dhcp pool
+ Current index  IP address range          Leased/Excluded/Total addresses
+ 192.168.100.1  192.168.100.1 - .254      0    / 1 / 254        ← 0 leased
+```
+
+**まず L2 を潰す**(ここが原因なら DHCP の話ではありません)。
+
+```
+show ip interface brief | include FastEthernet0
+show interface FastEthernet0 switchport
+show vlan-switch brief
+show run | include ^no service dhcp
+```
+
+`Fa0` が `up/up`、`Access Mode VLAN: 1`、`Vlan1` に `Fa0` が居て、
+`no service dhcp` が**無い**ことを確認します。
+
+**ここまで正常なら、サーバは応答しています**。デバッグで確認してください。
+
+```
+terminal monitor
+debug ip dhcp server packet
+```
+
+実際に見えたのはこれです。
+
+```
+DHCPD: DHCPDISCOVER received ...
+DHCPD: Sending DHCPOFFER to client (192.168.100.6).
+DHCPD: DHCPREQUEST received ...
+DHCPD: Sending DHCPACK to client (192.168.100.6).
+DHCPD: unicasting BOOTREPLY to client 7c4d.8f0e.b32f (192.168.100.6).   ← ここ
+DHCPD: DHCPREQUEST received ...     ← 2 秒後に再送。ACK が届いていない
+```
+
+**`unicasting BOOTREPLY` が手がかりです。**クライアントが**まだ保持していないアドレス宛**に
+ユニキャストで返しているため、受け取れずに落としていると考えられます。
+
+止まってはいけません。**DHCP は検証の本体ではない**ので、静的 IP で先へ進んでください。
+
+```
+netsh interface ip set address name="イーサネット" static 192.168.100.50 255.255.255.0 192.168.100.1
+netsh interface ip set dns     name="イーサネット" static 203.0.113.53
+```
+
+> `netsh` の DNS 設定で **`構成された DNS サーバーが正しくないか、存在しません`** が出ますが
+> **無視して構いません**。netsh がその時点で到達性を確認できなかっただけで、
+> 設定自体は入ります(`ipconfig /all` で確認できます)。
+> トンネルが上がる前に実行すると必ず出ます。
+
+**切替当日にこれが起きたら**: 原因追及より先に静的で疎通を確定させ、
+「IPoE 側は成立している / DHCP は別問題」と切り分けを言い切れる状態を作ってください。
+これを混ぜると切り戻し判断ができなくなります。
+
+### 9-N. CPE が WAN 側にも RA を撒いてしまう
+
+`ipv6 unicast-routing` を入れると、892FJ は**ルータとして振る舞い WAN 側にも RA を送ります**。
+
+```
+Router# show ipv6 interface GigabitEthernet0
+  ND router advertisements are sent every 200 seconds
+```
+
+**実網でやってはいけない挙動です。**アクセス網側の装置が CPE をルータとして学習し、
+最悪、他の加入者のトラフィックを引き込みます。WAN 側だけ抑止してください。
+
+```
+interface GigabitEthernet0
+ ipv6 nd ra suppress
+```
+
+> 版によっては `ipv6 nd suppress-ra` です。`ipv6 nd ?` で確認してください。
+
+**LAN 側(`Vlan1`)には絶対に入れないでください。**配下のクライアントが SLAAC できなくなります。
+LAN を IPv4 のみで運用する場合でも、入れるのは WAN 側だけにしておくのが安全です。
 
 ---
 

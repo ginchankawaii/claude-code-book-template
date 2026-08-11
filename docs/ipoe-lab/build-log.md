@@ -106,7 +106,7 @@ ssh root@192.168.11.20 'cd /root/ipoe-lab/lab/ipoe/proxmox && ./provision.sh ips
 | 1 | Proxmox に 5 VM を作って起動する | **完了**(成功条件 4 件すべて達成) | 約 3 分(2 回) | gzip は警告でも終了コード 2 を返し `set -e` で即死する。冪等性の無い分岐に副作用を置くと再実行で隠れる。guest-agent 無しでも IPv6 リンクローカルで VM に入れる |
 | 2 | 4 台の Linux に setup スクリプトを流し、IPv6 が降りるところまで | **完了**(成功条件 6 件すべて達成) | 約 5 分(setup 計 2.6 分 + CPE 設定) | `ssh` は使わなくても stdin を吸うので `while read` の中では `-n` が必須。OpenWrt の `uclient-fetch` は AAAA を選ぶと A へフォールバックしない。PPPoE を上げると netifd が物理NICの IPv6 を無効化するが、**RA 自体は届いている** |
 | 3 | MAP-E / DS-Lite で IPv4 が通り、`run-checks.sh` が PASS するまで | **完了**(両方式で `PASS=10 FAIL=0`) | 約 90 分(大半は DNS の切り分け) | 期待値表は完全に正しかった。「ping は通るのに DNS だけ死ぬ」に **3 つの独立した原因**が重なりうる: 送信元制限付き既定経路 / dnsmasq の listen インタフェース / CPE のリバインド保護 |
-| 4 | 実機 CPE(892FJ)を収容する | **次はこれ**(CML の Cat8000v も H3 で使用可と判明) | — | — |
+| 4 | 実機 CPE(892FJ)を収容する | **完了**(成功条件 4 件すべて達成。H1 / H2 確定) | 約 120 分 | 見た目では 10G と 1G の RJ45 を区別できない。**NIC 名は udev でリネームされているので名前から物理位置を逆算できない**。RA 方式でないと `ipv6 address autoconfig` は何も取得しない。classic IOS は `ip tcp adjust-mss` が無いと 5MB 転送で詰まる |
 | 5 | トラブル再現レシピを実走して再現条件を確定 | **完了**(R1/R2/R3/R4/R5/R6/D1 の 7 件) | 約 150 分 | **4 件とも「レシピのままでは想定と違った」**。R3 は 240 でなく 16 で詰まる / R4 は待受の対照実験が無いと誤判定する / R5 は MSS clamp と PMTU キャッシュの 2 つを外さないと再現しない |
 | 6 | runbook-vmware.md を書き上げ、Box バンドルを作る | **完了**(runbook 執筆 + `make-bundle.sh`) | — | 実走の一次記録があれば runbook は一気に書ける。逆に記録が無いと書けない。**同居構成(VNE+INET)をそのまま会社に持ち込ませない**注意書きが最重要だった |
 
@@ -1530,7 +1530,189 @@ fi
 
 ---
 
-### サイクル 4
+### サイクル 4: 実機 CPE(Cisco 892FJ)を収容する
+
+#### Plan
+
+**目的**: 実機の 892FJ をラボのアクセス網に物理接続し、**IPoE の CE**および
+**DS-Lite の B4** として動くことを確認する(H1 / H2)。
+
+**成功条件**:
+
+1. 892FJ が物理 NIC 経由でラボのアクセス網に乗り、IPv6 を取得する(H1)
+2. DS-Lite トンネルが張れ、配下のクライアントから IPv4 が通る(H2)
+3. 出口アドレスが AFTR の NAT 後アドレスになる(= 網側 NAT が成立している)
+4. MTU が 1460 になる
+
+**やらないこと**: MAP-E(892FJ は classic IOS のため CE 機能なし)。
+
+#### Do
+
+**構成**: 892FJ の `GigabitEthernet0` → R720 の物理 NIC `nic0` → `vmbr1`(PG-ACCESS)。
+配下の検証クライアントは **Windows 11 実機**を `FastEthernet0` に直結。
+
+**手順 1: 物理ポートの特定**
+
+`nic0`〜`nic11` は標準の Linux 命名ではなく **udev / systemd.link でリネームされていた**ため、
+名前から物理ポートを逆算できなかった。`lspci` と `ethtool -i` で確定させた。
+
+| PCI | チップ | 割当 |
+|---|---|---|
+| `01:00.0/.1` | Intel X540-AT2(10GBASE-T) | `nic2`(管理・使用中)/ `nic3` |
+| `08:00.0/.1` | Intel I350(1GbE) | **`nic0` / `nic1`** |
+
+MAC が同一ブロック(`bc:30:5b:f3:15:d0〜d5`)なので **Dell の X540 + i350 4 ポート rNDC**。
+**PCIe の増設カードではなくオンボード**である点が重要(背面 I/O パネル側にある)。
+
+**見た目では 10G と 1G を区別できない**(どちらも RJ45)。`ethtool -p <if> 30` で
+LED を点滅させるか、**挿してから `carrier` を見る**のが確実。今回は後者で `nic0` と判明した。
+
+**手順 2: uplink の追加**
+
+```
+ACCESS_UPLINK=nic0 ./provision.sh bridges
+  vmbr1: 既存 (ラボ用) に uplink nic0 を追加しました
+```
+
+> この機能は **fable レビューの指摘で直した直後**の箇所だった。修正前は既存ブリッジに
+> uplink を反映せず「案内どおり再実行しても何も起きない」状態で、
+> **サイクル 4 の入口で確実に詰まっていた**。
+
+あわせて **OpenWrt-CE を停止**(`qm stop 9010`)。`/56` もトンネル対向も 1 つしかないため。
+
+**手順 3: 892FJ の初期化と設定**
+
+`write erase` → `reload`(Save? に **no**)→ 初期設定ダイアログ **no**。
+
+`show ip interface brief` で実物のポート構成を確認した(**890 系は機種で違う**):
+
+```
+FastEthernet0-7   … LAN スイッチポート
+FastEthernet8     … WAN (未使用)
+GigabitEthernet0  … WAN ← これを使う
+Vlan1             … LAN 側 SVI
+BRI0 系           … ISDN (892FJ の日本向け装備)
+```
+
+**手順 4: RA 方式で IPv6 を取得(H1)**
+
+`ipv6 address autoconfig` を入れたが **`No global unicast address is configured`**。
+原因は **NGN が PD モードだったこと**。PD モードの `setup-ngn.sh` は radvd から
+プレフィックスを削除するため、**プレフィックスの無い RA では SLAAC できない**。
+
+NGN を `ra` に切り替えたところ即座に取得した。ラボ側から EUI-64 で逆算して確認:
+
+```
+2001:db8:1014:300:e6aa:5dff:fe82:364a  lladdr e4:aa:5d:82:36:4a  router  REACHABLE
+```
+
+**手順 5: DS-Lite トンネル(H2)**
+
+```
+sudo CE_WAN6=2001:db8:1014:300:e6aa:5dff:fe82:364a ./ipoe/vne/setup-aftr.sh
+```
+
+892FJ 側:
+
+```
+interface Tunnel0
+ ip address 192.0.0.2 255.255.255.248
+ ip mtu 1460
+ ip tcp adjust-mss 1420
+ tunnel source GigabitEthernet0
+ tunnel mode ipv6
+ tunnel destination 2001:DB8:8888::1
+ip route 0.0.0.0 0.0.0.0 Tunnel0
+```
+
+ルータ自身から `ping 203.0.113.80` が **100% 成功**。
+ラボ側から B4 の内側 `192.0.0.2` へも **0% loss**(双方向で成立)。
+
+**手順 6: 実機クライアント(Windows 11)からの検証**
+
+| 検証 | 結果 |
+|---|---|
+| `ping 203.0.113.80` | 0% 損失 / **TTL=62**(2 ホップ = トンネル経由) |
+| `curl.exe http://203.0.113.80/` | **`src: 203.0.113.1`** = AFTR で網側 NAT 成立 |
+| `nslookup www.lab.example 203.0.113.53` | `203.0.113.80` + `2001:db8:cafe::80` |
+| `ping -f -l 1432`(= 1460) | **通過** |
+| `ping -f -l 1472`(= 1500) | **`192.168.100.1 からの応答: パケットの断片化が必要ですが、DF が設定されています`** |
+| `curl.exe .../big.bin` | `size=5242880` / 1.15 秒 |
+
+**成功条件 4 件すべて達成。H1 / H2 が実機で確定した。**
+
+#### Check
+
+**① 実機の PMTUD は正しく動いた(1472 の応答元が 892FJ 自身)**
+
+`ping -f -l 1472` の応答元が **`192.168.100.1`(892FJ の Vlan1)** だった。
+実機が Frag-Needed を**自分で生成**しており、PMTUD が期待どおり機能している。
+5MB 転送が完走したのは `ip tcp adjust-mss 1420` が効いているためで、
+**これを省くと R5(MTU ブラックホール)を踏む**。classic IOS では必須。
+
+**② 892FJ が自分でも RA を撒いていた**
+
+`show ipv6 interface` に `ND router advertisements are sent every 200 seconds`。
+`ipv6 unicast-routing` を有効にするとルータとして振る舞うため。
+**CPE の WAN 側がアクセス網に RA を流すのは実網でもやってはいけない挙動**で、
+放置すると NGN-SIM や BRAS が 892FJ をルータとして学習する。
+→ `ipv6 nd ra suppress`(版により `ipv6 nd suppress-ra`)を **WAN 側だけ**に入れる。
+  **LAN 側(Vlan1)に入れてはいけない**(配下のクライアントが SLAAC できなくなる)。
+
+**③ IOS の DHCP サーバが ACK を返しているのに Windows が受け取れない**
+
+`debug ip dhcp server packet` で見ると、サーバは正常に応答している:
+
+```
+DHCPDISCOVER 受信 → DHCPOFFER (192.168.100.6) → DHCPREQUEST 受信 → DHCPACK 送信
+DHCPREQUEST 受信 (2 秒後) ← ACK が届かず再送
+DHCPACK 送信
+DHCPREQUEST 受信 (4 秒後) ← また再送
+… 最終的に諦めて .7 で仕切り直し
+```
+
+クライアントは `169.254.6.164`(APIPA)のまま。ログに手がかりがある:
+
+```
+DHCPD: unicasting BOOTREPLY to client 7c4d.8f0e.b32f (192.168.100.6).
+```
+
+**まだ持っていないアドレス宛にユニキャストで返している**ため、クライアント側で
+破棄されたと考えられる。L2 は正常(`Fa0 up/up`、`Access Mode VLAN: 1`、
+VLAN 1 に所属、`service dhcp` 有効、プール 254 アドレス)。
+
+**ラボの不具合ではなく実機と Windows の相互接続の挙動**。
+今回は**静的 IP(`192.168.100.50/24`)で回避**して検証を継続した。
+DHCP は検証の本体ではないため、ここで止まる必要はない。
+**切替当日に同じことが起きうるので、静的で先に進む判断ができることが重要**(バックログ 12)。
+
+**④ 検証クライアントは Wi-Fi を切れない**
+
+有線側はラボなので**インターネットに出られない**。作業者は AI や手順書と会話するために
+Wi-Fi を使う。「Wi-Fi を切れ」は現場では成立しない指示だった。
+
+- `ping 203.0.113.80` は TEST-NET-3 なので **Wi-Fi 側では絶対に通らず、結果は信用できる**
+- 影響するのは **DNS の引き先だけ**。`nslookup <名前> 203.0.113.53` と
+  **サーバを明示すれば回避できる**
+
+**⑤ `netsh` の DNS 設定エラーは無視してよい**
+
+```
+netsh interface ip set dns name="イーサネット" static 203.0.113.53
+  構成された DNS サーバーが正しくないか、存在しません。
+```
+
+netsh が設定時点で到達性を確認できなかっただけで、**設定自体は入っている**
+(`ipconfig /all` で確認)。トンネルが上がる前だったため。
+
+#### Act
+
+**ラボの状態**: NGN = RA 方式 / 892FJ = DS-Lite の B4 / OpenWrt-CE = 停止中。
+MAP-E BR は停止(`setup-map-br.sh stop`)。
+
+**runbook への反映**: §8 に実機手順を全面的に書き下ろし済み(erase から確認コマンドまで)。
+Windows クライアント用に `run-checks.ps1` を新規作成。
+
 
 <!-- サイクル 1 と同じ形式で追記する -->
 
@@ -1601,8 +1783,8 @@ fi
 
 | # | 仮説 / 未確認 | 確認方法 | 結果 |
 |---|---|---|---|
-| H1 | 892FJ が IPoE(RA/PD)の CE として動く | [research-notes.md](research-notes.md) §4 の表に従って設定 | |
-| H2 | 892FJ が DS-Lite の B4 として動く | 同上 | |
+| H1 | 892FJ が IPoE(RA/PD)の CE として動く | [research-notes.md](research-notes.md) §4 の表に従って設定 | **OK(RA 方式)**。`ipv6 address autoconfig` で GUA を取得し、ラボ側の近隣テーブルに `2001:db8:1014:300:e6aa:5dff:fe82:364a` を確認。**PD 方式では取得できない**(radvd がプレフィックスを配らないため)。サイクル 4 参照 |
+| H2 | 892FJ が DS-Lite の B4 として動く | 同上 | **OK**。`tunnel mode ipv6` + `ip mtu 1460` + `ip tcp adjust-mss 1420` で成立。実機 Windows から出口 `src: 203.0.113.1` / MTU 1460 / 5MB 完走を確認。サイクル 4 参照 |
 | H3 | CML の Cat8000v で MAP-E CLI が使える | `nat64 ?` / `nat64 map-e ?` / `nat64 provisioning ?`([proxmox-prototype.md](proxmox-prototype.md) §4.1)。**タイムボックス 30 分** | **OK(MAP-E 実装あり)** CML 2.9.0 / Cat8000v **IOS XE 17.15.01a** で `nat64 map-e domain 1` と `nat64 provisioning mode jp01` が**両方とも running-config に入った**。§3.5-A に詳細 |
 
 #### 3.5-A. H3 の実施記録(2026-08-10)
@@ -1752,4 +1934,6 @@ CML 側で External Connector として認識させるには **CML の再起動�
 | 8 | ラボ内 IPv6 DNS(`2001:db8:cafe::53`)への到達確認 | 高 | **完了(サイクル 3)**。原因は 3 つ重なっていた(送信元制限付き既定経路 / dnsmasq の listen インタフェース / CPE のリバインド保護)。Do/Check ①②③ 参照 |
 | 9 | **DS-Lite の AFTR NAT が効かない**(VNE と INET-SIM の同居による) | 高 | **完了(3.3-A)**。INET-SIM を 9005 に分離して解消。`provision.sh` に `SPLIT_INET=1` を追加 |
 | 11 | 方式・モードを往復させた後、`run-checks.sh` の IPv6 系が不安定になる | 中 | **完了(3.4-A)**。原因は **2 つ重なっていた**。① CPE の ULA へのフォールバック(ULA 無効化で解消)② **`setup-ngn.sh` が Kea フックの via 復路を on-link で上書き**(3.4-B。こちらが本命) |
-| 10 | **OpenWrt の MAP-E が実効 16 ポートしか使えない**(nft の snat が終端判定で、15 本のルールが同じマッチ条件のため先頭ブロックしか使われない)。ラボ固有の癖か OpenWrt のバグかは未確認。実機 CPE では NAT エンジンがポート集合を正しく扱うはずなので、**実機検証時に必ず数え直すこと** | 中 | サイクル 4(実機)で比較する |
+| 10 | **OpenWrt の MAP-E が実効 16 ポートしか使えない**(nft の snat が終端判定で、15 本のルールが同じマッチ条件のため先頭ブロックしか使われない)。ラボ固有の癖か OpenWrt のバグかは未確認。実機 CPE では NAT エンジンがポート集合を正しく扱うはずなので、**実機検証時に必ず数え直すこと** | 中 | **サイクル 4 では実施できず**。892FJ は classic IOS で **MAP-E 非対応**のため比較対象にならなかった。CML の Cat8000v なら可能(H3 で `nat64 map-e domain` の実装を確認済み)。**ラボ固有の癖の可能性が残ったまま**なので、演習で「MAP-E は 240 ポート」と教える前に必ず確認すること |
+| 12 | **892FJ の IOS DHCP サーバから Windows 11 がアドレスを取れない**。サーバは `DHCPOFFER` / `DHCPACK` を送っているのにクライアントが `DHCPREQUEST` を再送し続け、APIPA(`169.254.x.x`)のまま。ログに `unicasting BOOTREPLY to client ... (192.168.100.6)` とあり、**まだ保持していないアドレス宛にユニキャストで返している**のが原因と見られる。L2 は正常(`Fa0 up/up` / `Access Mode VLAN: 1` / プール 254 アドレス)。検証は静的 IP で回避済み | 中 | サイクル 4 で発生。**ラボの不具合ではなく実機と Windows の相互接続**。切替当日に踏みうるので §9-M に切り分けを追記する |
+| 13 | **892FJ の WAN 側(GigabitEthernet0)で RA を抑止する**。`ipv6 unicast-routing` を入れると CPE 自身がアクセス網へ RA を撒く(`ND router advertisements are sent every 200 seconds`)。実網でやってはいけない挙動で、NGN-SIM や BRAS が CPE をルータとして学習してしまう。`ipv6 nd ra suppress`(版により `ipv6 nd suppress-ra`)を **WAN 側だけ**に入れる。**LAN 側(Vlan1)に入れてはいけない**(配下が SLAAC できなくなる) | 高 | サイクル 4 で発見。**未適用**(実機に触れるときに投入する) |
