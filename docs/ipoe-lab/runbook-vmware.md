@@ -544,10 +544,37 @@ CPE を通っていない可能性があります(§9-F)。
    ipconfig /renew
    ```
 
-2. **Wi-Fi は切ってください。** 有線と両方生きていると、既定経路が Wi-Fi 側に向いて
+2. **IPv6 が有効になっているか確認する(会社支給 PC はとくに要注意)**
+
+   このラボは IPv6 が主役です。**Windows のイメージによっては IPv6 が切ってあります。**
+   上の `-Dhcp Enabled` は **IPv4 にしか効かない**ので、別に確認してください。
+
+   ```powershell
+   # (a) アダプタで IPv6 が有効か
+   Get-NetAdapterBinding -InterfaceAlias '<NIC名>' -ComponentID ms_tcpip6
+   #   Enabled が False なら:
+   Enable-NetAdapterBinding -InterfaceAlias '<NIC名>' -ComponentID ms_tcpip6
+
+   # (b) RA (ルーター探索) を受ける設定になっているか
+   Get-NetIPInterface -InterfaceIndex <N> -AddressFamily IPv6 |
+       Format-List InterfaceAlias, RouterDiscovery, Dhcp, AddressFamily
+   #   RouterDiscovery が Disabled なら:
+   Set-NetIPInterface -InterfaceIndex <N> -AddressFamily IPv6 -RouterDiscovery Enabled
+
+   # (c) レジストリで OS 全体の IPv6 が無効化されていないか (これがいちばん厄介)
+   Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters' `
+       -Name DisabledComponents -ErrorAction SilentlyContinue
+   ```
+
+   > **(c) が見つかったら要注意です。** `DisabledComponents` が `0xff` などになっていると、
+   > アダプタ側をいくら有効にしても IPv6 が動きません。**値を変えると再起動が必要**で、
+   > 会社の管理ポリシーで戻される場合もあります。
+   > その場合はこの PC を諦めて、**Linux のライブ USB で起動する**ほうが早いです。
+
+3. **Wi-Fi は切ってください。** 有線と両方生きていると、既定経路が Wi-Fi 側に向いて
    **CPE を通らない通信を「PASS」と誤判定**します(§9-F と同じ事故)
 
-3. アドレスが降りたか確認
+4. アドレスが降りたか確認
 
    ```powershell
    ipconfig /all
@@ -555,7 +582,7 @@ CPE を通っていない可能性があります(§9-F)。
    # IPv6: 2001:db8:... のグローバルアドレスが付いていること
    ```
 
-4. 実行(PowerShell。管理者権限は不要)
+5. 実行(PowerShell。管理者権限は不要)
 
    ```powershell
    # 実行ポリシーで弾かれる場合はこの窓だけ緩める
