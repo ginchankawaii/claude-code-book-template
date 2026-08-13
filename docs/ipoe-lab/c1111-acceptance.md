@@ -338,6 +338,95 @@ Router(config)# nat64 map-e ?
 > **ただし CLI があることと転送できることは別物**(サイクル 7 の教訓)。
 > 必ずパケットを流して出口アドレスまで確認すること。
 
+#### MAP-E の CLI 構造(全数調査。2026-08-13)
+
+```
+(config)# nat64 provisioning mode ?
+  jp01  NAT64 provisioning mode jp01          ← ★ 日本の VNE 向けモードが存在する
+
+(config)# nat64 map-e domain 1
+(config-nat64-mape)# ?
+  basic-mapping-rule    Enter the NAT64 MAP-E BMR submode
+  border-relay-address  MAP-E domain border-relay address
+  mode                  NAT64 MAP-E Mode
+
+(config-nat64-mape)# mode ?
+  divi   Dual Stateless IPv4/IPv6
+  map-e  MAP-E Mode (default)                 ← 既定が map-e なので指定不要
+
+(config-nat64-mape)# basic-mapping-rule
+(config-nat64-mape-bmr)# ?
+  ipv4-prefix        IPv4 prefix              A.B.C.D/nn
+  ipv6-prefix        IPv6 prefix              X:X:X:X::X/<0-128>
+  local-ipv4-prefix  Local IPv4 prefix        A.B.C.D/nn
+  port-parameters    NAT64 MAP-E BMR port parameters
+  port-set-id        NAT64 MAP-E BMR port set id   <0-4095>
+
+(config-nat64-mape-bmr)# port-parameters share-ratio ?
+  <1-4096>
+(config-nat64-mape-bmr)# port-parameters share-ratio 256 ?
+  port-offset-bits  NAT64 MAP-E BMR port offset bits
+  start-port        NAT64 MAP-E BMR starting port
+  <cr>
+```
+
+**BMR が有効になる条件(エラーメッセージから判明)**:
+
+```
+%NAT64 MAP-E: Basic-mapping-rule for domain 1 must include ipv6-prefix,
+ipv4-prefix, local-ipv4-prefix, ports-parameter, and port-set-id before it can be used.
+```
+
+**5 要素すべてが揃うまで BMR は有効化されない。**未完成のドメインは無害なまま残る。
+
+**Cisco のモデルと RFC 7597 の対応**
+
+`ea-length` が無い。**EA ビット長を与えて導出させるのではなく、導出結果を直接与える**設計。
+
+| ラボの設計値(RFC 7597 系) | 導出 | C1111 のパラメータ |
+|---|---|---|
+| rule-ipv4-prefix `/24` | IPv4 サフィックス 8 bit | `ipv4-prefix 198.51.100.0/24` |
+| ea-len 16 − 8 = **psid-len 8** | 共有数 2⁸ | **`port-parameters share-ratio 256`** |
+| **psid-offset (a) = 4** | ブロック数 2⁴−1 = **15** | **`port-offset-bits 4`** |
+| — | 1 ブロックのポート数 2^(16−4−8) = **16** | (share-ratio と offset から自動導出) |
+| a=0 ブロック除外 | 先頭 2^(16−4) = **4096** から | `start-port`(省略時は自動と推定) |
+| **15 × 16 = 240 ポート** | | |
+| PSID 5(PD 方式の CE) | 4096 + 5×16 = **4176〜4191** | **`port-set-id 5`** |
+
+`port-set-id` の範囲が `<0-4095>` なのは psid-len 12 まで許容するため。psid-len 8 なら有効範囲は 0〜255。
+
+**ラボ設計値を C1111 の文法に翻訳したもの(PD 方式 / 未投入)**
+
+```
+nat64 provisioning mode jp01
+!
+nat64 map-e domain 1
+ border-relay-address 2001:db8:9999::1
+ basic-mapping-rule
+  ipv6-prefix 2001:db8:1000::/40
+  ipv4-prefix 198.51.100.0/24
+  local-ipv4-prefix 198.51.100.10/32
+  port-set-id 5
+  port-parameters share-ratio 256 port-offset-bits 4
+```
+
+RA 方式で試す場合は `local-ipv4-prefix 198.51.100.20/32` / `port-set-id 3`。
+
+> **`ipv4-prefix` と `local-ipv4-prefix` の役割分担は推定**(前者がルール全体、
+> 後者がこの CE に割り当たった共有 IPv4)。実投入で確定させること。
+
+#### Cat8000v との差(重要。ただし結論は出ていない)
+
+**サイクル 7 では Cat8000v が `port-parameters` を受理した時点で QFP がクラッシュした。**
+今回 C1111-8P では `port-parameters share-ratio 256` が**受理され、クラッシュしなかった。**
+
+> **⚠ これをもって「実機なら動く」と書いてはいけない。**
+> 上記のとおり **BMR は 5 要素が揃うまで有効化されない**ので、
+> **この時点では転送パスにまだ何もプログラムされていない。**
+> Cat8000v のクラッシュが「パラメータ受理の瞬間」だったのか
+> 「BMR 有効化の瞬間」だったのかは、まだ切り分けられていない。
+> **本当の判定は 5 要素を揃えてパケットを流したとき。**
+
 ### ポート名の対応(ハンズオン資料に反映が必要)
 
 | 役割 | 892FJ | **C1111-8P** |
