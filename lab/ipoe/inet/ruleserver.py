@@ -175,6 +175,8 @@ class LabServer(http.server.ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
 
+    ssl_context = None   # TLS のときだけ設定される
+
     def server_bind(self):
         # **V6ONLY を明示する。**
         # Linux の既定 (net.ipv6.bindv6only=0) では AF_INET6 のソケットが
@@ -183,13 +185,43 @@ class LabServer(http.server.ThreadingHTTPServer):
         self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
         super().server_bind()
 
+    def get_request(self):
+        """接続ごとに TLS を張る。**握手の失敗をログに出すため。**
+
+        待受ソケット自体を wrap_socket すると、握手の失敗は accept() の中で
+        ssl.SSLError として上がる。ssl.SSLError は OSError の子なので、
+        socketserver はこれを「接続が取れなかっただけ」として **黙って捨てる**。
+        結果、ルータ側は繋がらないのにサーバのログには何も出ない、という
+        いちばん切り分けにくい状態になる (証明書未登録・時刻ずれで必ず踏む)。
+        そこで待受は素のままにして、ここで 1 本ずつ包む。
+        """
+        sock, addr = self.socket.accept()
+        if self.ssl_context is None:
+            return sock, addr
+        try:
+            return self.ssl_context.wrap_socket(sock, server_side=True), addr
+        except ssl.SSLError as e:
+            log("!! TLS ハンドシェイク失敗 from %s : %s" % (addr[0], e))
+            log("   よくある原因: ルータに CA が未登録 / ルータの時刻がずれている")
+            sock.close()
+            raise OSError("TLS handshake failed") from e
+
 
 def serve(bind, port, handler_cls, certfile=None, keyfile=None):
     srv = LabServer((bind, port), handler_cls)
     if certfile:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(certfile, keyfile)
-        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+        # **相手は古いルータかもしれない。**
+        # Ubuntu の OpenSSL は既定の security level が高く、
+        # 古い IOS XE が出す暗号スイートを弾くことがある。ラボの模擬サーバなので
+        # 安全側に倒す理由がなく、繋がらない原因を減らすほうが価値が高い。
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        try:
+            ctx.set_ciphers("DEFAULT:@SECLEVEL=1")
+        except ssl.SSLError as e:
+            log("!! 暗号スイートの緩和に失敗しました (既定のまま続行): %s" % e)
+        srv.ssl_context = ctx
     srv.serve_forever()
 
 

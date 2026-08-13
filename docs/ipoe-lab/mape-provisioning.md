@@ -389,6 +389,32 @@ ssh root@192.168.11.20 "ssh labadmin@fe80::be24:11ff:feb9:3fb1%vmbr0 'sudo CE_MA
 ping 203.0.113.80 source Vlan1
 ```
 
+### 【手順 O】落ちた場合の切り分け — **作業機のターミナル**
+
+MAP-E を配ると落ちる場合、**DS-Lite だけを配って**もう一度試してください。
+
+```bash
+ssh root@192.168.11.20 "ssh labadmin@fe80::be24:11ff:fecd:92c5%vmbr0 'sudo ./ipoe/inet/setup-ruleserver.sh response dslite'"
+```
+
+(サーバの再起動は要りません。次の要求から反映されます)
+
+ルータを再起動して同じ手順を踏み、結果を見ます。
+
+| DS-Lite だけを配った結果 | 分かること |
+|---|---|
+| **正常に動く** | **プロビジョニングの仕組みは生きている。**問題は **MAP-E のデータパスに限定**される。C1111 でこの回線は無理、という判断材料になる |
+| **同じように落ちる** | プロビジョニング処理そのもの、または NAT64 の有効化自体が壊れている |
+
+戻すとき:
+
+```bash
+ssh root@192.168.11.20 "ssh labadmin@fe80::be24:11ff:fecd:92c5%vmbr0 'sudo ./ipoe/inet/setup-ruleserver.sh response both'"
+```
+
+> **DS-Lite を試す前に、ラボの AFTR を起動しておいてください。**
+> `./lab-mode.sh dslite <CE の WAN 側 IPv6>`
+
 ---
 
 ## 4. 結果の記録
@@ -416,7 +442,17 @@ ping 203.0.113.80 source Vlan1
 | 要求を見る | `./ipoe/inet/setup-ruleserver.sh log` |
 | 自分で疎通確認 | `./ipoe/inet/setup-ruleserver.sh selftest` |
 | ルータ用 CA を出す | `./ipoe/inet/setup-ruleserver.sh ca` |
+| 配る方式を絞る(切り分け) | `sudo ./ipoe/inet/setup-ruleserver.sh response {both\|mape\|dslite}` |
 | 止める | `sudo ./ipoe/inet/setup-ruleserver.sh stop` |
+
+司会用の `lab-mode.sh` からも同じことができます(Proxmox ホストで実行):
+
+| やること | コマンド |
+|---|---|
+| 起動 / 停止 | `./lab-mode.sh prov on` / `./lab-mode.sh prov off` |
+| 状態 / 要求を見る | `./lab-mode.sh prov status` / `./lab-mode.sh prov log` |
+| ルータ用 CA | `./lab-mode.sh prov ca` |
+| 配る方式を絞る | `./lab-mode.sh prov dslite` / `./lab-mode.sh prov both` |
 
 **応答 JSON を変えたいとき**は `/etc/mape-ruleserver/response.json` を直接編集してください。
 **リクエストのたびに読み直す**ので、サーバの再起動は要りません。

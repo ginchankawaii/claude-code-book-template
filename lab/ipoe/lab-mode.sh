@@ -10,6 +10,7 @@
 #     dslite <CE の IPv6> … IPv4 の運び方を DS-Lite にする (BR は止める)
 #     prov on|off       … MAP-E のルール配布サーバ (本番と同じ自動設定経路) を起動/停止
 #     prov status|log|ca … 状態表示 / CPE から来た要求を見る / ルータ用 CA を出す
+#     prov both|mape|dslite … 配る方式を絞る (MAP-E で落ちるときの切り分け)
 #     break mtu         … MTU ブラックホールを注入する
 #     break dns         … IPv6 だけ死んだサイトを作る
 #     restore           … 注入した障害を全部戻す
@@ -233,8 +234,15 @@ case "${1:-status}" in
       ca)
         rsh "$INET" "./ipoe/inet/setup-ruleserver.sh ca"
         ;;
+      both|mape|dslite)
+        # 配る方式を絞る。**MAP-E で CPE が落ちるときの切り分けに使う。**
+        # dslite だけを配って正常に動けば、プロビジョニングの仕組み自体は
+        # 生きていて、問題は MAP-E のデータパスにあると分離できる
+        rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh response ${2}" \
+          || die "配布方式の切り替えに失敗しました"
+        ;;
       *)
-        die "prov のサブコマンドは on / off / status / log / ca です"
+        die "prov のサブコマンドは on / off / status / log / ca / both / mape / dslite です"
         ;;
     esac
     ;;

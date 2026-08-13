@@ -8,6 +8,8 @@
 #          setup-ruleserver.sh log        … 受け取った要求のログを表示
 #          setup-ruleserver.sh ca         … ルータに貼る CA 証明書と設定断片を出力
 #          setup-ruleserver.sh selftest   … 自分で CPE の振りをして疎通確認
+#          setup-ruleserver.sh response {both|mape|dslite}
+#                                         … 配る方式を絞る (切り分け用)
 #
 # **これが何か**
 #   本番の MAP-E / DS-Lite では、CPE はルールを手で設定されない。
@@ -108,7 +110,37 @@ case "$MODE" in
     else
       curl -sS --resolve "${PROV_FQDN}:${PROV_HTTP_PORT}:[${PROV_ADDR}]" "${URL}?${Q}" && echo
     fi
-    echo "[selftest] 上に map_e の JSON が出ていれば配布経路は成立しています"
+    echo "[selftest] 上に JSON が出ていれば配布経路は成立しています"
+    echo "           (配る方式を絞っている場合は map_e が無いこともあります: $0 response both で戻せます)"
+    exit 0 ;;
+  response)
+    # **切り分け用。** MAP-E を配ると CPE が落ちる場合に、DS-Lite だけを配って
+    # 「プロビジョニングの仕組み自体は生きているか」を分離して判定できる。
+    #   both   … map_e と dslite の両方 (既定)
+    #   mape   … map_e だけ
+    #   dslite … dslite だけ   ← MAP-E のデータパスを完全に外して試す
+    [ "$(id -u)" = "0" ] || { echo "root で実行してください (sudo)" >&2; exit 1; }
+    WHICH="${2:-both}"
+    case "$WHICH" in both|mape|dslite) ;; *)
+      echo "response のあとは both / mape / dslite です" >&2; exit 1 ;; esac
+    python3 - "${SRC_DIR}/ruleserver-response.json" "${ETC}/response.json" "$WHICH" <<'PY'
+import json, sys
+src, dst, which = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(src, encoding="utf-8") as f:
+    doc = json.load(f)
+doc = {k: v for k, v in doc.items() if not k.startswith("_comment")}
+if which == "mape":
+    doc.pop("dslite", None)
+elif which == "dslite":
+    doc.pop("map_e", None)
+# order は残っている方式だけにする。無い方式を先頭に置くと CPE が迷う
+doc["order"] = [m for m in doc.get("order", []) if m in doc]
+with open(dst, "w", encoding="utf-8") as f:
+    json.dump(doc, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+print("[INET-SIM] 配る方式を %s にしました (order=%s)" % (which, doc["order"]))
+PY
+    echo "  サーバの再起動は不要です (要求のたびに読み直します)"
     exit 0 ;;
   http|https) ;;
   *)
