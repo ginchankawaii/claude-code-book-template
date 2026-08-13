@@ -115,6 +115,7 @@ NTT の NGN 網、ISP の BRAS、VNE(MAP-E の BR と DS-Lite の AFTR)、イン
 | **NGN-SIM** | NTT の網の代わり。RA を撒き、`/56` を委譲する | `~/ipoe/ngn/setup-ngn.sh {ra|pd}` |
 | **VNE** | MAP-E の BR と DS-Lite の AFTR | `~/ipoe/vne/setup-map-br.sh` / `setup-aftr.sh` |
 | **INET-SIM** | 模擬インターネット(Web + DNS)。**アクセス元アドレスを表示する** | `~/ipoe/inet/setup-inet.sh` |
+| **INET-SIM(兼)** | **MAP-E のルール配布サーバ**(HB46PP = 国内標準プロビジョニング方式)。本番同様に CPE が `4over6.info` の DNS TXT で発見し、HTTPS でルールを取得する。CPE 側の参照実装は `~/ipoe/ce/hb46pp-client.py` | `~/ipoe/inet/setup-ruleserver.sh {http\|https}` |
 | **BRAS** | PPPoE の受け口。切替前の状態を作れる | `~/ipoe/bras/setup-bras.sh` |
 | **LAB-CLIENT** | CPE 配下の検証クライアント | `~/ipoe/client/setup-client.sh` |
 | **OpenWrt-CE** | CPE 役(実機を使うときは停止する) | uci で設定 |

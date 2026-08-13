@@ -9,6 +9,7 @@ NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネッ�
 - **Proxmox プロトタイプ手順(自宅検証用)**: [proxmox-prototype.md](proxmox-prototype.md)
 - **会社 VMware 構築ランブック(手動作業用・**サイクル 1〜6 の実走 + 実機 892FJ 検証をもとに執筆済み**)**: [runbook-vmware.md](runbook-vmware.md)
 - 事例調査ノート(実例・失敗談と設計への反映): [research-notes.md](research-notes.md)
+- **MAP-E のルール配布(本番と同じ自動設定経路)の再現手順**: [mape-provisioning.md](mape-provisioning.md)
 - **構築ログ / PDCA 記録(実走の記録・未検証項目トラッカー・CE 入替手順)**: [build-log.md](build-log.md)
 - **説明会資料(座学 1 時間)**: [slides/setsumeikai.md](slides/setsumeikai.md) → `slides/setsumeikai.pptx`
 - **ハンズオン資料(150 分。触って壊して直す)**: [slides/handson.md](slides/handson.md) → `slides/handson.pptx`
@@ -126,7 +127,8 @@ NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネッ�
 |---|---|
 | 方式差の検証 | RA 方式 / PD 方式 × MAP-E / DS-Lite / PPPoE の組み合わせと、設定不整合時の症状確認 |
 | 切替リハーサル | PPPoE 切断 → IPoE 設定 → 確認 → 切戻し、の通し練習と所要時間の計測 |
-| 実機ルータの動作確認 | お客様と同型機・同ファームで「その方式で本当に繋がるか」を事前確認(MAP-E 自動設定専用機を除く — 下の「できないこと」参照) |
+| 実機ルータの動作確認 | お客様と同型機・同ファームで「その方式で本当に繋がるか」を事前確認 |
+| **MAP-E の自動設定(ルール配布)** | 本番と同じ **HB46PP(国内標準プロビジョニング方式)** のサーバをラボに持っています。CPE は `4over6.info` の DNS TXT でサーバを発見し、HTTPS でルールを取得して、**自分の委譲プレフィックスから IPv4 と PSID を導出**します。手動設定 UI を持たない自動設定専用機も、これで検証できます([mape-provisioning.md](mape-provisioning.md)) |
 | トラブルの疑似体験 | 定番トラブル 13 種(R1〜R13、[test-matrix.md](test-matrix.md) §4)をわざと再現し、症状と切り分け手順を体で覚える |
 | エビデンス採取 | `run-checks.sh` の切替前後ログをそのまま検証記録として保存 |
 
@@ -137,7 +139,7 @@ NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネッ�
 | 実 VNE(v6プラス、transix 等)の本物の装置の癖 | BR/AFTR は Linux による模擬。実装固有の挙動は実網でしか分からない |
 | ISP 側の開通処理・認証・契約状態 | 開通タイミングや「IPoE 開通で PPPoE が止まる」の実際の発動は ISP 依存 |
 | NTT 網固有の挙動 | v6オプションの開通反映、網内エラー、フレッツ・ジョイントの自動設定配信など |
-| **市販ルータの MAP-E「自動設定」** | 自動判定は VNE のルール配布サーバ依存(方式が乱立、[research-notes.md §1](research-notes.md) JANOG53)。手動設定 UI がない機種はラボで MAP-E 接続できない場合がある。DS-Lite は AFTR を DNS で発見する仕様のため、ラボ DNS の FQDN 模擬で自動設定機種も動く可能性あり(build.md §4) |
+| **VNE 独自のプロビジョニング方式** | ラボが持っているのは **HB46PP(国内標準)** です。これに乗っていない VNE 独自方式(Cisco の `jp01` が HB46PP そのものかも未確定)は、**実機の要求を捕獲して応答を作り直す**必要があります。手順は [mape-provisioning.md](mape-provisioning.md) §6 |
 | 性能・帯域・輻輳の測定 | ラボの帯域は実網と無関係。**機能・手順・切り分けの検証専用** |
 | **切戻しが本当にできるかの検証** | ラボの BRAS は**無条件・無期限に PPPoE を受け付ける**ので、切戻しは**構造的に必ず成功**します。実案件では IPoE 開通に伴って ISP 側の PPPoE アカウントが停止されることがあり、**そのときは切戻せません。**ラボの成功は ISP 側アカウントの存続を検証していません。**切替前に ISP へ書面で確認してください** |
 | **AFTR のセッション上限・NAT タイマ** | ラボの AFTR は Linux の conntrack 任せで、**実質無制限**です。実 AFTR には加入者あたりの上限があるため、「ラボで動いた大量セッションのアプリが現場で間欠的に落ちる」はラボでは再現しません |

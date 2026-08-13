@@ -8,6 +8,8 @@
 #     pd                … ひかり電話あり相当 (DHCPv6-PD 方式 /56) に切り替え
 #     mape              … IPv4 の運び方を MAP-E にする (AFTR は止める)
 #     dslite <CE の IPv6> … IPv4 の運び方を DS-Lite にする (BR は止める)
+#     prov on|off       … MAP-E のルール配布サーバ (本番と同じ自動設定経路) を起動/停止
+#     prov status|log|ca … 状態表示 / CPE から来た要求を見る / ルータ用 CA を出す
 #     break mtu         … MTU ブラックホールを注入する
 #     break dns         … IPv6 だけ死んだサイトを作る
 #     restore           … 注入した障害を全部戻す
@@ -192,7 +194,49 @@ case "${1:-status}" in
     echo
     echo "  → **受講者に CPE 側を MAP-E に設定させてください。**"
     echo "     CPE に入れる値は build.md §3 の表のとおりです (方式ごとに違います)。"
+    echo
+    echo "  参考: **本番の CPE はこの値を手で入れません。**ルール配布サーバから取得します。"
+    echo "        その経路を試すときは:  ./lab-mode.sh prov on"
     banner
+    ;;
+
+  prov)
+    # MAP-E のルール配布サーバ (HB46PP = 国内標準プロビジョニング方式) の操作。
+    # **本番の CPE はルールを手で設定されない。**サーバから取得する。
+    # ラボにこれが無かったため、長らく本番に無い「手書き BMR」経路だけを検証していた。
+    need INET "INET-SIM"
+    case "${2:-status}" in
+      on|https)
+        echo "[lab-mode] ルール配布サーバを起動します (TXT は HTTPS を案内)..."
+        rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh https" \
+          || die "ルール配布サーバの起動に失敗しました"
+        echo
+        echo "  → CPE は 4over6.info の DNS TXT でサーバを発見します。"
+        echo "     ルータ側の手順は docs/ipoe-lab/mape-provisioning.md §3"
+        ;;
+      http)
+        echo "[lab-mode] ルール配布サーバを起動します (TXT は HTTP を案内)..."
+        rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh http" \
+          || die "ルール配布サーバの起動に失敗しました"
+        ;;
+      off|stop)
+        rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh stop" \
+          || die "ルール配布サーバの停止に失敗しました"
+        ;;
+      log)
+        # CPE が何を要求してきたかを見る。切り分けはここが起点になる
+        rsh "$INET" "sudo tail -n 200 -f /var/log/mape-ruleserver.log"
+        ;;
+      status)
+        rsh "$INET" "./ipoe/inet/setup-ruleserver.sh status"
+        ;;
+      ca)
+        rsh "$INET" "./ipoe/inet/setup-ruleserver.sh ca"
+        ;;
+      *)
+        die "prov のサブコマンドは on / off / status / log / ca です"
+        ;;
+    esac
     ;;
 
   dslite)
@@ -275,7 +319,10 @@ case "${1:-status}" in
     ;;
 
   -h|--help|help)
-    sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+    # ヘッダのコメントをそのまま usage として出す。
+    # 行数を直書きすると、ヘッダを 1 行足しただけで末尾が切れる (実際に切れた)。
+    # `set -u` の手前までを出す形にして、ヘッダの増減に追従させる。
+    sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
     ;;
 
   *)

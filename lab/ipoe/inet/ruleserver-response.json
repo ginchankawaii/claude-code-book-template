@@ -1,0 +1,46 @@
+{
+  "_comment_1": "HB46PP プロビジョニング応答 (ラボ用)。ruleserver.py がそのまま返す。",
+  "_comment_2": "アンダースコアで始まるキーは仕様外のコメント。CPE は未知のキーを無視する。",
+  "_comment_3": "このファイルはリクエストのたびに読み直される。書き換えたら即座に反映される。",
+
+  "enabler_name": "LAB-VNE",
+  "service_name": "IPoE Lab 4over6",
+  "isp_name": "LAB-ISP",
+
+  "ttl": 3600,
+  "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "auth": "ok",
+
+  "order": ["map_e", "dslite"],
+
+  "_comment_map_e": [
+    "ラボの MAP-E BR (vne/setup-map-br.sh) と同じ値。",
+    "CPE には『自分の IPv4 は何番か』を教えない。BMR を配るだけで、",
+    "CPE が自分の委譲プレフィックスから EA-bits を展開して自力で導出する。",
+    "  ea_length 16 = IPv4サフィックス 8 ビット + PSID 8 ビット",
+    "  PD 方式 (2001:db8:100a:500::/56) → EA=0x0a05 → 198.51.100.10 / PSID 5",
+    "  RA 方式 (2001:db8:1014:300::/64) → EA=0x1403 → 198.51.100.20 / PSID 3",
+    "  psid_offset 4 なので 1 CPE あたり 15 レンジ x 16 ポート = 240 ポート",
+    "version 0 は draft-ietf-softwire-map-03。Cisco の",
+    "`nat64 provisioning mode jp01 version draft-ietf-softwire-map-03` と同じ意味。",
+    "RFC 7597 で解釈させたい場合は 1 にする。"
+  ],
+  "map_e": {
+    "version": 0,
+    "mesh": false,
+    "br": "2001:db8:9999::1",
+    "rules": [
+      {
+        "ipv6": "2001:db8:1000::/40",
+        "ipv4": "198.51.100.0/24",
+        "ea_length": 16,
+        "psid_offset": 4
+      }
+    ]
+  },
+
+  "_comment_dslite": "ラボの AFTR (vne/setup-aftr.sh)。setup-ruleserver.sh が DNS に登録する。",
+  "dslite": {
+    "aftr": "aftr.lab.example"
+  }
+}
