@@ -66,12 +66,14 @@ case "$MODE" in
     echo
     # dnsmasq は bind-dynamic + interface=<INET側> なので **ループバックでは待ち受けていない**。
     # 127.0.0.1 に投げると systemd-resolved に当たって空振りする。必ず INET 側へ投げること。
+    # dig は応答が無いと 9 を返す。`set -e` でここで死ぬと、この下の
+    # 「直近の要求」が出ないまま終わってしまい、状態確認の役に立たない
     echo "=== DNS 応答 (CPE が最初に引くもの) ==="
-    dig +short -t TXT 4over6.info @203.0.113.53
+    dig +short -t TXT 4over6.info @203.0.113.53 || echo "  (DNS が応答しません)"
     echo "=== ${PROV_FQDN} ==="
-    dig +short -t AAAA "${PROV_FQDN}" @203.0.113.53
+    dig +short -t AAAA "${PROV_FQDN}" @203.0.113.53 || true
     echo "=== ${AFTR_FQDN} ==="
-    dig +short -t AAAA "${AFTR_FQDN}" @203.0.113.53
+    dig +short -t AAAA "${AFTR_FQDN}" @203.0.113.53 || true
     echo
     echo "=== 直近の要求 ==="
     tail -n 20 "${LOGFILE}" 2>/dev/null || echo "  (まだ要求はありません)"
@@ -95,8 +97,12 @@ case "$MODE" in
     echo "quit"
     exit 0 ;;
   selftest)
-    URL="$(sed -n 's/^txt-record=4over6.info,v=v6mig-1 url=\([^ ]*\).*/\1/p' /etc/dnsmasq.d/lab-prov.conf)"
-    [ -n "$URL" ] || { echo "TXT レコードが見つかりません。先に構築してください" >&2; exit 1; }
+    # 未構築だと sed がファイルを開けずに落ちる。`set -e` で死ぬと下の
+    # 案内が出ないので、失敗を握って自前のメッセージを出す
+    URL="$(sed -n 's/^txt-record=4over6.info,v=v6mig-1 url=\([^ ]*\).*/\1/p' \
+           /etc/dnsmasq.d/lab-prov.conf 2>/dev/null || true)"
+    [ -n "$URL" ] || { echo "TXT レコードが見つかりません。先に構築してください:" >&2
+                       echo "  sudo $0 https" >&2; exit 1; }
     echo "[selftest] TXT から得た URL: ${URL}"
     echo "[selftest] CPE を装って要求します"
     # 実機 CPE が送るのと同じ形のクエリ (仕様の例に準拠)
