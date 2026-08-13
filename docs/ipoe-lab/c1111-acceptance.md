@@ -232,6 +232,132 @@ show vlan brief
    - **とくに演習 6 は現状の手順では再現しない疑いがあります**(下記)
 4. build-log に「サイクル 8」として記録
 
+---
+
+## 7. 実施記録(2026-08-13)
+
+**判定: 受け入れ。**§5 の 8 項目すべて OK。
+
+### 個体情報
+
+| 項目 | 実測 |
+|---|---|
+| PID | `C1111-8P` (VID: V01) |
+| シリアル(シャーシ) | `FGL23312070` |
+| シリアル(Route Processor) | `FOC2329813F` |
+| IOS XE | `17.15.05` / `universalk9` / RELEASE (fc3) |
+| ROMMON | `17.5(1r)` |
+| **動作モード** | **`Autonomous`**(SD-WAN コントローラモードではない) |
+| Config register | `0x2102` |
+| Last reload reason | `PowerOn`(クラッシュ由来ではない) |
+| メモリ | 4194304K(4GB) |
+| フラッシュ | 2908606464 bytes 中 2020450304 bytes 空き |
+
+### ライセンス
+
+```
+appxk9      (ISR_1100_8P_Application)  1 IN USE
+securityk9  (ISR_1100_8P_Security)     1 IN USE
+ipbase → ipbasek9
+The current throughput level is unthrottled
+Smart Licensing Status: Smart Licensing Using Policy
+Smart Account: <none> / Virtual Account: <none>
+```
+
+**出品の主張どおり**(appxk9 + securityk9 が IN USE、unthrottled)。
+**ただし Smart Account は未登録。**SLP は未登録でも機能が動くため、
+**「IN USE 表示」は権利の証明にはならない**。ラボ用途では実害なし。
+
+### ハードウェア
+
+| 項目 | 実測 | 判定 |
+|---|---|---|
+| 温度 | Int1 35℃ / Int2 29℃ / Int3 30℃ / Int4 31℃ / CPU 35℃ すべて Normal | OK |
+| モジュール | `0/0 C1111-2x1GE` ok / `0/1 C1111-ES-8` ok / `R0` ok,active / `F0` ok,active / `P0 PWR-12V` ok | OK |
+| CPLD / FW | 全スロット `18032301` / `17.5(1r)` | OK |
+| エラーログ | `show logging \| include ERR\|WARN\|FAIL\|Temp\|Fan\|Power` → **出力ゼロ** | OK |
+| クラッシュダンプ | `core/` は `.callhome`(1 バイト)と `modules` のみ | **なし** |
+| pcap | `bootflash:pcap/` は空(No such file) | **なし** |
+
+> **ファンセンサーが無いのは正常。**C1111-8P は**ファンレス**機。
+> 中古で最も多い故障箇所(ファン)が構造的に存在しない。
+
+**8 ポート物理リンクテスト(ケーブル 1 本でペア接続、4 回)**
+
+```
+Gi0/1/0  connected  1  a-full a-1000 10/100/1000BaseTX
+Gi0/1/1  connected  1  a-full a-1000 10/100/1000BaseTX
+Gi0/1/2  connected  1  a-full a-1000 10/100/1000BaseTX
+Gi0/1/3  connected  1  a-full a-1000 10/100/1000BaseTX
+Gi0/1/4  connected  1  a-full a-1000 10/100/1000BaseTX
+Gi0/1/5  connected  1  a-full a-1000 10/100/1000BaseTX
+Gi0/1/6  connected  1  a-full a-1000 10/100/1000BaseTX
+Gi0/1/7  connected  1  a-full a-1000 10/100/1000BaseTX
+```
+
+**8 ポートすべて 1Gbps フルデュプレックスでリンクアップ。**
+
+### 前オーナーの痕跡(消す前に確認したもの)
+
+```
+hostname Router
+username yahoo privilege 15 secret 9 $9$1LW40Z50arFkvk$...
+GigabitEthernet0/0/1  192.168.1.1  YES NVRAM
+```
+
+**出品者が動作確認に使った privilege 15 アカウントが残存。**
+`secret 9`(scrypt)なので実用上は破れないが、**パスワード不明の特権アカウントが生きている状態**。
+→ **`write erase` するまで業務ネットワークに接続しないこと。**
+
+フラッシュのタイムスタンプから、`Jun 27 2026` に 17.15.05 のイメージが書かれている。
+出品前に出品者がアップグレードした個体と推測される。
+
+### MAP-E の CLI(この個体を買った本命)
+
+```
+Router(config)# nat64 ?
+  logging       NAT64 logging
+  map-e         NAT64 MAP-E          ← ★
+  map-t         NAT64 MAP-T
+  prefix        NAT64 prefix
+  provisioning  NAT64 provisioning   ← ★
+  route         NAT64 route
+  service       NAT64 service
+  settings      NAT64 settings
+  switchover    NAT64 switchover
+  translation   NAT64 translation
+  v4 / v4v6 / v6v4
+
+Router(config)# nat64 map-e ?
+  domain  NAT64 MAP-E domain
+```
+
+**MAP-E の CLI あり。**Cat8000v(CML)で QFP クラッシュにより測れなかった
+**バックログ 10(実効ポート数)を、この実機で決着できる見込み。**
+
+> **ただし CLI があることと転送できることは別物**(サイクル 7 の教訓)。
+> 必ずパケットを流して出口アドレスまで確認すること。
+
+### ポート名の対応(ハンズオン資料に反映が必要)
+
+| 役割 | 892FJ | **C1111-8P** |
+|---|---|---|
+| WAN | `GigabitEthernet0` | **`GigabitEthernet0/0/0`** |
+| LAN(SVI) | `Vlan1` | **`Vlan1`**(同じ) |
+| 検証 PC を挿すポート | `FastEthernet0` | **`GigabitEthernet0/1/0`** |
+
+WAN が routed port、`Gi0/1/0-7` が L2 スイッチポート、`Vlan1` が SVI という構成は
+892FJ と同じ形なので、**ハンズオン資料はポート名の置換だけで C1111 に載る。**
+
+### 未実施(次回)
+
+- [ ] `write erase` → `reload`(前オーナーのアカウント除去)
+- [ ] `nat64 map-e domain 1` / `nat64 provisioning ?` の中身確認(`mode jp01` があるか)
+- [ ] ラボに接続して MAP-E の**実転送**テスト → バックログ 10 決着
+- [ ] ハンズオン演習 6/7 の通し実走(下記の注意を参照)
+
+---
+
 > **演習 6(MTU)を実走するときの注意**
 > 資料は 0-3 で **Vlan1 にも** `ip tcp adjust-mss 1420` を入れさせているのに、
 > 演習 6 の手順では **Tunnel0 の clamp しか外しません。**

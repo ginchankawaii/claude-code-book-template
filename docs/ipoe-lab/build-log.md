@@ -2074,6 +2074,57 @@ VNE/INET に届かない状態で `restore` を叩くと:
 - 盲点(D)は README「できないこと」/ §10 / test-matrix / runbook に注記を追加し、
   ラボ改修が要るものはバックログ 16〜20 に積んだ
 
+### サイクル 8: C1111-8P(中古)の受け入れ評価(2026-08-13)
+
+**目的**: バックログ 10(MAP-E の実効ポート数)を測れる実機を確保する。
+892FJ は MAP-E 非対応、CML の Cat8000v は QFP クラッシュで測れなかったため。
+
+**結果: 受け入れ。全 8 判定項目 OK。**詳細は [c1111-acceptance.md §7](c1111-acceptance.md)。
+
+**要点だけ**:
+
+- `C1111-8P` / SN `FGL23312070` / IOS XE **17.15.05** universalk9 / ROMMON 17.5(1r)
+- **`Autonomous` モード**(SD-WAN コントローラモードではない ← 中古では当たり)
+- `appxk9` + `securityk9` とも **IN USE**、スループット **`unthrottled`** = 出品どおり
+  - **ただし Smart Account は未登録。**SLP は未登録でも動くので、
+    **「IN USE 表示」は権利の証明にはならない**
+- 温度 29〜35℃ Normal / 全モジュール ok / エラーログゼロ / **クラッシュダンプなし**
+- **8 ポートすべて `connected` / `a-full a-1000`**(ケーブル 1 本でペア接続 × 4 回)
+- ファンレス機なので、中古で最多の故障箇所(ファン)が構造的に存在しない
+
+**本命 — MAP-E の CLI が存在した**:
+
+```
+Router(config)# nat64 ?
+  ... map-e  NAT64 MAP-E  /  provisioning  NAT64 provisioning ...
+Router(config)# nat64 map-e ?
+  domain  NAT64 MAP-E domain
+```
+
+**バックログ 10 をこの実機で決着できる見込み。**
+ただし**サイクル 7 の教訓どおり、CLI があることと転送できることは別物**なので、
+パケットを流して出口アドレスを確認するまでは「使える」と書かないこと。
+
+**副産物 — ポート名の対応表が確定した**:
+
+| 役割 | 892FJ | C1111-8P |
+|---|---|---|
+| WAN | `GigabitEthernet0` | `GigabitEthernet0/0/0` |
+| LAN(SVI) | `Vlan1` | `Vlan1` |
+| 検証 PC 用ポート | `FastEthernet0` | `GigabitEthernet0/1/0` |
+
+**構成の形は 892FJ と同じ**(WAN が routed、`Gi0/1/x` が L2 スイッチ、`Vlan1` が SVI)なので、
+ハンズオン資料はポート名の置換だけで 2 機種対応にできる。
+
+**セキュリティ上の注意(記録)**: 前オーナー(出品者)の
+`username yahoo privilege 15 secret 9 ...` が残っていた。`secret 9` は scrypt なので
+実用上は破れないが、**パスワード不明の特権アカウントが生きている**状態。
+`write erase` するまで業務ネットワークに接続しないこと。
+
+**次サイクルでやること**: `write erase` → MAP-E の実転送テスト(バックログ 10)→
+ハンズオン演習 6/7 の通し実走([review-phase5.md](review-phase5.md) の要実走 1、
+および [review-phase6-training.md](review-phase6-training.md) の P0-1)。
+
 ## 3. 未検証項目トラッカー
 
 **実走で潰すべき仮説の一覧です。** 設計時に「たぶんこうなる」で書いた箇所と、
