@@ -1,9 +1,10 @@
 # IPv6 / IPoE ハンズオン — 実機を触って、環境が変わるのを見る
 
 **対象**: 説明会(`setsumeikai.md`)を受けた人
-**時間**: 150 分(休憩 10 分 × 1 を含む)
+**時間**: 165 分(休憩 10 分 × 1 を含む)
 **やること**: **実機のルータ(Cisco 892FJ)にコマンドを打つ。**その間、司会が裏で網の方式を切り替える
 **使う端末**: 実機の Cisco 892FJ(コンソール接続)と、**Windows の検証用 PC**
+**司会が実演する機材**: Cisco C1111-8P(演習 5b。1 台しかないので受講者は触りません)
 
 > **時間配分は仮案です。**通しでの実測はまだしていません。
 > **初回はパイロットとして、各演習の実測時間をメモしながら回してください。**
@@ -12,10 +13,19 @@
 > |---|---|
 > | 0-2 実機を消す / 0-3 設定を入れる | 10 + 10 分 |
 > | 第1部 アドレスが降りてくるのを見る | 30 分 |
-> | 第2部 IPv4 を通す | 40 分 |
+> | 第2部 IPv4 を通す | **55 分**(演習 5b を追加したため) |
 > | 休憩 | 10 分 |
 > | 第3部 壊す | 40 分 |
 > | 第4部 戻して終わる | 10 分 |
+>
+> **165 分に収まらない場合に削る順番**
+>
+> 1. **演習 8(端末による症状の違い・5 分)** — 面白いが本筋ではありません
+> 2. **演習 5b の後半(配る値を変える・5 分)** — 前半だけでも成立します
+> 3. **演習 4(出口アドレス・10 分)** — ただし**これを削るなら演習 3 の結論も弱くなります**
+>
+> **演習 5b の前半は削らないでください。**「MAP-E は誰も設定しない」は
+> 説明会で一番腑に落ちないところで、ここで実物を見せると一気に片付きます。
 
 ---
 
@@ -82,10 +92,16 @@
 ./lab-mode.sh ra                  # ひかり電話なし相当に切り替え
 ./lab-mode.sh pd                  # ひかり電話あり相当に切り替え
 ./lab-mode.sh dslite <CEのIPv6>   # IPv4 の運び方を DS-Lite に
-./lab-mode.sh mape                # IPv4 の運び方を MAP-E に (CE は OpenWrt)
+./lab-mode.sh mape                # IPv4 の運び方を MAP-E に
 ./lab-mode.sh break mtu           # MTU 障害を注入
 ./lab-mode.sh break dns           # IPv6 だけ死んだサイトを作る
 ./lab-mode.sh restore             # 障害を戻す
+
+# 演習 5b (MAP-E の自動設定) で使うもの
+./lab-mode.sh prov on             # ルール配布サーバを起動
+./lab-mode.sh prov log            # CPE から来た要求を見る (投影用)
+./lab-mode.sh prov rule shared    # 共有IP のルールを配る (既定)
+./lab-mode.sh prov rule fixed     # 固定IP1 相当のルールを配る (BR も自動で張り替え)
 ```
 
 **切り替えるたびに、司会は「いま何方式か」と「期待する出口アドレス」を読み上げてください。**
@@ -521,7 +537,172 @@ CPE(config)# nat64 ?
 
 納入実績に 892FJ が多いなら、**契約書で VNE を確認する時点でこれが分かります。**
 
-> MAP-E の動きを見たい人は、この後 OpenWrt の CPE で同じことをやります(時間があれば)。
+---
+
+## 演習 5b: では MAP-E は誰が設定するのか(15 分・司会の実演)
+
+**ここは 1 台しかない C1111-8P を使うので、司会が操作して投影します。**
+**受講者は手を止めて画面を見てください。**
+
+### まず考えてもらう(2 分)
+
+司会は先に質問を投げてください。
+
+> **「892FJ には MAP-E の設定を入れられませんでした。
+> では、対応している機種には、誰がどうやって設定を入れるのでしょうか」**
+
+答えを言う前に何人かに聞いてください。**「ルータに手で入れる」と答える人が多いはずです。**
+
+### 答え
+
+**誰も入れません。CPE が事業者のサーバから取ってきます。**
+
+```
+   ① CPE が起動する
+   ② 事業者の「ルール配布サーバ」に問い合わせる
+        「私の IPv6 は 2001:db8:1014:300:: です。ルールをください」
+   ③ サーバがルールを返す
+   ④ CPE が 自分の IPv6 と ルール から IPv4 とポート範囲を計算する
+```
+
+**ラボにはこのサーバがあります。**本番と同じやり方で見せられます。
+
+### 【司会】サーバを起動して、要求が来るのを見せる
+
+```bash
+./lab-mode.sh prov on
+```
+
+別の画面で、**要求が来る様子を出しっぱなしにしてください**。
+
+```bash
+./lab-mode.sh prov log
+```
+
+### 【司会】C1111-8P に設定を入れる(投影)
+
+```
+configure terminal
+ip domain lookup
+ip name-server 2001:DB8:CAFE::53
+nat64 settings fragmentation header disable
+nat64 route 0.0.0.0/0 GigabitEthernet0/0/0
+interface GigabitEthernet0/0/0
+ nat64 enable
+exit
+nat64 provisioning mode jp01
+version draft-ietf-softwire-map-03
+rule-server http://prov.lab.example:8080/rule.cgi
+api-key LABTESTAPIKEY123
+tunnel source GigabitEthernet0/0/0
+service-prefix 2001:DB8:1000::/40
+exit
+interface GigabitEthernet0/0/0
+ shutdown
+ no shutdown
+end
+```
+
+> **入れた設定の中に、IPv4 アドレスもポート番号も 1 つも無い**ことを指摘してください。
+> ここが受講者に効きます。
+
+### 出てくる出力(サーバ側のログ)
+
+```
+GET /rule.cgi/?ipv6Prefix=2001:DB8:1014:300::&ipv6PrefixLength=64&code=...
+User-Agent: cisco-IOS
+```
+
+**ルータが自分から聞きに行っています。**
+
+### 出てくる出力(ルータ側)
+
+```
+CPE# show nat64 map-e
+MAP-E Domain 9126
+   Border-relay-address
+      Ip-v6-address 2001:DB8:9999::1
+   Basic-mapping-rule
+      Ip-v6-prefix 2001:DB8:1000::/40
+      Ip-v4-prefix 198.51.100.0/24
+      Port-parameters
+         Share-ratio 256   Contiguous-ports 16   Start-port 4096
+      Port-set-id 3
+```
+
+**誰も入力していない値が入っています。**
+
+### 【受講者】検証用 PC から出口アドレスを見る
+
+```
+curl http://203.0.113.80/
+```
+
+```
+src 198.51.100.20
+```
+
+### いま何が起きたか — ここを 5 分かけて説明してください
+
+**「自動設定」の中身がこれです。**
+
+| | 誰が決めたか |
+|---|---|
+| IPv6 プレフィックス | **NTT の網**(RA で降ってきた) |
+| ルール(分け方) | **事業者**(サーバが返した) |
+| 共有 IPv4 と ポート範囲 | **CPE が計算した**(上の 2 つから) |
+| 人間が決めたもの | **ありません** |
+
+**だから「対応機種かどうか」が重要**なのです。この一連を自動でやれない機種は、
+どれだけ設定画面をいじっても繋がりません。
+
+### 【司会】仕上げ — 配る値を変えると、CPE が変わる
+
+**ここがこの演習の山場です。**サーバが返す数字を 1 つ変えるだけで、
+CPE の持ち分が変わることを見せてください。
+
+```bash
+./lab-mode.sh prov rule fixed
+```
+
+**ルータに取り直させます**(投影)。
+
+```
+delete /force bootflash:/mape/mape-rule.json
+configure terminal
+interface GigabitEthernet0/0/0
+ shutdown
+ no shutdown
+end
+```
+
+`show nat64 map-e` をもう一度見せてください。**`Share-ratio` が変わります。**
+
+| | 共有IP(既定) | 固定IP1 相当 |
+|---|---|---|
+| サーバが返す `eaBitLength` | **16** | **8** |
+| Share-ratio | 256(256 人で分ける) | **1(分けない)** |
+| 使えるポート | 240 個 | **全部** |
+| 共有 IPv4 | 198.51.100.20 | **198.51.100.20**(同じ!) |
+
+**IPv4 アドレスは同じままで、ポートの持ち分だけが変わります。**
+「固定 IP オプション」の正体がこれです。**契約で変わっているのは、この数字です。**
+
+戻すとき:
+
+```bash
+./lab-mode.sh prov rule shared
+```
+
+> ⚠ **司会へ: `fixed` の側は実機で未検証です**(2026-08-15 時点)。
+> **当日までに一度通しておいてください。**うまくいかない場合は、
+> 前半(共有IPで通すところ)までで演習を終えてください。そこは実測済みです。
+
+### これが実案件だとどう効くか
+
+- **「ルータを繋いだら勝手に繋がった」**の中身が説明できるようになります
+- **対応表に無い機種を手動設定で何とかしようとしても無駄**だと分かります
+- **固定 IP オプションが何を変えているのか**を、お客様に具体的に説明できます
 
 ---
 
@@ -559,10 +740,24 @@ curl.exe -o NUL -w "size=%{size_download}\n" http://203.0.113.80/big.bin
 
 ### 【受講者】892FJ で MSS の調整を切る
 
+**2 か所あります。両方外さないと効きません。**
+`ip tcp adjust-mss` は**そのインタフェースを通る TCP の握手**に効くので、
+LAN から出ていく通信は **Vlan1 と Tunnel0 の両方**を通ります。
+**片方だけ外しても、もう片方で抑えられてしまいます。**
+
 ```
 CPE(config)# interface Tunnel0
 CPE(config-if)#  no ip tcp adjust-mss
+CPE(config-if)# exit
+CPE(config)# interface Vlan1
+CPE(config-if)#  no ip tcp adjust-mss
 CPE(config-if)# end
+```
+
+外れたことを確認してください。**何も出なければ外れています。**
+
+```
+CPE# show running-config | include adjust-mss
 ```
 
 もう一度 `curl`。**まだ落ちてきます。**
@@ -609,13 +804,20 @@ netsh interface ipv4 delete destinationcache
 
 ### 直す
 
+**外したのは 2 か所なので、戻すのも 2 か所です。**
+
 ```
 CPE(config)# interface Tunnel0
+CPE(config-if)#  ip tcp adjust-mss 1420
+CPE(config-if)# exit
+CPE(config)# interface Vlan1
 CPE(config-if)#  ip tcp adjust-mss 1420
 CPE(config-if)# end
 ```
 
-**この 1 行で直ります。**これが実務的な対処そのものです。
+**これが実務的な対処そのものです。**実案件では**トンネルのある側**に入れれば足りますが、
+**どのインタフェースに入っているかを `show running-config | include adjust-mss` で
+必ず確認**してください。**「入れたつもりで別の場所に入っていた」**が一番多い失敗です。
 
 ### 【司会】
 

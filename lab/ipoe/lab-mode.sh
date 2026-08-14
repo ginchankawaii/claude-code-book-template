@@ -11,6 +11,7 @@
 #     prov on|off       … MAP-E のルール配布サーバ (本番と同じ自動設定経路) を起動/停止
 #     prov status|log|ca … 状態表示 / CPE から来た要求を見る / ルータ用 CA を出す
 #     prov both|mape|dslite … 配る方式を絞る (MAP-E で落ちるときの切り分け)
+#     prov rule shared|fixed … 共有IP / 固定IP1相当 を切替 (BR の張り替えも自動)
 #     break mtu         … MTU ブラックホールを注入する
 #     break dns         … IPv6 だけ死んだサイトを作る
 #     restore           … 注入した障害を全部戻す
@@ -234,6 +235,46 @@ case "${1:-status}" in
       ca)
         rsh "$INET" "./ipoe/inet/setup-ruleserver.sh ca"
         ;;
+      rule)
+        # jp01 で配るルールを 共有IP / 固定IP1相当 で切り替える。
+        # **IPv4 は変わらないが PSID が変わるので CE の MAP アドレスが変わる。**
+        # ラボの BR は終点を静的に持つので、ここで一緒に張り替える。
+        # 張り替えを忘れると「ルールは新しくなったのに IPv4 が全断」になり、
+        # バナーは期待値を出し続けるので気づけない (サイクル 12 で踏んだのと同じ形)。
+        need VNE "VNE"
+        detect
+        case "${3:-}" in shared|fixed) ;; *)
+          die "prov rule のあとは shared / fixed です" ;; esac
+        # 委譲プレフィックス × ルール で決まる CE の MAP アドレス (draft-03 の並び)。
+        # 値の出どころは lab/ipoe/ce/hb46pp-client.py の計算 (--selftest で照合できる)。
+        if [ "$(state_get v6mode)" = "ra" ]; then
+          v4="198.51.100.20"
+          case "$3" in
+            shared) ce="2001:db8:1014:300:c6:3364:1400:300" ;;
+            fixed)  ce="2001:db8:1014:300:c6:3364:1400:0" ;;
+          esac
+        else
+          v4="198.51.100.10"
+          case "$3" in
+            shared) ce="2001:db8:100a:500:c6:3364:a00:500" ;;
+            fixed)  ce="2001:db8:100a:500:c6:3364:a00:0" ;;
+          esac
+        fi
+        rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule ${3}" \
+          || die "ルールの差し替えに失敗しました"
+        echo "[lab-mode] BR を新しい CE アドレスに張り替えます: ${ce}"
+        rsh "$VNE" "sudo CE_MAP_ADDR=${ce} CE_SHARED_V4=${v4} ./ipoe/vne/setup-map-br.sh" \
+          || die "BR の張り替えに失敗しました"
+        echo
+        case "$3" in
+          shared) echo "  → 共有IP (256 分割 / 240 ポート) を配ります" ;;
+          fixed)  echo "  → 固定IP1 相当 (分割なし / 全ポート) を配ります"
+                  echo "     ⚠ この設定は実機で未検証です (2026-08-15 時点)" ;;
+        esac
+        echo "  CPE が取り直すまで最大 8 分。すぐ試すならルータ側で:"
+        echo "      delete /force bootflash:/mape/mape-rule.json"
+        echo "      conf t → interface <WAN> → shutdown → no shutdown → end"
+        ;;
       both|mape|dslite)
         # 配る方式を絞る。**MAP-E で CPE が落ちるときの切り分けに使う。**
         # dslite だけを配って正常に動けば、プロビジョニングの仕組み自体は
@@ -242,7 +283,7 @@ case "${1:-status}" in
           || die "配布方式の切り替えに失敗しました"
         ;;
       *)
-        die "prov のサブコマンドは on / off / status / log / ca / both / mape / dslite です"
+        die "prov のサブコマンドは on / off / status / log / ca / rule / both / mape / dslite です"
         ;;
     esac
     ;;

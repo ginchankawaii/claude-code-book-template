@@ -10,6 +10,8 @@
 #          setup-ruleserver.sh selftest   … 自分で CPE の振りをして疎通確認
 #          setup-ruleserver.sh response {both|mape|dslite}
 #                                         … 配る方式を絞る (切り分け用)
+#          setup-ruleserver.sh rule {shared|fixed}
+#                                         … jp01 で配るルールを 共有IP / 固定IP1相当 で切替
 #
 # **これが何か**
 #   本番の MAP-E / DS-Lite では、CPE はルールを手で設定されない。
@@ -119,6 +121,38 @@ case "$MODE" in
     echo "[selftest] 上に JSON が出ていれば配布経路は成立しています"
     echo "           (配る方式を絞っている場合は map_e が無いこともあります: $0 response both で戻せます)"
     exit 0 ;;
+  rule)
+    # jp01 で配る MAP ルールを差し替える。
+    #   shared … 共有IP (eaBitLength 16 → 256 分割・240 ポート)。実機検証済み
+    #   fixed  … 固定IP1 相当 (eaBitLength 8 → 分割なし・全ポート)。**実機未検証**
+    # **IPv4 アドレスは変わらないが、PSID が変わるので CE の MAP アドレスが変わる。**
+    # ラボの BR は終点を静的に持つため、切り替えたら必ず張り替えること
+    # (lab-mode.sh prov rule はそこまで自動でやる)。
+    [ "$(id -u)" = "0" ] || { echo "root で実行してください (sudo)" >&2; exit 1; }
+    case "${2:-}" in
+      shared) SRC="${SRC_DIR}/ruleserver-response-jp01.json" ;;
+      fixed)  SRC="${SRC_DIR}/ruleserver-response-jp01-fixed.json" ;;
+      *) echo "rule のあとは shared / fixed です" >&2; exit 1 ;;
+    esac
+    python3 - "$SRC" "${ETC}/response-jp01.json" <<'PY'
+import json, sys
+src, dst = sys.argv[1], sys.argv[2]
+with open(src, encoding="utf-8") as f:
+    doc = json.load(f)
+clean = {k: v for k, v in doc.items() if not k.startswith("_comment")}
+with open(dst, "w", encoding="utf-8") as f:
+    json.dump(clean, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+r = clean["basicMapRules"][0]
+print("[INET-SIM] jp01 のルールを差し替えました: eaBitLength=%s psIdOffset=%s"
+      % (r["eaBitLength"], r["psIdOffset"]))
+PY
+    echo "  サーバの再起動は不要です (要求のたびに読み直します)"
+    echo "  **CPE が取り直すまで最大 8 分かかります。**すぐ試すならルータ側で:"
+    echo "      delete /force bootflash:/mape/mape-rule.json"
+    echo "      configure terminal / interface <WAN> / shutdown / no shutdown / end"
+    echo "  **BR の張り替えを忘れないこと。**lab-mode.sh prov rule なら自動です"
+    exit 0 ;;
   response)
     # **切り分け用。** MAP-E を配ると CPE が落ちる場合に、DS-Lite だけを配って
     # 「プロビジョニングの仕組み自体は生きているか」を分離して判定できる。
@@ -177,6 +211,7 @@ ip -6 addr replace "${PROV_ADDR}/64" dev "${INET_IF}"
 # **配置時に落として、厳密に仕様どおりの JSON にする。**
 # jp01 と HB46PP の両方を配置する。ruleserver.py が **要求の形で自動判別**して
 # 使い分けるので、方式ごとにサーバを建て分ける必要はない。
+# jp01 の既定は共有IP版。固定IP1 相当に切り替えるのは `rule fixed`。
 for fmt in jp01 hb46pp; do
   python3 - "${SRC_DIR}/ruleserver-response-${fmt}.json" "${ETC}/response-${fmt}.json" <<'PY'
 import json, sys
