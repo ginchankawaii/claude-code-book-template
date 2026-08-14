@@ -1,6 +1,17 @@
 # MAP-E のルール配布(プロビジョニング)をラボで再現する
 
-C1111-8P / 2026-08-13 構築 · 実施は未了(ルータ操作は朝)
+C1111-8P / 2026-08-13 構築 · **2026-08-14 実施完了**
+
+> ## 結果: **通った**
+>
+> ```
+> PC → curl http://203.0.113.80/
+>   src 198.51.100.20      ← MAP-E の共有 IPv4
+> ```
+>
+> **C1111-8P は、本番と同じ経路(ルール配布サーバからの自動取得)で MAP-E が動きます。**
+> サイクル 9 の「手動 BMR で 6/6 クラッシュ」は、**本番に存在しない経路での結果**でした。
+> 詳細は [build-log.md](build-log.md) サイクル 12。
 
 ---
 
@@ -27,13 +38,13 @@ Cisco IOS XE でこれにあたるのが `nat64 provisioning mode jp01` です�
 **本番で通る道ではない経路での結果**です。本番の経路で動くかどうかは、まだ分かっていません。
 それを確定させるためにサーバを建てました。
 
-> **この検証で決まること**
+> **この検証で決まったこと**
 >
-> | 結果 | 意味 | 次の判断 |
-> |---|---|---|
-> | ルールを取得して転送できる | 落ちるのは**手書き BMR 経路だけ**。本番経路は生きている | C1111-8P で郡山の案件に進める |
-> | 同じように QFP が落ちる | **MAP-E のデータパス自体**がこの機種/ファームで壊れている | YAMAHA 等に切り替える判断材料になる |
-> | ルールを取得できない(要求が来ない/形式が違う) | Cisco の `jp01` が HB46PP と別物 | 捕獲したログから応答を作り直して再試行 |
+> | 結果 | 判定 |
+> |---|---|
+> | ルールを取得して転送できた | ✅ **これ。**落ちるのは手書き BMR 経路だけで、本番経路は生きている → **C1111-8P で郡山の案件に進める** |
+> | 同じように QFP が落ちる | 起きなかった |
+> | ルールを取得できない | 起きなかった。ただし **Cisco の `jp01` は HB46PP ではなく OCN 独自形式**だった(§2 参照) |
 
 ---
 
@@ -57,6 +68,45 @@ BMR(IPv6 プレフィックス + IPv4 プレフィックス + `ea_length` + `psi
 CPE が自分の委譲プレフィックスから導出します。ここが MAP-E の肝です。
 
 仕様: <https://github.com/v6pc/v6mig-prov/blob/master/spec.md>
+
+---
+
+## 1-B. ただし Cisco の `jp01` は HB46PP ではなかった(実測)
+
+ラボのサーバは **2 つの方式に自動で応答し分けます**。要求のクエリパラメータで見分けます。
+
+| 方式 | 要求 | 応答の器 | 使う CPE |
+|---|---|---|---|
+| **jp01** | `?ipv6Prefix=...&ipv6PrefixLength=...&code=<APIキー>` | `basicMapRules` | **Cisco IOS XE**(OCN バーチャルコネクト) |
+| **HB46PP** | `?vendorid=...&product=...&capability=...` | `map_e` / `dslite` | 国内標準対応の CPE(DNS TXT で発見) |
+
+C1111-8P が実際に喋った内容(ラボのサーバで捕獲):
+
+```
+GET /rule.cgi/?ipv6Prefix=2001:DB8:1014:300::&ipv6PrefixLength=64&code=<APIキー>
+User-Agent: cisco-IOS
+```
+
+Cisco の 15M&T ドキュメントに載っている OCN の URL 仕様
+`https://rule.map.ocn.ad.jp/?ipv6Prefix=<address>&ipv6PrefixLength=<prefixLength>&code=<API Key>`
+と**同じ形**です。`api-key` が `code=` として乗ります。
+
+**jp01 の応答形式(実機が受理した形)**:
+
+```json
+{
+  "basicMapRules": [
+    { "brIpv6Address": "2001:db8:9999::1",
+      "ipv6Prefix": "2001:db8:1000::", "ipv6PrefixLength": "40",
+      "ipv4Prefix": "198.51.100.0",    "ipv4PrefixLength": "24",
+      "eaBitLength": "16", "psIdOffset": "4" }
+  ]
+}
+```
+
+> **値は必ず文字列にすること。** 数値で返すと、ルータは domain を作るところまで行って
+> **BMR を黙って破棄します**（エラーは一切出ません）。Content-Type も
+> `application/json; charset=utf-8` が必要です。
 
 ---
 
@@ -270,49 +320,57 @@ quit
 
 **グローバル コンフィグ(`Router(config)#`)** のまま次へ。
 
-### 【手順 I】`jp01` のサブコマンドを確認する — **グローバル コンフィグ(`Router(config)#`)**
+### 【手順 I】NAT64 と jp01 を設定する — **グローバル コンフィグ(`Router(config)#`)**
 
-**先に構文を確かめます。** `rule-server` が URL を取るのか、`http://` を受けるのかは
-公開情報から確定できていません。**ここの出力を後で私に見せてください。**
-
-```
-nat64 provisioning mode jp01 version draft-ietf-softwire-map-03
-```
-
-プロビジョニング サブモードに入ります(プロンプトが変わります)。そこで:
+**これが実機で通った構成そのものです。** そのまま貼れます。
 
 ```
-?
-rule-server ?
-api-key ?
-hostname ?
-service-prefix ?
-tunnel ?
-```
-
-### 【手順 J】ルール配布サーバを指定する — **プロビジョニング サブモード**
-
-手順 I の出力次第ですが、まずは HTTPS + FQDN で試してください。
-
-```
-rule-server https://prov.lab.example/rule.cgi
+configure terminal
+nat64 settings fragmentation header disable
+nat64 route 0.0.0.0/0 GigabitEthernet0/0/0
+interface GigabitEthernet0/0/0
+ nat64 enable
+exit
+nat64 provisioning mode jp01
+version draft-ietf-softwire-map-03
+rule-server http://prov.lab.example:8080/rule.cgi
+api-key LABTESTAPIKEY123
+tunnel source GigabitEthernet0/0/0
+service-prefix 2001:DB8:1000::/40
 exit
 end
 ```
 
-**構文が通らなかった場合**に順に試す候補(通るものが出るまで):
+踏みやすい点が 3 つあります。
+
+| 落とし穴 | 実際 |
+|---|---|
+| `nat64 provisioning mode jp01 version ...` と 1 行で書く | **構文エラーになります。**17.9.5f では `version` は**サブモードの中**です(ドキュメントの 1 行表記は古い) |
+| `api-key` が短い | **12〜80 文字**必要です。`LABTEST` は弾かれます |
+| `service-prefix` を省く | **これが最後のピースで、無いと要求を出しません** |
+
+`rule-server` は **HTTP URL をそのまま取ります**(`WORD  HTTP url (1-200) characters`)。
+HTTPS にする場合は手順 H の CA 登録が要りますが、**まず HTTP で通すのが早い**です。
+
+### 【手順 J】取得を叩き起こす — **グローバル コンフィグ(`Router(config)#`)**
+
+**設定を入れただけでは要求を出しません。** WAN のアドレス再取得が引き金です。
 
 ```
-rule-server prov.lab.example
-rule-server https://prov.lab.example/rule.cgi
-rule-server http://prov.lab.example:8080/rule.cgi
-rule-server https://[2001:DB8:CAFE::A1]/rule.cgi
+configure terminal
+interface GigabitEthernet0/0/0
+ shutdown
+ no shutdown
+end
 ```
 
-`api-key` が必須と言われた場合は、**中身は何でも構いません**(ラボのサーバは検証しません):
+一度取得すると `bootflash:/mape/mape-rule.json` に**暗号化して保存**され、
+以後は **約 8 分周期でリトライ**します。取り直させたいときはキャッシュを消してください。
+
+**特権 EXEC(`CPE#`)**:
 
 ```
-api-key LABTEST
+delete /force bootflash:/mape/mape-rule.json
 ```
 
 ### 【手順 K】要求が来たかを見る — **手順 B のターミナル**
@@ -361,33 +419,93 @@ terminal monitor
 
 ルータが取得・導出した値を、**参照実装の計算結果**と突き合わせます。
 
-| 項目 | 期待値(`ra` モード) |
-|---|---|
-| 共有 IPv4 アドレス | `198.51.100.20` |
-| PSID | `3` |
-| MAP CE アドレス | `2001:db8:1014:300:0:c633:6414:3` |
-| BR アドレス | `2001:db8:9999::1` |
-| 使えるポート数 | 240 |
+| 項目 | 期待値(`ra` モード) | 実機の実測 |
+|---|---|---|
+| 共有 IPv4 アドレス | `198.51.100.20` | ✅ 一致 |
+| PSID | `3` | ✅ 一致 |
+| Share-ratio / 連続ポート | 256 / 16 | ✅ 一致 |
+| 使えるポート数 | 240 (15×16) | ✅ 一致 |
+| BR アドレス | `2001:db8:9999::1` | ✅ 一致 |
+| **MAP CE アドレス** | RFC 7597 なら `...300:0:c633:6414:3` | ⚠ **`...300:c6:3364:1400:300`** |
 
 作業機で計算し直す場合:
 
 ```bash
-ssh root@192.168.11.20 "ssh labadmin@fe80::be24:11ff:fecd:92c5%vmbr0 'python3 ./ipoe/ce/hb46pp-client.py --url \"https://[2001:db8:cafe::a1]/rule.cgi\" --cacert /etc/mape-ruleserver/ca/ca.pem --prefix 2001:db8:1014:300::/64'"
+ssh root@192.168.11.20 "ssh labadmin@fe80::be24:11ff:fecd:92c5%vmbr0 'python3 ./ipoe/ce/hb46pp-client.py --selftest'"
 ```
 
-### 【手順 N】BR を CPE に向けて疎通を試す — **作業機のターミナル**
+### 【手順 N】BR を CPE の実アドレスに向ける — **作業機のターミナル**
 
-ラボの BR は 1 台の CE 向けに静的トンネルを張る作りなので、CPE の MAP アドレスに合わせます。
+> ⚠ **ここが一番の落とし穴です。**
+>
+> Cisco を `draft-ietf-softwire-map-03` で動かすと、CE の MAP アドレスの
+> **インタフェース ID の並びが RFC 7597 と 1 バイトずれます**。
+>
+> | | インタフェース ID | アドレス |
+> |---|---|---|
+> | RFC 7597 5.2 | `0000:<IPv4>:<PSID>` | `2001:db8:1014:300:0:c633:6414:3` |
+> | **実機(draft-03)** | `00:<IPv4>:<PSID>:00` | `2001:db8:1014:300:c6:3364:1400:300` |
+>
+> 中身(IPv4=198.51.100.20 / PSID=3)は同じですが**並びが違います**。
+> ラボの BR はトンネル終点を静的に持つので、**RFC 7597 の方に張ったままだと IPv4 が全断**します。
+
+**必ず実機で確認してから**張ってください。**特権 EXEC(`CPE#`)**:
+
+```
+show ipv6 interface brief
+```
+
+`GigabitEthernet0/0/0` に増えている方が MAP CE アドレスです。その値で BR を張ります:
 
 ```bash
-ssh root@192.168.11.20 "ssh labadmin@fe80::be24:11ff:feb9:3fb1%vmbr0 'sudo CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 ./ipoe/vne/setup-map-br.sh'"
+ssh root@192.168.11.20 "ssh labadmin@fe80::be24:11ff:feb9:3fb1%vmbr0 'sudo CE_MAP_ADDR=2001:db8:1014:300:c6:3364:1400:300 CE_SHARED_V4=198.51.100.20 ./ipoe/vne/setup-map-br.sh'"
 ```
 
-そのうえで **ルータの特権 EXEC(`Router#`)** から:
+### 【手順 N-2】LAN を作って PC から確認する
+
+**ルータ自身の `ping` では判定できません。** Cisco のドキュメントに
+「local packet generation 非対応」とあります。**PC からの実トラフィックで判定**します。
+
+**グローバル コンフィグ(`CPE(config)#`)**:
 
 ```
-ping 203.0.113.80 source Vlan1
+configure terminal
+interface Vlan1
+ ip address 192.168.100.1 255.255.255.0
+ ip tcp adjust-mss 1420
+ nat64 enable
+ no shutdown
+end
 ```
+
+PC を `Gi0/1/0` に繋ぎ、静的 IP を設定します:
+
+| 項目 | 値 |
+|---|---|
+| IP アドレス | `192.168.100.10` |
+| サブネットマスク | `255.255.255.0` |
+| デフォルトゲートウェイ | `192.168.100.1` |
+| DNS | `203.0.113.53` |
+
+> ⚠ **PC の Wi-Fi を切ってください。**
+> 有線と Wi-Fi が両方生きていると、宛先によっては Wi-Fi 側へ抜けて
+> **「ルータは正常なのに疎通しない」**という切り分け不能な状態になります。
+> 実際にこれで 30 分溶かしました。**切替当日にも必ず起こります。**
+
+**PC のコマンドプロンプト**:
+
+```bash
+curl http://203.0.113.80/
+```
+
+**`src 198.51.100.20` が出れば完了**です。ルータ側の裏取り — **特権 EXEC(`CPE#`)**:
+
+```
+show nat64 statistics
+```
+
+`Vlan1` の `IPv4 -> IPv6 MAP-E` と `Gi0/0/0` の `IPv6 -> IPv4 MAP-E` が
+両方増えていれば、往復とも MAP-E を通っています。
 
 ### 【手順 O】落ちた場合の切り分け — **作業機のターミナル**
 
@@ -454,21 +572,40 @@ ssh root@192.168.11.20 "ssh labadmin@fe80::be24:11ff:fecd:92c5%vmbr0 'sudo ./ipo
 | ルータ用 CA | `./lab-mode.sh prov ca` |
 | 配る方式を絞る | `./lab-mode.sh prov dslite` / `./lab-mode.sh prov both` |
 
-**応答 JSON を変えたいとき**は `/etc/mape-ruleserver/response.json` を直接編集してください。
+**応答 JSON を変えたいとき**は、方式ごとに次のファイルを直接編集してください。
 **リクエストのたびに読み直す**ので、サーバの再起動は要りません。
-ただし正本はリポジトリの `lab/ipoe/inet/ruleserver-response.json` です。
-恒久的な変更はそちらを直して `deploy.sh` で配り直してください。
+
+| 方式 | 配置先 | 正本(リポジトリ) |
+|---|---|---|
+| jp01 (Cisco / OCN) | `/etc/mape-ruleserver/response-jp01.json` | `lab/ipoe/inet/ruleserver-response-jp01.json` |
+| HB46PP (国内標準) | `/etc/mape-ruleserver/response-hb46pp.json` | `lab/ipoe/inet/ruleserver-response-hb46pp.json` |
+
+どちらを返すかは**要求のクエリパラメータで自動判別**されます(§1-B)。
+恒久的な変更は正本を直して `deploy.sh` で配り直してください。
 
 ---
 
-## 6. 未確定のこと
+## 6. 確定したこと / 未確定のこと
 
-- **Cisco の `jp01` が HB46PP そのものかは未確認。** サブモードに `api-key` があり、
-  HB46PP には `api-key` パラメータがありません(認証は `user`/`pass`/`token`)。
-  JPNE 系の独自 API を実装している可能性があります。**手順 K の捕獲で確定します。**
-- **C1111-8P が MAP-E の対応機種かは未確認。** Cisco Feature Navigator は
-  CCO ログインが要るため、会社のアカウントで確認する必要があります。
-- **`service-prefix` / `tunnel` サブコマンドの意味が不明。** 手順 I の `?` で確認します。
+### 確定した(実測)
+
+- **Cisco の `jp01` は HB46PP ではない。** OCN の独自形式(`ipv6Prefix` / `code` /
+  `basicMapRules`)で、Cisco の 15M&T ドキュメントの記載と一致する
+- **応答の値は文字列でなければならない。** 数値だと黙って破棄される
+- **`service-prefix` が無いと要求を出さない。** `tunnel source` は送信元インタフェース
+- **CE の MAP アドレスは RFC 7597 と並びが違う**(draft-03)
+- **C1111-8P + 17.09.05f で MAP-E の実トラフィックが通る**
+
+### まだ未確定
+
+- **実回線の OCN が返す JSON は未確認。** 器の名前 `basicMapRules` は
+  「ルータがこの形を期待している」ことまでは確定したが、OCN 側の実物は見ていない
+- **C1111-8P が MAP-E の qualify 対象プラットフォームか。** Cisco Feature Navigator は
+  CCO ログインが要るため、会社のアカウントで確認する必要があります
+- **240 ポートを使い切れるか。** 割当範囲内のポートを使うことは確認できたが
+  (送信元ポート 4145 = 範囲 4144-4159)、15 レンジ全部は未測定(バックログ 10)
+- **1 回だけ `HTTP CORE` の Segfault が出た。** 同じ入力で再現せず。
+  証拠は `bootflash:core/CPE_RP_0-system-report_20260814-230256-JST.tar.gz`
 
 ---
 

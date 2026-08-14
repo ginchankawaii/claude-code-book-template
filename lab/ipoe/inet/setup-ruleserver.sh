@@ -126,10 +126,11 @@ case "$MODE" in
     #   mape   … map_e だけ
     #   dslite … dslite だけ   ← MAP-E のデータパスを完全に外して試す
     [ "$(id -u)" = "0" ] || { echo "root で実行してください (sudo)" >&2; exit 1; }
+    # jp01 側は 1 ルールだけなので絞る意味がない。ここで絞れるのは HB46PP 側。
     WHICH="${2:-both}"
     case "$WHICH" in both|mape|dslite) ;; *)
-      echo "response のあとは both / mape / dslite です" >&2; exit 1 ;; esac
-    python3 - "${SRC_DIR}/ruleserver-response.json" "${ETC}/response.json" "$WHICH" <<'PY'
+      echo "response のあとは both / mape / dslite です (HB46PP 側の話です)" >&2; exit 1 ;; esac
+    python3 - "${SRC_DIR}/ruleserver-response-hb46pp.json" "${ETC}/response-hb46pp.json" "$WHICH" <<'PY'
 import json, sys
 src, dst, which = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(src, encoding="utf-8") as f:
@@ -174,7 +175,10 @@ ip -6 addr replace "${PROV_ADDR}/64" dev "${INET_IF}"
 # リポジトリ側のファイルには説明用の "_comment_*" キーが入っている。
 # 仕様上 CPE は未知のキーを無視してよいが、実装によっては嫌う可能性があるので
 # **配置時に落として、厳密に仕様どおりの JSON にする。**
-python3 - "${SRC_DIR}/ruleserver-response.json" "${ETC}/response.json" <<'PY'
+# jp01 と HB46PP の両方を配置する。ruleserver.py が **要求の形で自動判別**して
+# 使い分けるので、方式ごとにサーバを建て分ける必要はない。
+for fmt in jp01 hb46pp; do
+  python3 - "${SRC_DIR}/ruleserver-response-${fmt}.json" "${ETC}/response-${fmt}.json" <<'PY'
 import json, sys
 src, dst = sys.argv[1], sys.argv[2]
 with open(src, encoding="utf-8") as f:
@@ -186,6 +190,7 @@ with open(dst, "w", encoding="utf-8") as f:
 print("[INET-SIM] 応答 JSON を配置: %s (説明コメント %d 個を除去)"
       % (dst, len(doc) - len(clean)))
 PY
+done
 
 install -m 0755 "${SRC_DIR}/ruleserver.py" /usr/local/sbin/mape-ruleserver
 
@@ -251,7 +256,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/local/sbin/mape-ruleserver --bind ${PROV_ADDR} ${EXEC_PORTS} \\
-  --response ${ETC}/response.json --log ${LOGFILE} ${EXEC_TLS}
+  --response-dir ${ETC} --log ${LOGFILE} ${EXEC_TLS}
 Restart=on-failure
 RestartSec=3
 
@@ -274,7 +279,9 @@ echo "  発見用 TXT : 4over6.info → v=v6mig-1 url=${PROV_URL} t=${TXT_T}"
 echo "  待受は両方 : http://${PROV_FQDN}:${PROV_HTTP_PORT}/rule.cgi"
 echo "               https://${PROV_FQDN}/rule.cgi"
 echo "               (IP 直指定も可: [${PROV_ADDR}] 証明書の SAN に入れてある)"
-echo "  応答 JSON  : ${ETC}/response.json  ← 要求のたびに読み直すので編集は即反映"
+echo "  応答 JSON  : ${ETC}/response-jp01.json   (Cisco / OCN。要求に ipv6Prefix があればこちら)"
+echo "               ${ETC}/response-hb46pp.json (国内標準。要求に vendorid があればこちら)"
+echo "               ← 要求のたびに読み直すので編集は即反映。形式は自動判別"
 echo "  ログ       : ${LOGFILE}"
 echo
 echo "  疎通確認   : $0 selftest"

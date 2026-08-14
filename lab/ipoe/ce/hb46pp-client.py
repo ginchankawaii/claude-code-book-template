@@ -163,11 +163,22 @@ def derive(map_e, ce_prefix):
         start = (j << (16 - a)) | (psid << m)
         ranges.append((start, start + (1 << m) - 1))
 
-    # MAP CE アドレス (RFC 7597 5.2): 委譲プレフィックスの /64 に
-    # インタフェース ID 0000:<IPv4>:<PSID> を付ける
-    iid = (int(ipv4) << 16) | psid
+    # MAP CE アドレス。**実装によって 2 種類あるので両方出す。**
+    #
+    #   RFC 7597 5.2 : インタフェース ID = 0000:<IPv4>:<PSID>
+    #   draft-03     : 1 バイト右にずれた並び (0x00 <IPv4> <PSID> 0x00)
+    #
+    # Cisco IOS XE を `version draft-ietf-softwire-map-03` で動かすと **後者**を使う。
+    # 実測 (C1111-8P 17.09.05f、サイクル 11):
+    #   RFC 7597 なら 2001:db8:1014:300:0:c633:6414:3
+    #   実機が付けたのは 2001:db8:1014:300:c6:3364:1400:300
+    # **ラボの BR はトンネル終点を静的に持つので、ここを間違えると IPv4 が全断する。**
+    # CE を繋いだら必ず実機の `show ipv6 interface brief` で確認すること。
     ce64 = int(ce.network_address) >> 64 << 64
-    map_addr = ipaddress.IPv6Address(ce64 | iid)
+    iid_rfc = (int(ipv4) << 16) | psid
+    iid_d03 = ((int(ipv4) << 16) | psid) << 8
+    map_addr = ipaddress.IPv6Address(ce64 | iid_rfc)
+    map_addr_d03 = ipaddress.IPv6Address(ce64 | iid_d03)
 
     return {
         "rule": matched, "ce_prefix": str(ce),
@@ -177,6 +188,7 @@ def derive(map_e, ce_prefix):
         "total_ports": len(ranges) * (1 << m),
         "share_ratio": 1 << p,
         "map_address": map_addr,
+        "map_address_draft03": map_addr_d03,
         "br": map_e.get("br"),
     }
 
@@ -205,7 +217,10 @@ def report(d, doc=None):
     print("   共有 IPv4 アドレス  : %s" % d["ipv4"])
     print("   PSID                : %d  (PSID長 %d ビット → %d 分割)"
           % (d["psid"], d["psid_length"], d["share_ratio"]))
-    print("   MAP CE アドレス     : %s" % d["map_address"])
+    print("   MAP CE アドレス")
+    print("     RFC 7597 なら     : %s" % d["map_address"])
+    print("     draft-03 なら     : %s  ← Cisco IOS XE はこちら (実測)"
+          % d["map_address_draft03"])
     print("   BR アドレス         : %s" % d["br"])
     print("   使えるポート        : %d 個 (%d レンジ x %d 連続ポート)"
           % (d["total_ports"], len(d["ranges"]), 1 << d["contiguous_bits"]))
@@ -228,22 +243,28 @@ SELFTEST_RULE = {
                "ea_length": 16, "psid_offset": 4}],
 }
 SELFTEST_CASES = [
-    # (説明, 委譲プレフィックス, 期待IPv4, 期待PSID, 期待MAPアドレス, 期待ポート数)
+    # (説明, 委譲プレフィックス, 期待IPv4, 期待PSID, 期待MAPアドレス(RFC7597),
+    #  期待MAPアドレス(draft-03), 期待ポート数)
     ("PD 方式 (ひかり電話あり相当)", "2001:db8:100a:500::/56",
-     "198.51.100.10", 5, "2001:db8:100a:500:0:c633:640a:5", 240),
+     "198.51.100.10", 5, "2001:db8:100a:500:0:c633:640a:5",
+     "2001:db8:100a:500:c6:3364:a00:500", 240),
+    # draft-03 側は **実機 C1111-8P が実際に付けたアドレス**で裏を取ってある
     ("RA 方式 (ひかり電話なし相当)", "2001:db8:1014:300::/64",
-     "198.51.100.20", 3, "2001:db8:1014:300:0:c633:6414:3", 240),
+     "198.51.100.20", 3, "2001:db8:1014:300:0:c633:6414:3",
+     "2001:db8:1014:300:c6:3364:1400:300", 240),
 ]
 
 
 def selftest():
     ok = True
-    for desc, prefix, exp_v4, exp_psid, exp_addr, exp_ports in SELFTEST_CASES:
+    for (desc, prefix, exp_v4, exp_psid, exp_addr,
+         exp_addr_d03, exp_ports) in SELFTEST_CASES:
         d = derive(SELFTEST_RULE, prefix)
         checks = [
             ("IPv4", str(d["ipv4"]), exp_v4),
             ("PSID", str(d["psid"]), str(exp_psid)),
-            ("MAPアドレス", str(d["map_address"]), exp_addr),
+            ("MAP(RFC7597)", str(d["map_address"]), exp_addr),
+            ("MAP(draft03)", str(d["map_address_draft03"]), exp_addr_d03),
             ("ポート数", str(d["total_ports"]), str(exp_ports)),
         ]
         bad = [c for c in checks if c[1] != c[2]]

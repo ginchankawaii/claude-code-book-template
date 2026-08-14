@@ -85,7 +85,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "lab-hb46pp/1.0"
 
-    response_path = None    # 返す JSON のファイル。None なら組み込みの既定値
+    response_dir = None     # 応答 JSON を置くディレクトリ
+    response_path = None    # --response で明示指定した場合のファイル (自動判別より優先)
     scheme = "http"         # ログ表示用
 
     # ── 捕獲 ────────────────────────────────────────────────────────
@@ -123,15 +124,37 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return body
 
     # ── 応答 ────────────────────────────────────────────────────────
+    def _pick_response(self):
+        """要求の形から、どちらのプロトコルの CPE かを判別して応答を選ぶ。
+
+        ラボには 2 種類の CPE が来る。**クエリパラメータで見分けられる。**
+
+          jp01   (Cisco IOS XE / OCN バーチャルコネクト)
+                 ?ipv6Prefix=...&ipv6PrefixLength=...&code=<APIキー>
+                 → 器は basicMapRules、値は全部文字列
+
+          HB46PP (JAIPA 国内標準プロビジョニング方式)
+                 ?vendorid=...&product=...&version=...&capability=...
+                 → 器は map_e / dslite、DNS TXT (4over6.info) で発見される
+
+        方式ごとにサーバを建て分けなくて済むように、ここで自動で振り分ける。
+        """
+        if self.response_path:          # --response で明示されていればそれに従う
+            return self.response_path, "指定"
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        if "ipv6Prefix" in q:
+            return os.path.join(self.response_dir, "response-jp01.json"), "jp01"
+        return os.path.join(self.response_dir, "response-hb46pp.json"), "HB46PP"
+
     def _load_response(self):
         """応答 JSON を毎回読み直す。書き換えて即試せるようにするため。"""
-        if not self.response_path:
-            return json.dumps({"error": "no response file configured"}).encode()
+        path, kind = self._pick_response()
+        log("応答: %s 形式 (%s)" % (kind, path))
         try:
-            with open(self.response_path, "rb") as f:
+            with open(path, "rb") as f:
                 raw = f.read()
         except OSError as e:
-            log("!! 応答ファイルを読めません (%s): %s" % (self.response_path, e))
+            log("!! 応答ファイルを読めません (%s): %s" % (path, e))
             return json.dumps({"error": "response file unreadable"}).encode()
         # 壊れた JSON をそのまま返すとルータ側の切り分けが濁るので、ここで気づけるようにする
         try:
@@ -140,7 +163,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             log("!! 警告: 応答ファイルが JSON として壊れています: %s" % e)
         return raw
 
-    def _reply(self, body, status=200, ctype="application/json"):
+    # Content-Type は **`application/json; charset=utf-8` を返すこと。**
+    # Cisco の 15M&T ドキュメントに実サーバがこれを返すと明記されており、
+    # 実機 C1111-8P もこの形で受理した (サイクル 11 実測)。
+    def _reply(self, body, status=200, ctype="application/json; charset=utf-8"):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -236,8 +262,12 @@ def main():
     ap.add_argument("--tls-port", type=int, default=443, help="HTTPS ポート (0 で無効)")
     ap.add_argument("--cert", help="サーバ証明書 (無指定なら HTTPS を上げない)")
     ap.add_argument("--key", help="サーバ秘密鍵")
-    ap.add_argument("--response", default="/etc/mape-ruleserver/response.json",
-                    help="返す JSON のファイル (既定: %(default)s)")
+    ap.add_argument("--response-dir", default="/etc/mape-ruleserver",
+                    help="応答 JSON を置くディレクトリ (既定: %(default)s)。"
+                         "この下の response-jp01.json / response-hb46pp.json を"
+                         "要求の形で自動的に使い分ける")
+    ap.add_argument("--response",
+                    help="応答 JSON を 1 つに固定する (自動判別より優先。切り分け用)")
     ap.add_argument("--log", default="/var/log/mape-ruleserver.log")
     args = ap.parse_args()
 
@@ -246,10 +276,13 @@ def main():
     except OSError as e:
         print("ログファイルを開けません (%s): %s" % (args.log, e), file=sys.stderr)
 
+    Handler.response_dir = args.response_dir
     Handler.response_path = args.response
-    if not os.path.exists(args.response):
-        log("!! 応答ファイルがありません: %s (要求は記録できますが中身は返せません)"
-            % args.response)
+    for name in ("response-jp01.json", "response-hb46pp.json"):
+        p = os.path.join(args.response_dir, name)
+        if not os.path.exists(p):
+            log("!! 応答ファイルがありません: %s "
+                "(要求は記録できますが、この形式には答えられません)" % p)
 
     threads = []
 
@@ -279,7 +312,10 @@ def main():
               file=sys.stderr)
         return 1
 
-    log("応答ファイル: %s" % args.response)
+    if args.response:
+        log("応答ファイル: %s に固定" % args.response)
+    else:
+        log("応答ファイル: %s の下を要求の形で自動判別" % args.response_dir)
     log("CPE からの要求を待っています。")
     try:
         for t in threads:
