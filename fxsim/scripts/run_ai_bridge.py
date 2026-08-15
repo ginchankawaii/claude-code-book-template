@@ -133,24 +133,42 @@ def _load_bars(instrument: str, granularity: str, sma_n: int, history_csv: str):
     return candles
 
 
+# A book below this is dust, not a position: it is never adopted as intent,
+# never heartbeated as LONG, and a decision over it sizes a FRESH entry (the
+# EA's dust rule then converges the residue into the new target). One shared
+# epsilon — the final-fuzz round found three inconsistent thresholds wedging
+# a 0.007-lot intent into a heartbeat-less, fail-safe-less limbo.
+FLAT_EPS = 0.01
+
+
 def _acquire_brain_lock(poll: int) -> Optional[Path]:
     """Single-writer lock in the bridge dir (Round-4 chaos: two resident brains
-    on one bridge ping-ponged LONG/FLAT — 21 spurious round trips in 45s with
-    stop enforcement phase-locked out). Stale locks (no heartbeat for 10 polls)
-    are taken over — PIDs are meaningless across container restarts."""
+    on one bridge ping-ponged LONG/FLAT — 21 spurious round trips in 45s).
+
+    The lock line is "<pid> <epoch> <poll>": staleness is judged against the
+    HOLDER's own poll cadence (final fuzz: judging by the challenger's poll let
+    a --poll 1 challenger steal a healthy --poll 60 incumbent's lock)."""
     try:
         d = bridge.common_files_dir()
         d.mkdir(parents=True, exist_ok=True)
         lock = d / "steady_brain.lock"
         if lock.exists():
             age = _time.time() - lock.stat().st_mtime
-            if age < 10 * poll:
-                print(f"[ai] FATAL: another brain holds {lock} (heartbeat {age:.0f}s ago). "
-                      f"Two writers on one bridge liquidate each other — refusing to start.",
-                      flush=True)
+            holder_poll = poll
+            try:
+                parts = lock.read_text().split()
+                if len(parts) >= 3:
+                    holder_poll = max(1, int(float(parts[2])))
+            except Exception:
+                pass
+            stale_after = max(3 * holder_poll, 180)
+            if age < stale_after:
+                print(f"[ai] FATAL: another brain holds {lock} (heartbeat {age:.0f}s ago, "
+                      f"holder poll {holder_poll}s). Two writers on one bridge liquidate "
+                      f"each other — refusing to start.", flush=True)
                 raise SystemExit(2)
             print(f"[ai] stale brain lock ({age:.0f}s old) — taking over", flush=True)
-        lock.write_text(f"{os.getpid()} {int(_time.time())}\n")
+        _touch_lock(lock, poll)
         return lock
     except SystemExit:
         raise
@@ -160,10 +178,10 @@ def _acquire_brain_lock(poll: int) -> Optional[Path]:
         return None
 
 
-def _touch_lock(lock: Optional[Path]) -> None:
+def _touch_lock(lock: Optional[Path], poll: int) -> None:
     if lock is not None:
         try:
-            lock.write_text(f"{os.getpid()} {int(_time.time())}\n")
+            lock.write_text(f"{os.getpid()} {int(_time.time())} {int(poll)}\n")
         except Exception:
             pass
 
@@ -284,7 +302,7 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
 
     factors: list = []; plan = ""
     ai_view: dict = {}
-    holding = float(status.get("position_lots") or 0.0) >= 0.005
+    holding = float(status.get("position_lots") or 0.0) >= FLAT_EPS
     authority = getattr(cfg, "ai_authority", "shadow")
     if not trend_up:
         # Below the trend filter -> flat. No Opus call needed (edge stands aside).
@@ -361,7 +379,7 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
                                            getattr(cfg, "dyn_lev_pow", 1.0))
     pip = pip_size(instrument)
     pos_lots = float(status.get("position_lots") or 0.0)
-    fresh = action == "LONG" and pos_lots < 0.005
+    fresh = action == "LONG" and pos_lots < FLAT_EPS
     if action == "LONG" and not fresh:
         # Hold the size opened at entry. Intra-trade retargeting was tested and
         # is net harmful (round-2, docs/RESEARCH.md): it re-buys strength near
@@ -453,6 +471,16 @@ def main() -> None:
     trader = AITrader(model=args.model)
 
     if args.once:
+        # Final fuzz: --once is a second writer on a live bridge. Warn — the
+        # resident's next heartbeat overwrites whatever this one-shot writes.
+        try:
+            lock = bridge.common_files_dir() / "steady_brain.lock"
+            if not args.dry and lock.exists() and _time.time() - lock.stat().st_mtime < 3600:
+                print(f"[ai] WARNING: a resident brain appears LIVE on this bridge ({lock}); "
+                      f"its heartbeat will overwrite this manual signal within one poll. "
+                      f"Use --dry, or stop the resident first.", flush=True)
+        except Exception:
+            pass
         _, prev_stop, _ = _restore_state(args.granularity)
         decide_once(cfg, args.instrument, args.max_risk, args.max_lots, args.history,
                     trader, args.dry, trigger="manual",
@@ -499,6 +527,7 @@ def main() -> None:
     blind_grace_s = max(3 * args.poll, 60)
     entry_attempts = 0
     entry_backoff_until = 0.0
+    seen_long = False        # a LONG intent whose fill we actually observed
 
     while True:
         try:
@@ -516,10 +545,39 @@ def main() -> None:
                 trend_up, price, pos = probe
                 if pos > 0:
                     entry_attempts = 0            # the book moved; breaker resets
-                if intent == "LONG" and intent_lots <= 0 and pos >= 0.01:
+                if intent == "LONG" and intent_lots <= 0 and pos >= FLAT_EPS:
                     intent_lots = pos      # after a restart: adopt the book's size
-                    # (dust below 0.01 is NOT adopted: heartbeating "LONG 0.00"
+                    # (dust below FLAT_EPS is NOT adopted: heartbeating "LONG 0.00"
                     # reads to the EA as close-everything — Round-4 chaos (c))
+                if intent == "LONG" and pos >= FLAT_EPS:
+                    seen_long = True              # the order was really filled
+
+                # RECONCILIATION (final fuzz, critical): if a position we SAW
+                # open is now gone without this brain ordering it (broker SL
+                # fill, EA EXP fail-safe, operator close), adopt reality —
+                # otherwise the very next heartbeat re-issues the stale LONG as
+                # a brand-new full-size order with NO decision, even in a
+                # downtrend. Re-entry, if warranted, must go through a fresh
+                # gate decision like any other entry.
+                if intent == "LONG" and seen_long and pos < FLAT_EPS:
+                    print(f"[ai] book closed EXTERNALLY (broker SL / fail-safe / manual) "
+                          f"while intent was LONG {intent_lots:.2f} — adopting FLAT; "
+                          f"a fresh gate decision may re-enter", flush=True)
+                    try:
+                        status2 = bridge.read_status()
+                        if status2 and (status2.get("balance") or 0) > 0:
+                            rid = _ongoing_run(status2["balance"], trader.model,
+                                               args.max_risk, args.granularity)
+                            db.record_signal(rid, now, args.instrument, "combined", 0, 0.0,
+                                             f"external close detected at {price:.3f} "
+                                             f"(was LONG {intent_lots:.2f}, stop {stop_price})",
+                                             {"action": "FLAT", "trigger": "external-close",
+                                              "stop_price": stop_price})
+                    except Exception as exc:
+                        print(f"[ai] external-close DB record failed: {exc}", flush=True)
+                    intent, intent_lots, stop_price = "FLAT", 0.0, None
+                    seen_long = False
+                    last_gate = _time.time()      # cooldown before any re-entry
 
                 # Round-4 chaos (d): a restored stop IMPLAUSIBLY far above the
                 # market (stale-era record) must be discarded, not "hit" — else
@@ -551,6 +609,7 @@ def main() -> None:
                               f"-> FLAT (gate may re-enter if trend holds)", flush=True)
                         record_stop_exit(price, stop_price, pos, now)
                     intent, intent_lots, stop_price = "FLAT", 0.0, None
+                    seen_long = False
                     last_gate = _time.time()          # brief pause before re-entry
                     skip_scheduled = True
                 elif pos > 0 and intent == "LONG" and stop_price is None and gate_ok:
@@ -590,6 +649,8 @@ def main() -> None:
                     intent = res["action"]
                     intent_lots = res["lots"] if res["action"] == "LONG" else 0.0
                     stop_price = res["stop"]
+                    if res["action"] != "LONG" or res.get("fresh"):
+                        seen_long = False     # new order: fill not yet observed
                     if trigger.startswith("gate"):
                         last_gate = _time.time()
                     else:
@@ -628,12 +689,12 @@ def main() -> None:
                           f"withholding heartbeat so the EA fail-safe flattens at EXP; "
                           f"stop enforcement is DOWN", flush=True)
             if (not args.dry and intent is not None and hb_ok
-                    and (intent == "FLAT" or intent_lots >= 0.01)):
+                    and (intent == "FLAT" or intent_lots >= FLAT_EPS)):
                 ttl = int(args.signal_ttl_min * 60)
                 bridge.write_signal(intent, intent_lots if intent == "LONG" else 0.0,
                                     expires_at=(int(_time.time()) + ttl) if ttl > 0 else None,
                                     sl=stop_price if intent == "LONG" else None)
-            _touch_lock(brain_lock)
+            _touch_lock(brain_lock, args.poll)
         except Exception as exc:
             print(f"[ai] loop error: {exc}", flush=True)
         _time.sleep(args.poll)

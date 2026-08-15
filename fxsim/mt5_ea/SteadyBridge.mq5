@@ -125,7 +125,10 @@ double NormalizeLots(double lots)
    double vmin = SymbolInfoDouble(InpSymbol, SYMBOL_VOLUME_MIN);
    double vmax = SymbolInfoDouble(InpSymbol, SYMBOL_VOLUME_MAX);
    if(step <= 0) step = 0.01;
-   lots = MathFloor(lots / step) * step;
+   // +epsilon before flooring: 0.29/0.01 = 28.999999999999996 in doubles,
+   // and a bare floor silently drops a whole lot step on ~12% of exact
+   // brain targets (final-fuzz property test).
+   lots = MathFloor(lots / step + 0.0000001) * step;
    if(lots < vmin) lots = 0.0;
    if(lots > vmax) lots = vmax;
    return lots;
