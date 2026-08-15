@@ -64,3 +64,16 @@ def test_csv_skips_malformed_rows(tmp_path: Path):
     )
     candles = load_csv_file(p, "USD_JPY", "M15")
     assert len(candles) == 2
+
+
+def test_granularity_mismatch_refused(tmp_path):
+    # Round-4 data court: a mislabeled file (finer bars than claimed) must be
+    # refused, not silently served as the requested timeframe.
+    import pytest
+    rows = ["time,open,high,low,close"]
+    for i in range(20):
+        rows.append(f"2026-06-01 00:{i:02d}:00,150,150.1,149.9,150.05")  # 1-min spacing
+    p = tmp_path / "USD_JPY.csv"
+    p.write_text("\n".join(rows) + "\n")
+    with pytest.raises(ValueError, match="mislabeled"):
+        load_csv_file(p, "USD_JPY", "H1")

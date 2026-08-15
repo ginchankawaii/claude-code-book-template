@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import time as _time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,17 +60,23 @@ from app.providers.csv import load_csv_file
 from app.sizing import conviction_leverage
 
 
-def _find_run() -> Optional[int]:
-    """The ongoing steady-ai run id, or None. Read-only (never creates)."""
+def _find_run(granularity: str = "H1") -> Optional[int]:
+    """The ongoing steady-ai run id FOR THIS GRANULARITY, or None. Read-only.
+
+    Round-4 chaos audit (worst finding of the round): matching on the params
+    string alone let a restart adopt an unrelated, never-ended run from an
+    older era — whose 180-day-old stop instantly liquidated a healthy
+    position. The run must match the configuration it will govern."""
     for r in db.list_runs():
-        if not r.get("ended_at") and "steady-ai" in (r.get("params") or ""):
+        if (not r.get("ended_at") and "steady-ai" in (r.get("params") or "")
+                and (r.get("granularity") or "H1") == granularity):
             return r["id"]
     return None
 
 
 def _ongoing_run(start_balance: float, model: str, max_risk: float,
                  granularity: str = "H1") -> int:
-    rid = _find_run()
+    rid = _find_run(granularity)
     if rid is not None:
         return rid
     return db.create_run(mode="live", instrument="USD_JPY", granularity=granularity,
@@ -80,14 +87,18 @@ def _ongoing_run(start_balance: float, model: str, max_risk: float,
 # Bars older than this are refused (weekend + a Monday holiday still passes;
 # a wedged/detached EA feed or a frozen fallback CSV does not).
 MAX_BAR_AGE_H = 75.0
+# A last bar further than this from the previous close is quarantined as a
+# feed glitch (Round-4: a single corrupt print — close=0.001, or a +15% spike —
+# drove REAL orders; USD/JPY has never moved 3% in one H1 bar).
+MAX_BAR_JUMP_PCT = 3.0
 
 
 def _load_bars(instrument: str, granularity: str, sma_n: int, history_csv: str):
     """Candles for BOTH the poll probe and the decision — ONE threshold, ONE
-    freshness rule, so the two can never disagree about the data source
-    (audit: probe on live bars + decide on a weeks-old fallback CSV produced
-    a real-order stop-out churn loop). Returns None when the feed can't be
-    trusted this tick; callers must skip, never guess."""
+    freshness rule, ONE plausibility rule, so the two can never disagree about
+    the data source. Returns None when the feed can't be trusted this tick;
+    callers must skip, never guess (and the resident loop's stop-liveness
+    heartbeat then fails the book safe within the signal TTL)."""
     need = sma_n + 5
     candles = bridge.read_bars(instrument, granularity)
     src = "ea"
@@ -109,7 +120,52 @@ def _load_bars(instrument: str, granularity: str, sma_n: int, history_csv: str):
         print(f"[ai] bars STALE (last {last_t.isoformat()} = {age_h:.0f}h old, src={src}); "
               f"refusing to trade on them", flush=True)
         return None
+    # Plausibility: quarantine an implausible last print instead of trading it.
+    last_c, prev_c = float(candles[-1].close), float(candles[-2].close)
+    if not (last_c > 0 and prev_c > 0):
+        print(f"[ai] bars IMPLAUSIBLE (close {last_c}/{prev_c}); quarantining feed", flush=True)
+        return None
+    jump = abs(last_c / prev_c - 1) * 100
+    if jump > MAX_BAR_JUMP_PCT:
+        print(f"[ai] bars IMPLAUSIBLE ({jump:.1f}% single-bar jump {prev_c:.3f}->{last_c:.3f} "
+              f"> {MAX_BAR_JUMP_PCT}%); quarantining feed", flush=True)
+        return None
     return candles
+
+
+def _acquire_brain_lock(poll: int) -> Optional[Path]:
+    """Single-writer lock in the bridge dir (Round-4 chaos: two resident brains
+    on one bridge ping-ponged LONG/FLAT — 21 spurious round trips in 45s with
+    stop enforcement phase-locked out). Stale locks (no heartbeat for 10 polls)
+    are taken over — PIDs are meaningless across container restarts."""
+    try:
+        d = bridge.common_files_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        lock = d / "steady_brain.lock"
+        if lock.exists():
+            age = _time.time() - lock.stat().st_mtime
+            if age < 10 * poll:
+                print(f"[ai] FATAL: another brain holds {lock} (heartbeat {age:.0f}s ago). "
+                      f"Two writers on one bridge liquidate each other — refusing to start.",
+                      flush=True)
+                raise SystemExit(2)
+            print(f"[ai] stale brain lock ({age:.0f}s old) — taking over", flush=True)
+        lock.write_text(f"{os.getpid()} {int(_time.time())}\n")
+        return lock
+    except SystemExit:
+        raise
+    except Exception as exc:
+        print(f"[ai] brain lock unavailable ({exc}); continuing WITHOUT single-writer "
+              f"protection", flush=True)
+        return None
+
+
+def _touch_lock(lock: Optional[Path]) -> None:
+    if lock is not None:
+        try:
+            lock.write_text(f"{os.getpid()} {int(_time.time())}\n")
+        except Exception:
+            pass
 
 
 def _trend_gate(instrument: str, granularity: str, sma_n: int,
@@ -128,13 +184,13 @@ def _trend_gate(instrument: str, granularity: str, sma_n: int,
     return price > ma, price, float(status.get("position_lots") or 0.0)
 
 
-def _restore_state() -> tuple[Optional[str], Optional[float], float]:
+def _restore_state(granularity: str = "H1") -> tuple[Optional[str], Optional[float], float]:
     """After a restart: (intent "LONG"/"FLAT"/None, protective stop, epoch of
     the last decision). The stop is searched backward through the unbroken run
     of long decisions (older records may carry stop_price=null on holds), so a
     single poisoned hold record can't silently disarm an open position."""
     try:
-        rid = _find_run()
+        rid = _find_run(granularity)
         if rid is None:
             return None, None, 0.0
         sigs = [s for s in db.load_signals(rid) if s.get("source") == "combined"]
@@ -273,19 +329,25 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
             action, conviction, reason = "LONG", decision.conviction, decision.reason
             factors, plan = decision.factors, decision.plan
 
-    # drawdown brake on the hard cap (capital preservation). Dry runs must not
-    # touch the live run's history (audit: --dry created runs and poisoned the
-    # signal/equity records the restart-restore and the monitor read).
+    # Dry runs must not touch the live run's history (audit: --dry created runs
+    # and poisoned the signal/equity records the restart-restore and monitor read).
     now = datetime.now(timezone.utc)
     if dry:
-        run_id = _find_run()
+        run_id = _find_run(granularity)
         eq_hist = ([e["equity"] for e in db.load_equity(run_id)] if run_id is not None else [])
     else:
         run_id = _ongoing_run(balance, trader.model, max_risk, granularity)
         db.record_equity(run_id, now, balance, equity, price)
         eq_hist = [e["equity"] for e in db.load_equity(run_id)]
     eq_hist = eq_hist or [equity]
-    brake, _, _ = AdaptiveController(AdaptiveConfig(base_risk=1.0, min_risk=0.2)).evaluate(eq_hist, [])
+    # Drawdown brake: OFF by default since Round-4 — the equivalence audit
+    # backtested this live-only layer for the first time and it cost -4.3pp
+    # CAGR while WORSENING maxDD (23.8 -> 27.1) on 11y USD/JPY: it de-levers
+    # into recoveries. Opt back in with FXSIM_DD_BRAKE=1.
+    if getattr(cfg, "dd_brake", False):
+        brake, _, _ = AdaptiveController(AdaptiveConfig(base_risk=1.0, min_risk=0.2)).evaluate(eq_hist, [])
+    else:
+        brake = 1.0
 
     # Conviction-scaled leverage: within the same hard 5x cap, pull exposure down
     # toward the floor when price is near the SMA (whipsaw zone), full cap only
@@ -352,7 +414,7 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
     if dry:
         print("[ai][DRY] signal NOT written", flush=True)
     else:
-        bridge.write_signal(action, lots)
+        bridge.write_signal(action, lots, sl=stop_price if action == "LONG" else None)
         print(f"[ai] wrote signal: {action} {lots:.2f}", flush=True)
     return {"action": action, "lots": lots, "stop": stop_price, "fresh": fresh}
 
@@ -391,7 +453,7 @@ def main() -> None:
     trader = AITrader(model=args.model)
 
     if args.once:
-        _, prev_stop, _ = _restore_state()
+        _, prev_stop, _ = _restore_state(args.granularity)
         decide_once(cfg, args.instrument, args.max_risk, args.max_lots, args.history,
                     trader, args.dry, trigger="manual",
                     granularity=args.granularity, sma_n=args.sma, prev_stop=prev_stop)
@@ -403,7 +465,7 @@ def main() -> None:
           f"signal_ttl={args.signal_ttl_min}m", flush=True)
     # intent = the brain's last ordered state; the loop's job is to make the
     # book converge to it and never to silently re-adopt a diverging book.
-    intent, stop_price, last_decision = _restore_state()
+    intent, stop_price, last_decision = _restore_state(args.granularity)
     intent_lots = 0.0
     if intent:
         stop_txt = f" stop {stop_price:.3f}" if stop_price else ""
@@ -427,6 +489,17 @@ def main() -> None:
         except Exception as exc:
             print(f"[ai] stop-exit DB record failed: {exc}", flush=True)
 
+    brain_lock = _acquire_brain_lock(args.poll)
+    last_probe_ok = _time.time()
+    # While LONG and blind (no trusted probe) beyond this grace, the heartbeat
+    # is withheld so the EA's EXP fail-safe can flatten the book (Round-4: the
+    # old heartbeat attested "alive" even while the stop check was down, making
+    # the fail-safe unreachable exactly when it was needed). At the default
+    # poll this is 30min of grace + the signal TTL before the EA flattens.
+    blind_grace_s = max(3 * args.poll, 60)
+    entry_attempts = 0
+    entry_backoff_until = 0.0
+
     while True:
         try:
             now = datetime.now(timezone.utc)
@@ -439,9 +512,23 @@ def main() -> None:
             trigger = None
             skip_scheduled = False
             if probe is not None:
+                last_probe_ok = _time.time()
                 trend_up, price, pos = probe
-                if intent == "LONG" and intent_lots <= 0 and pos > 0:
+                if pos > 0:
+                    entry_attempts = 0            # the book moved; breaker resets
+                if intent == "LONG" and intent_lots <= 0 and pos >= 0.01:
                     intent_lots = pos      # after a restart: adopt the book's size
+                    # (dust below 0.01 is NOT adopted: heartbeating "LONG 0.00"
+                    # reads to the EA as close-everything — Round-4 chaos (c))
+
+                # Round-4 chaos (d): a restored stop IMPLAUSIBLY far above the
+                # market (stale-era record) must be discarded, not "hit" — else
+                # a healthy position is liquidated on a 180-day-old stop. A real
+                # gap-through-stop of >3% would exit via the trend gate anyway.
+                if pos > 0 and stop_price is not None and stop_price >= price * 1.03:
+                    print(f"[ai] CRITICAL: carried stop {stop_price:.3f} is implausibly "
+                          f"above price {price:.3f} — discarding; will re-arm", flush=True)
+                    stop_price = None
 
                 gate_ok = (_time.time() - last_gate) >= args.gate_cooldown_min * 60
                 if intent == "FLAT" and pos > 0:
@@ -478,7 +565,8 @@ def main() -> None:
                     wants_exit = (not trend_up) and pos > 0
                     if wants_exit and gate_ok:
                         trigger = "gate-exit"
-                    elif wants_entry and gate_ok and _time.time() >= veto_until:
+                    elif (wants_entry and gate_ok and _time.time() >= veto_until
+                          and _time.time() >= entry_backoff_until):
                         trigger = "gate-entry"
 
             if trigger is None and not skip_scheduled:
@@ -510,17 +598,42 @@ def main() -> None:
                     # re-consult the paid API every poll tick while it stands.
                     if probe is not None and probe[0] and res["action"] == "FLAT":
                         veto_until = _time.time() + args.veto_ttl_h * 3600
+                    # Circuit breaker (Round-4 chaos (c)): if entry orders keep
+                    # not moving the book (broker lot-min mismatch, wedged EA),
+                    # stop re-deciding — each retry is a paid AI consult.
+                    if trigger == "gate-entry" and res["action"] == "LONG":
+                        entry_attempts += 1
+                        if entry_attempts >= 3:
+                            entry_backoff_until = _time.time() + 3600
+                            entry_attempts = 0
+                            print("[ai] WARNING: 3 entry orders did not move the book — "
+                                  "backing off 1h. Check the EA / broker lot spec "
+                                  "(min/step) in MT5.", flush=True)
 
             # Heartbeat: atomically re-assert the current order with a fresh
-            # expiry. A heartbeat-aware EA fails safe to FLAT if this brain
-            # dies (it holds the only protective stop); old EAs ignore the
-            # token. Also re-asserts a pending FLAT the EA hasn't executed.
-            # Guard: never write "LONG 0.00" (a restart before the probe has
-            # adopted the book's size would read to the EA as close-everything).
-            if not args.dry and intent is not None and (intent == "FLAT" or intent_lots > 0):
+            # expiry AND the protective stop (a broker-SL-aware EA mirrors it as
+            # a real SL order — round-4 equivalence: poll-granular stop fills
+            # cost ~3.4pp CAGR that a broker SL recovers for ~0.05% gap cost).
+            # A heartbeat-aware EA fails safe to FLAT if this brain dies.
+            # Guards: never write "LONG 0.00" (reads as close-everything);
+            # STOP-LIVENESS — while LONG and blind past the grace, WITHHOLD the
+            # heartbeat so the EXP lapses and the EA flattens: an unsupervised
+            # position must fail safe, not ride an attested-alive token.
+            hb_ok = True
+            if intent == "LONG":
+                blind_s = _time.time() - last_probe_ok
+                if blind_s > blind_grace_s:
+                    hb_ok = False
+                    print(f"[ai] BLIND {blind_s / 60:.0f}m while LONG (no trusted feed) — "
+                          f"withholding heartbeat so the EA fail-safe flattens at EXP; "
+                          f"stop enforcement is DOWN", flush=True)
+            if (not args.dry and intent is not None and hb_ok
+                    and (intent == "FLAT" or intent_lots >= 0.01)):
                 ttl = int(args.signal_ttl_min * 60)
                 bridge.write_signal(intent, intent_lots if intent == "LONG" else 0.0,
-                                    expires_at=(int(_time.time()) + ttl) if ttl > 0 else None)
+                                    expires_at=(int(_time.time()) + ttl) if ttl > 0 else None,
+                                    sl=stop_price if intent == "LONG" else None)
+            _touch_lock(brain_lock)
         except Exception as exc:
             print(f"[ai] loop error: {exc}", flush=True)
         _time.sleep(args.poll)

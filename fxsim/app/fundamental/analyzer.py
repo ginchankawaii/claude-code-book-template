@@ -114,7 +114,8 @@ class AnthropicAnalyzer(Analyzer):
         if not settings.anthropic_api_key:
             raise RuntimeError("ANTHROPIC_API_KEY not set for fundamental_mode=anthropic")
 
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key,
+                                     timeout=120.0, max_retries=1)
         pair = instrument.replace("_", "/")
         resp = client.messages.create(
             model=self.model,

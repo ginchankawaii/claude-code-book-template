@@ -89,7 +89,11 @@ class AITrader:
         if not default_settings.anthropic_api_key:
             return AIDecision.flat("ANTHROPIC_API_KEY not set")
         try:
-            client = anthropic.Anthropic(api_key=default_settings.anthropic_api_key)
+            # Bounded timeout (Round-4: the SDK default is ~600s/attempt x3
+            # attempts ~= 30min — a hung consult would suspend the single-
+            # threaded loop that also enforces the protective stop).
+            client = anthropic.Anthropic(api_key=default_settings.anthropic_api_key,
+                                         timeout=120.0, max_retries=1)
             resp = client.messages.create(
                 model=self.model,
                 max_tokens=2048,

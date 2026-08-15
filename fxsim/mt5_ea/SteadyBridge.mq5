@@ -108,10 +108,13 @@ void ExportAll()
    if(hs != INVALID_HANDLE)
    {
       FileWrite(hs, "balance", "equity", "position_lots");
+      // 3 decimals: at 2dp a dust residue (e.g. 0.004 lots after a partial
+      // close) is invisible to the brain, which then loops paid entry
+      // decisions forever against a book it cannot see (round-4 audit).
       FileWrite(hs,
          DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2),
          DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2),
-         DoubleToString(CurrentLots(), 2));
+         DoubleToString(CurrentLots(), 3));
       FileClose(hs);
    }
 }
@@ -158,6 +161,43 @@ void ReduceBy(double vol)
    }
 }
 
+//--- broker-side protective stop (round-4) -------------------------
+//  The brain sends its 1.5-ATR stop as "SL <price>"; mirroring it as a
+//  real broker SL protects through brain outages and fills AT the stop
+//  instead of the next poll's close (audit: ~3.4pp CAGR of poll-stop
+//  slippage recovered for ~0.05% gap cost). Longs only.
+double ValidLongSL(double sl)
+{
+   if(sl <= 0) return 0.0;
+   double bid   = SymbolInfoDouble(InpSymbol, SYMBOL_BID);
+   double point = SymbolInfoDouble(InpSymbol, SYMBOL_POINT);
+   long   stops = SymbolInfoInteger(InpSymbol, SYMBOL_TRADE_STOPS_LEVEL);
+   if(bid <= 0 || point <= 0) return 0.0;
+   if(sl >= bid - (stops + 1) * point) return 0.0;   // too close/above: skip,
+                                                     // the brain still guards
+   int digits = (int)SymbolInfoInteger(InpSymbol, SYMBOL_DIGITS);
+   return NormalizeDouble(sl, digits);
+}
+
+void ApplyStopLoss(double sl_px, double cur)
+{
+   if(cur <= 0 || sl_px <= 0) return;                // our longs only
+   double sl = ValidLongSL(sl_px);
+   if(sl <= 0) return;
+   double point = SymbolInfoDouble(InpSymbol, SYMBOL_POINT);
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong tk = PositionGetTicket(i);
+      if(!PositionSelectByTicket(tk)) continue;
+      if(PositionGetString(POSITION_SYMBOL) != InpSymbol ||
+         PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+      if(PositionGetInteger(POSITION_TYPE) != POSITION_TYPE_BUY) continue;
+      double cur_sl = PositionGetDouble(POSITION_SL);
+      if(cur_sl <= 0 || MathAbs(cur_sl - sl) > 2 * point)
+         trade.PositionModify(tk, sl, PositionGetDouble(POSITION_TP));
+   }
+}
+
 //--- read + act on the Python signal -------------------------------
 //  signal: "LONG <lots>" | "SHORT <lots>" | "FLAT 0"  [+ " EXP <unix-utc>"]
 //  Tracks the AI's target size: opens, flips, and RESIZES an open position
@@ -174,50 +214,74 @@ void ProcessSignal()
    int k = StringSplit(line, ' ', parts);
    if(k < 1) return;
    string action = parts[0];
-   double lots = (k >= 2) ? NormalizeLots(StringToDouble(parts[1])) : 0.0;
+   double lots_raw = (k >= 2) ? StringToDouble(parts[1]) : 0.0;
+   double lots = NormalizeLots(lots_raw);
+   // Loud warning when the broker's lot spec silently kills the order: a
+   // volume-min/step above the brain's target (e.g. min 0.10 vs target 0.09)
+   // floors it to zero and the system would trade nothing forever (round-4).
+   if(action == "LONG" && lots_raw > 0 && lots <= 0)
+      Print("SteadyBridge: target ", DoubleToString(lots_raw, 3),
+            " lots is below this broker's volume min/step (min=",
+            DoubleToString(SymbolInfoDouble(InpSymbol, SYMBOL_VOLUME_MIN), 2),
+            " step=", DoubleToString(SymbolInfoDouble(InpSymbol, SYMBOL_VOLUME_STEP), 2),
+            ") -> order suppressed. Fix sizing or broker.");
 
-   // Optional heartbeat expiry: "LONG 0.10 EXP <unix-utc>". The Python brain
-   // rewrites the signal every poll tick with a fresh expiry; it also holds
-   // the ONLY protective stop. If the brain dies the order expires and we
-   // fail safe to FLAT instead of holding an unprotected position forever.
-   // Signals without the token (older brain, manual writes) never expire.
-   if(k >= 4 && parts[2] == "EXP")
+   // Optional tokens after "<ACTION> <lots>":
+   //   EXP <unix-utc> : heartbeat expiry -> FLAT fail-safe when the brain dies
+   //                    or goes blind (it stops refreshing on a dead feed).
+   //   SL <price>     : the brain's protective stop, mirrored as a REAL broker
+   //                    SL so protection survives brain outages and fills at
+   //                    the stop price instead of the next poll's close.
+   long   expiry = 0;
+   double sl_px  = 0.0;
+   for(int i = 2; i + 1 < k; i += 2)
    {
-      long expiry = StringToInteger(parts[3]);
-      g_expiry = (datetime)expiry;             // chart status (UpdateStatusComment)
-      if(expiry > 0 && (long)TimeGMT() > expiry)
-      {
-         if(MathAbs(CurrentLots()) > 0)
-         {
-            Print("SteadyBridge: signal expired (brain heartbeat lost) -> FLAT fail-safe");
-            CloseAll();
-         }
-         return;
-      }
+      if(parts[i] == "EXP")     expiry = StringToInteger(parts[i + 1]);
+      else if(parts[i] == "SL") sl_px  = StringToDouble(parts[i + 1]);
    }
-   else g_expiry = 0;
+   g_expiry = (datetime)expiry;                // chart status (UpdateStatusComment)
+   if(expiry > 0 && (long)TimeGMT() > expiry)
+   {
+      if(MathAbs(CurrentLots()) > 0)
+      {
+         Print("SteadyBridge: signal expired (brain heartbeat lost) -> FLAT fail-safe");
+         CloseAll();
+      }
+      return;
+   }
 
    double target = 0.0;                       // signed target
    if(action == "LONG")  target = lots;
-   else if(action == "SHORT") target = -lots;
+   else if(action == "SHORT")
+   {
+      // Long-or-flat system: a SHORT line can only come from a manual edit or
+      // a foreign writer. Never sell — treat as FLAT and say so (round-4).
+      Print("SteadyBridge: SHORT signal refused (long-or-flat system) -> treating as FLAT");
+      target = 0.0;
+   }
 
    double cur = CurrentLots();                // signed: + long / - short
+   ApplyStopLoss(sl_px, cur);
 
    // 1) FLAT -> close everything
    if(target == 0.0) { if(MathAbs(cur) > 0) CloseAll(); return; }
    // 2) opposite sign -> flip: close now, reopen on next tick
    if(cur != 0.0 && (cur > 0) != (target > 0)) { CloseAll(); return; }
-   // 3) flat -> open fresh in the target direction
+   // 3) flat -> open fresh in the target direction (longs carry the brain's
+   //    protective stop as a REAL broker SL when the signal provides one)
    if(cur == 0.0)
    {
-      if(target > 0) trade.Buy(MathAbs(target), InpSymbol);
+      if(target > 0) trade.Buy(MathAbs(target), InpSymbol, 0.0, ValidLongSL(sl_px), 0.0);
       else           trade.Sell(MathAbs(target), InpSymbol);
       return;
    }
-   // 4) same direction -> resize toward target if outside the deadband
+   // 4) same direction -> resize toward target if outside the deadband.
+   //    A dust book (below the deadband floor itself) must always converge:
+   //    the round-4 audit wedged the state at 0.004 lots forever otherwise.
    double cur_abs = MathAbs(cur), tgt_abs = MathAbs(target);
    double diff = tgt_abs - cur_abs;
    double band = MathMax(InpResizeMinLots, cur_abs * InpResizePct);
+   if(cur_abs < InpResizeMinLots) band = 0;   // dust: no deadband, converge
    if(MathAbs(diff) < band) return;           // close enough -> hold (no churn)
    if(diff > 0)
    {

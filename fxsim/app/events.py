@@ -207,7 +207,8 @@ class AnthropicCalendar:
         if not settings.anthropic_api_key:
             return _load_file()
         try:
-            client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+            client = anthropic.Anthropic(api_key=settings.anthropic_api_key,
+                                         timeout=120.0, max_retries=1)
             resp = client.messages.create(
                 model=self.model,
                 max_tokens=2048,

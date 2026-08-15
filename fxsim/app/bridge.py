@@ -56,17 +56,20 @@ def read_status(base: Optional[Path] = None) -> Optional[dict]:
 
 
 def write_signal(action: str, lots: float, base: Optional[Path] = None,
-                 expires_at: Optional[int] = None) -> Path:
+                 expires_at: Optional[int] = None, sl: Optional[float] = None) -> Path:
     """Atomically publish the target order ("LONG 0.10" | "FLAT 0").
 
     Atomic tmp+rename so the EA can never read a half-written line (a torn
     read parsed as lots=0 would flatten a healthy position).
 
-    With ``expires_at`` (unix epoch, UTC) an " EXP <epoch>" suffix is appended:
-    a heartbeat-aware EA treats an expired order as FLAT — the fail-safe for a
-    dead Python brain, which holds the only protective stop. Older EAs ignore
-    the extra tokens (they only parse the first two), so the suffix is
-    backward-compatible.
+    Optional suffix tokens (older EAs only parse the first two, so both are
+    backward-compatible):
+      " EXP <unix-utc>"  — a heartbeat-aware EA treats an expired order as
+        FLAT: the fail-safe for a dead (or blind — round-4) Python brain.
+      " SL <price>"      — an SL-aware EA mirrors the brain's protective stop
+        as a REAL broker stop order (round-4 equivalence: poll-granular Python
+        stop fills cost ~3.4pp CAGR that a broker SL recovers for ~0.05% gap
+        cost, and a broker SL keeps protecting through brain outages).
     """
     d = base or common_files_dir()
     d.mkdir(parents=True, exist_ok=True)
@@ -74,6 +77,8 @@ def write_signal(action: str, lots: float, base: Optional[Path] = None,
     line = f"{action.upper()} {lots:.2f}"
     if expires_at:
         line += f" EXP {int(expires_at)}"
+    if sl and sl > 0:
+        line += f" SL {sl:.3f}"
     tmp = path.with_name(SIGNAL_FILE + ".tmp")
     tmp.write_text(line + "\n")
     os.replace(tmp, path)

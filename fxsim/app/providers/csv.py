@@ -200,7 +200,34 @@ def load_csv_file(path: Path, instrument: str, granularity: str) -> list[Candle]
         except (ValueError, IndexError):
             continue  # skip malformed / footer rows
     candles.sort(key=lambda c: c.time)
+    _check_interval(candles, granularity, Path(path))
     return candles
+
+
+# Expected bar spacing per granularity (seconds). Round-4 data court: the repo
+# shipped a mislabeled file (M15 content under a generic name) that CsvProvider
+# happily served as any timeframe — a live path could silently trade a stale,
+# wrong-granularity tape. The interval is trivially checkable, so check it.
+_EXPECTED_S = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800,
+               "H1": 3600, "H4": 14400, "D": 86400}
+
+
+def _check_interval(candles: list[Candle], granularity: str, path: Path) -> None:
+    exp = _EXPECTED_S.get((granularity or "").upper())
+    if exp is None or len(candles) < 8:
+        return                       # unknown granularity / tiny fixture: skip
+    deltas = sorted(
+        (b.time - a.time).total_seconds()
+        for a, b in zip(candles[:-1], candles[1:])
+    )
+    median = deltas[len(deltas) // 2]
+    # median is immune to weekend/holiday gaps; anything below half the
+    # expected spacing means the file's real timeframe is finer than claimed.
+    if median < exp / 2 or median > exp * 4:
+        raise ValueError(
+            f"{path.name}: bar spacing (median {median:.0f}s) does not match the "
+            f"requested granularity {granularity} (~{exp}s) — wrong or mislabeled file"
+        )
 
 
 def _looks_numeric(row: list[str]) -> bool:

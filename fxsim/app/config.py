@@ -88,11 +88,19 @@ class Settings:
     dyn_lev_atr_mult: float = field(default_factory=lambda: _get_float("FXSIM_DYN_LEV_ATR", 1.5))
     # Floor leverage when price sits right at the SMA (1x = conservative but held).
     dyn_lev_floor: float = field(default_factory=lambda: _get_float("FXSIM_DYN_LEV_FLOOR", 1.0))
-    # Ramp shape exponent on strength (2.0 = convex: stay near the floor until the
-    # trend is well established, load up late — round-2 winner, docs/RESEARCH.md:
-    # Sharpe 0.83->0.89, maxDD 26.7->24.6 at equal CAGR, robust across p 1.3-3.0
-    # and 3x costs). 1.0 = the round-1 linear ramp.
-    dyn_lev_pow: float = field(default_factory=lambda: _get_float("FXSIM_DYN_LEV_POW", 2.0))
+    # Ramp shape exponent on strength. 1.0 (linear) is the default since the
+    # Round-4 overfitting tribunal: the convex (2.0) pick's +0.052 Sharpe edge
+    # fails a deflated-Sharpe charge at EVERY assumed trial count N>=25 (rounds
+    # 1-3 ran ~200 variants) — reverted per the pre-registered rule. The BASE
+    # timing edge itself survives its permutation null at p<=0.014; only the
+    # ramp-shape refinement could not pay its selection bill. docs/RESEARCH.md.
+    dyn_lev_pow: float = field(default_factory=lambda: _get_float("FXSIM_DYN_LEV_POW", 1.0))
+    # Drawdown brake on live sizing: OFF by default since Round-4 — first-ever
+    # backtest of this live-only layer showed it costs -4.3pp CAGR while
+    # WORSENING maxDD (de-levers into recoveries). Opt in with FXSIM_DD_BRAKE=1.
+    dd_brake: bool = field(
+        default_factory=lambda: os.getenv("FXSIM_DD_BRAKE", "0") not in ("0", "false", "")
+    )
     # cost model
     spread_pips: float = field(default_factory=lambda: _get_float("FXSIM_SPREAD_PIPS", 0.8))
     commission_per_million: float = field(

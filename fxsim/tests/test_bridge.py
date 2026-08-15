@@ -40,3 +40,13 @@ def test_read_bars_parses_ea_export(tmp_path):
     assert len(bars) == 2
     assert bars[0].open == 158.10 and bars[1].close == 159.00
     assert bars[0].time.year == 2026 and bars[0].time.month == 6
+
+
+def test_write_signal_sl_token(tmp_path):
+    # Round-4: the brain's protective stop rides the signal so an SL-aware EA
+    # can mirror it as a real broker stop order.
+    bridge.write_signal("LONG", 0.09, base=tmp_path, expires_at=1782950000, sl=149.805)
+    assert (tmp_path / bridge.SIGNAL_FILE).read_text().strip() == \
+        "LONG 0.09 EXP 1782950000 SL 149.805"
+    bridge.write_signal("FLAT", 0, base=tmp_path, sl=None)
+    assert (tmp_path / bridge.SIGNAL_FILE).read_text().strip() == "FLAT 0.00"

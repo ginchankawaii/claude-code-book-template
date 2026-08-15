@@ -42,10 +42,12 @@ def wired(monkeypatch):
     monkeypatch.setattr(bridge, "read_status",
                         lambda *a, **k: {"balance": 500000.0, "equity": 500000.0, "position_lots": 0.0})
     monkeypatch.setattr(bridge, "write_signal",
-                        lambda action, lots, base=None, expires_at=None:
+                        lambda action, lots, base=None, expires_at=None, sl=None:
                             written.append((action, round(lots, 2))))
-    # the bundled test candles are historical: disable the live freshness guard
+    # the bundled test candles are historical: disable the live freshness and
+    # single-bar-jump guards (daily bars legitimately move >3%)
     monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    monkeypatch.setattr(R, "MAX_BAR_JUMP_PCT", 1e9)
     # keep the DB out of the unit test
     monkeypatch.setattr(db, "list_runs", lambda: [])
     monkeypatch.setattr(db, "create_run", lambda **k: 1)
@@ -172,6 +174,7 @@ def test_flat_decision_clears_the_stop(wired, monkeypatch):
 
 def test_trend_gate_probe(monkeypatch):
     monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    monkeypatch.setattr(R, "MAX_BAR_JUMP_PCT", 1e9)
     monkeypatch.setattr(bridge, "read_status",
                         lambda *a, **k: {"balance": 500000.0, "equity": 500000.0,
                                          "position_lots": 0.05})
@@ -205,6 +208,7 @@ def test_short_live_feed_does_not_fall_back_to_csv(monkeypatch):
     # A truncated/partial live bars file (torn EA write) must SKIP the tick,
     # never silently substitute the bundled history CSV.
     monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    monkeypatch.setattr(R, "MAX_BAR_JUMP_PCT", 1e9)
     monkeypatch.setattr(bridge, "read_bars",
                         lambda instr="USD_JPY", gran="D", base=None: _UP[:50])  # < sma_n+5
     assert R._load_bars("USD_JPY", "D", 90, str(DATA_DIR / "USD_JPY_D.csv")) is None
@@ -219,6 +223,7 @@ def test_dry_run_writes_nothing(monkeypatch):
     monkeypatch.setattr(bridge, "write_signal",
                         lambda *a, **k: written.append(a))
     monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    monkeypatch.setattr(R, "MAX_BAR_JUMP_PCT", 1e9)
     monkeypatch.setattr(db, "list_runs", lambda: [])
     monkeypatch.setattr(db, "create_run",
                         lambda **k: (_ for _ in ()).throw(AssertionError("dry created a run")))
@@ -260,7 +265,7 @@ def test_restore_state_scans_back_for_the_stop(monkeypatch):
          "components": '{"stop_price": null}'},
     ]
     monkeypatch.setattr(db, "list_runs",
-                        lambda: [{"id": 7, "ended_at": None, "params": '{"system": "steady-ai"}'}])
+                        lambda: [{"id": 7, "ended_at": None, "granularity": "H1", "params": '{"system": "steady-ai"}'}])
     monkeypatch.setattr(db, "load_signals", lambda rid: rows)
     intent, stop, ts = R._restore_state()
     assert intent == "LONG" and stop == 158.917 and ts > 0
@@ -269,3 +274,62 @@ def test_restore_state_scans_back_for_the_stop(monkeypatch):
                  "components": '{"trigger": "stop"}'})
     intent, stop, _ = R._restore_state()
     assert intent == "FLAT" and stop is None
+
+
+# ---- round-4 fixes ---------------------------------------------------------
+
+def test_implausible_last_bar_quarantines_feed(monkeypatch):
+    # Round-4 chaos (b): a corrupt print (close=0.001 or a +15% spike) must
+    # quarantine the feed, never reach a trading decision.
+    monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    corrupt = list(_UP)
+    bad = type(corrupt[-1])(instrument="USD_JPY", granularity="D",
+                            time=corrupt[-1].time, open=0.001, high=0.001,
+                            low=0.001, close=0.001, volume=1.0)
+    monkeypatch.setattr(bridge, "read_bars",
+                        lambda instr="USD_JPY", gran="D", base=None: corrupt[:-1] + [bad])
+    assert R._load_bars("USD_JPY", "D", 90, "no-such-file.csv") is None
+    spike = type(corrupt[-1])(instrument="USD_JPY", granularity="D",
+                              time=corrupt[-1].time, open=corrupt[-2].close,
+                              high=corrupt[-2].close * 1.2, low=corrupt[-2].close,
+                              close=corrupt[-2].close * 1.15, volume=1.0)
+    monkeypatch.setattr(bridge, "read_bars",
+                        lambda instr="USD_JPY", gran="D", base=None: corrupt[:-1] + [spike])
+    assert R._load_bars("USD_JPY", "D", 90, "no-such-file.csv") is None
+
+
+def test_find_run_filters_on_granularity(monkeypatch):
+    # Round-4 chaos (d): a restart must never adopt an unrelated old run —
+    # its stale stop instantly liquidated a healthy position in the repro.
+    monkeypatch.setattr(db, "list_runs", lambda: [
+        {"id": 3, "ended_at": None, "granularity": "D",
+         "params": '{"system": "steady-ai"}'},
+        {"id": 9, "ended_at": None, "granularity": "H1",
+         "params": '{"system": "steady-ai"}'},
+    ])
+    assert R._find_run("H1") == 9
+    assert R._find_run("D") == 3
+    assert R._find_run("H4") is None
+
+
+def test_dd_brake_default_off(wired, monkeypatch):
+    # Round-4 equivalence: the live-only brake cost -4.3pp CAGR AND worsened
+    # maxDD when finally backtested -> default follows the validated edge.
+    calls = []
+    from app import adaptive
+    monkeypatch.setattr(adaptive.AdaptiveController, "evaluate",
+                        lambda self, eq, tr: calls.append(1) or (0.5, "", {}))
+    _run(monkeypatch, _UP, _Dec(True, "long", 0.8))
+    assert calls == []                # brake never evaluated by default
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0, dd_brake=True)
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _UP)
+    R.decide_once(cfg, "USD_JPY", 0.04, 5.0, str(DATA_DIR / "USD_JPY_D.csv"),
+                  _Trader(_Dec(True, "long", 0.8)), dry=False, trigger="test",
+                  granularity="D", sma_n=90)
+    assert calls == [1]               # opt-in path still works
+
+
+def test_dyn_lev_pow_reverted_to_linear():
+    # Round-4 tribunal (pre-registered rule): convex failed its deflated-Sharpe
+    # charge at every assumed N -> the default is the linear ramp again.
+    assert Settings().dyn_lev_pow == 1.0
