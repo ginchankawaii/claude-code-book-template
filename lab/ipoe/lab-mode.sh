@@ -138,9 +138,10 @@ banner() {
   printf "  IPv4 の運び方 : %s\n" "$v4note"
   if [ "$ipv4mode" = "mape" ] && [ -n "$rule" ]; then
     case "$rule" in
-      shared) printf "  配布ルール    : 共有IP (240 ポート)\n" ;;
-      fixed)  printf "  配布ルール    : 固定IP1 相当 (64512 ポート)\n" ;;
-      *)      printf "  配布ルール    : %s\n" "$rule" ;;
+      shared)   printf "  配布ルール    : 共有IP (240 ポート)\n" ;;
+      fixed)    printf "  配布ルール    : 固定IP1 相当 (64512 ポート)\n" ;;
+      MISMATCH) printf "  配布ルール    : ⚠ 不一致 (サーバ=fixed / BR=shared)。prov rule shared で解消\n" ;;
+      *)        printf "  配布ルール    : %s\n" "$rule" ;;
     esac
   fi
   printf "  障害の注入    : %s\n" "${fault:-なし}"
@@ -213,20 +214,32 @@ case "${1:-status}" in
     rsh "$VNE" "sudo ./ipoe/vne/setup-aftr.sh stop 2>/dev/null; sudo ${map_env}./ipoe/vne/setup-map-br.sh" \
       || die "MAP-E BR の起動に失敗しました"
     state_set ipv4mode mape
-    state_set rule shared
     echo
-    if [ "$prev_rule" = "fixed" ]; then
+    # **rule 状態は「サーバの実態」に一致させる。**BR は今 shared にしたが、サーバが
+    # まだ fixed のままなら state を shared にしてはいけない (それは嘘の status になる)。
+    # 監査サイクル 15 ラウンド 3: 以前は無条件に shared を書いてしまい、reconcile 失敗時に
+    # サーバ=fixed / BR=shared / status=shared の三者不一致を恒久固定していた。
+    # restore ブランチと同じ規律 = 成功を確認してから state を書く。
+    if [ "$prev_rule" != "fixed" ]; then
+      # サーバは元々 fixed でない。BR も shared。state=shared が真実。
+      state_set rule shared
+    else
       echo "  ⚠ 直前に prov rule fixed を配っていました。BR は shared に戻したので、"
       echo "     **ルール配布サーバも shared に戻して整合させます。**"
-      if [ -n "${INET:-}" ]; then
-        rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule shared" \
-          && echo "     → サーバも shared に戻しました" \
-          || echo "     → **サーバのリセットに失敗。手動で ./lab-mode.sh prov rule shared を実行してください**"
+      if [ -n "${INET:-}" ] && \
+         rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule shared"; then
+        state_set rule shared        # サーバも shared になった。ここで初めて真実
+        echo "     → サーバも shared に戻しました"
       else
-        echo "     → INET が未設定です。**手動で ./lab-mode.sh prov rule shared を実行してください**"
+        # サーバは fixed のまま。**state に嘘を書かず、不一致として記録する。**
+        # banner はこれを見て status で警告し続ける (手動で解消するまで)。
+        state_set rule MISMATCH
+        echo "     → **サーバを shared に戻せませんでした (INET 未設定 または失敗)。**"
+        echo "        **サーバ=fixed / BR=shared の不一致状態です。**status に警告が出続けます。"
+        echo "        解消するには: ./lab-mode.sh prov rule shared"
       fi
     fi
-    echo "  ※ この経路は shared (240 ポート) 固定です。Cisco + ルール配布サーバを"
+    echo "  ※ この経路は shared (240 ポート) 前提です。Cisco + ルール配布サーバを"
     echo "     使うなら ./lab-mode.sh prov rule を使ってください。"
     echo
     echo "  → **受講者に CPE 側を MAP-E に設定させてください。**"
