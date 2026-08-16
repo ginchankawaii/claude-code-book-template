@@ -11,6 +11,23 @@
 #   PD 方式 (/56 = 2001:db8:100a:500::/56): IPv4=198.51.100.10, PSID=5 → そのまま実行
 #   RA 方式 (/64 = 2001:db8:1014:300::/64): IPv4=198.51.100.20, PSID=3 →
 #     CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 $0
+#
+# **入口検査 (map-enforce) について**
+#   実 BR は「共有 IPv4 の、割り当て外のポートから来た通信」を落とす。
+#   ラボの BR がこれをやらないと **何でも通ってしまい**、CE 側の導出誤りや
+#   ポート集合を守らない実装が **顕在化しないまま PASS する**。
+#   「ラボで PASS したのに現場で弾かれる」は、この甘さが原因で起きる。
+#   なので **既定で ON** にしてある。切るときは MAP_ENFORCE=0。
+#
+#   落とした通信は nft のログに出る (dmesg / journalctl -k で見える):
+#     MAP-ENFORCE-DROP: ...
+#   **MAP-E が繋がらないときは、まずここを見ること。**割当外ポートを使っていれば
+#   ここに出る。出ていなければ入口検査以外が原因。
+#
+#   ポート集合は PSID / PSID長 / オフセットで決まる。既定は共有IP のルール
+#   (ea-len 16 → PSID長 8 / オフセット 4 → 15 レンジ x 16 = 240 ポート)。
+#   固定IP のルール (share-ratio 1) を配っているときは:
+#     CE_PSID_LEN=0 CE_PSID_OFFSET=6 $0
 set -euo pipefail
 
 # 役割別 MAC から NIC 名を自動解決 (provision.sh で作った VM 向け。未設定の変数だけ埋める)
@@ -21,12 +38,17 @@ case "${1:-}" in
     # DS-Lite だけを検証するときに使う。残すと map0 が旧 CE の MAP アドレス宛のまま
     # 生き続け、共有 IPv4 宛の復路がそちらへ流れて切り分けを汚す
     ip -6 tunnel del map0 2>/dev/null || true
-    echo "[VNE] MAP-E BR を停止しました (トンネル・共有IPv4の復路を削除)"; exit 0 ;;
+    # **入口検査も必ず消す。**残すと次の検証で「原因の分からない断続失敗」になる
+    nft delete table ip map-enforce 2>/dev/null || true
+    echo "[VNE] MAP-E BR を停止しました (トンネル・復路・入口検査を削除)"; exit 0 ;;
 esac
 
 BR_ADDR="2001:db8:9999::1"
 CE_MAP_ADDR="${CE_MAP_ADDR:-2001:db8:100a:500:0:c633:640a:5}"  # RFC7597 IID: 0000:IPv4:PSID
 CE_SHARED_V4="${CE_SHARED_V4:-198.51.100.10}"
+MAP_ENFORCE="${MAP_ENFORCE:-1}"          # 入口検査。実 BR に合わせて既定 ON
+CE_PSID_LEN="${CE_PSID_LEN:-8}"          # 共有IP のルール (ea-len 16 - IPv4サフィックス 8)
+CE_PSID_OFFSET="${CE_PSID_OFFSET:-4}"    # 同上。固定IP のときは 0 / 6 を渡すこと
 CORE_IF="${CORE_IF:-eth1}"
 INET_IF="${INET_IF:-eth2}"
 CORE_SELF="2001:db8:ff00::2/64"
@@ -56,5 +78,67 @@ ip -6 tunnel add map0 mode ipip6 local ${BR_ADDR} remote ${CE_MAP_ADDR} encaplim
 ip link set map0 up mtu 1460
 ip route replace ${CE_SHARED_V4}/32 dev map0   # 共有 IPv4 宛の復路をトンネルへ
 
+# ── 入口検査 (map-enforce) ──────────────────────────────────────────
+# 実 BR は「共有 IPv4 の、割り当て外のポートから来た通信」を落とす。
+# ラボがこれをやらないと、CE 側の導出誤りやポート集合を守らない実装が
+# **顕在化しないまま PASS する**。それが「ラボで PASS → 現場で弾かれる」の正体。
+nft delete table ip map-enforce 2>/dev/null || true
+if [ "${MAP_ENFORCE}" = "1" ]; then
+  # PSID は CE の MAP アドレスに埋まっている。draft-03 の並びは
+  #   IID = 00 <IPv4 4バイト> <PSID 2バイト> 00
+  # なので、アドレスから取り出せば「BR と CE で PSID がズレる」事故を防げる。
+  # ポート集合は RFC 7597 5.1:
+  #   a=オフセット, p=PSID長, m=16-a-p
+  #   各 j (1..2^a-1) について (j << (16-a)) | (PSID << m) から 2^m 個
+  #   j=0 を外すのは、その範囲にウェルノウンポートが入るため
+  ENF_RULES="$(python3 - "${CE_MAP_ADDR}" "${CE_PSID_LEN}" "${CE_PSID_OFFSET}" <<'PY'
+import ipaddress, sys
+addr, p, a = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+iid = int(ipaddress.IPv6Address(addr)) & ((1 << 64) - 1)
+psid = (iid >> 8) & 0xFFFF          # draft-03 の並びから PSID を取り出す
+if p == 0:
+    psid = 0                        # share-ratio 1 のときは PSID を持たない
+m = 16 - a - p
+if m < 0:
+    sys.exit("psid_offset + psid_len が 16 を超えています")
+rng = []
+for j in range(0 if a == 0 else 1, 1 << a):
+    s = (j << (16 - a)) | (psid << m)
+    rng.append("%d-%d" % (s, s + (1 << m) - 1))
+print("PSID=%d" % psid)
+print("PORTS=%d" % (len(rng) * (1 << m)))
+print("SET=%s" % ", ".join(rng))
+PY
+)"
+  ENF_PSID="$(echo "${ENF_RULES}" | sed -n 's/^PSID=//p')"
+  ENF_PORTS="$(echo "${ENF_RULES}" | sed -n 's/^PORTS=//p')"
+  ENF_SET="$(echo "${ENF_RULES}" | sed -n 's/^SET=//p')"
+
+  # **順序が重要**: 許可を先に置き、最後に「共有 IPv4 からのそれ以外」を落とす。
+  # ICMP はポートを持たない (識別子で分ける) ため、ここでは検査しない。
+  # 実 BR は ICMP 識別子も見るが、ラボでは切り分けを濁らせるほうが害が大きい。
+  nft -f - <<EOF
+table ip map-enforce {
+  chain check {
+    # **チェーン名に fwd は使えない。**nft の予約語 (fwd ステートメント) と衝突して
+    # 「syntax error, unexpected fwd」になる
+    type filter hook forward priority -10;
+    iifname "map0" ip saddr ${CE_SHARED_V4} tcp sport { ${ENF_SET} } accept
+    iifname "map0" ip saddr ${CE_SHARED_V4} udp sport { ${ENF_SET} } accept
+    iifname "map0" ip saddr ${CE_SHARED_V4} meta l4proto icmp accept
+    iifname "map0" ip saddr ${CE_SHARED_V4} log prefix "MAP-ENFORCE-DROP: " drop
+  }
+}
+EOF
+fi
+
 echo "[VNE] MAP-E BR 起動: BR=${BR_ADDR}, CE=${CE_MAP_ADDR}, 共有IPv4=${CE_SHARED_V4}"
 echo "      CE のアドレスが異なる場合: CE_MAP_ADDR=<addr> $0 で再実行"
+if [ "${MAP_ENFORCE}" = "1" ]; then
+  echo "      入口検査: 有効 (PSID=${ENF_PSID} / 許可ポート ${ENF_PORTS} 個)"
+  echo "        割当外から来た通信は落として dmesg に MAP-ENFORCE-DROP を出します"
+  echo "        **MAP-E が通らないときは journalctl -k | grep MAP-ENFORCE を先に見ること**"
+  echo "        切るとき: MAP_ENFORCE=0 $0"
+else
+  echo "      入口検査: **無効** (実 BR より甘い状態です。CE の誤りを見逃します)"
+fi

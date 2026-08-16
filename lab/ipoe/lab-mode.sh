@@ -182,6 +182,11 @@ case "${1:-status}" in
     #   pd → CE=2001:db8:100a:500:0:c633:640a:5 / 共有 IPv4=198.51.100.10 (既定値)
     #   ra → CE=2001:db8:1014:300:0:c633:6414:3 / 共有 IPv4=198.51.100.20
     # 既定値のまま RA 方式で起動すると、案内だけ出て IPv4 は絶対に通らない
+    #
+    # **ここの値は RFC 7597 の並び (0000:IPv4:PSID) で、OpenWrt CE 向け。**
+    # Cisco を draft-ietf-softwire-map-03 で動かすと **並びが 1 バイトずれる**ので、
+    # 実機 Cisco を CE にするときはこのコマンドではなく `prov rule` を使うこと
+    # (そちらは draft-03 の値を渡し、入口検査のポート集合も合わせる)。
     detect
     map_env=""
     if [ "$(state_get v6mode)" = "ra" ]; then
@@ -270,15 +275,20 @@ case "${1:-status}" in
         fi
         # 固定IP は「その顧客の委譲プレフィックスと IPv4」を名指しするルールなので、
         # モードに応じた値を渡す (共有IP のルールは CE に依存しないので渡さない)
+        # **入口検査のポート集合もルールに合わせて渡す。**
+        # ここがズレると、正しい CE の通信を BR が落として
+        # 「原因の分からない断続失敗」になる (自分で作った罠を自分で踏む形)
         if [ "$3" = "fixed" ]; then
           rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule fixed ${ceprefix} ${v4}" \
             || die "ルールの差し替えに失敗しました"
+          enf="CE_PSID_LEN=0 CE_PSID_OFFSET=6"     # share-ratio 1
         else
           rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule shared" \
             || die "ルールの差し替えに失敗しました"
+          enf="CE_PSID_LEN=8 CE_PSID_OFFSET=4"     # ea-len 16 → 240 ポート
         fi
         echo "[lab-mode] BR を新しい CE アドレスに張り替えます: ${ce}"
-        rsh "$VNE" "sudo CE_MAP_ADDR=${ce} CE_SHARED_V4=${v4} ./ipoe/vne/setup-map-br.sh" \
+        rsh "$VNE" "sudo CE_MAP_ADDR=${ce} CE_SHARED_V4=${v4} ${enf} ./ipoe/vne/setup-map-br.sh" \
           || die "BR の張り替えに失敗しました"
         echo
         case "$3" in
