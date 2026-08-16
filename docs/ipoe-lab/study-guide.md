@@ -211,7 +211,7 @@ Windows は `ipconfig /all`、Mac/Linux は `ip -6 addr` か `ifconfig`。
 | NGN-SIM モード | ユーザプレフィックス | 共有 IPv4 | PSID | VNE 側の実行方法 |
 |---|---|---|---|---|
 | `pd`(ひかり電話あり) | `2001:db8:100a:500::/56` | `198.51.100.10` | 5 | `sudo ./setup-map-br.sh`(既定値) |
-| `ra`(ひかり電話なし) | `2001:db8:1014:300::/64` | `198.51.100.20` | 3 | `sudo CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 ./setup-map-br.sh` |
+| `ra`(ひかり電話なし) | `2001:db8:1014:300::/64` | `198.51.100.20` | 3 | `sudo CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 CE_PSID=3 ./setup-map-br.sh` |
 
 ```
 # NGN-SIM で(root 必須)
@@ -223,7 +223,7 @@ sudo systemctl start kea-dhcp6-server
 
 sudo ./lab/ipoe/ngn/setup-ngn.sh ra     # ひかり電話なし相当
 # ↑ に切り替えたら VNE でも必ず(値は build.md §3 の表から取る)
-sudo CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 \
+sudo CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 CE_PSID=3 \
      ./lab/ipoe/vne/setup-map-br.sh
 
 # CPE 側でキャプチャしながら再接続

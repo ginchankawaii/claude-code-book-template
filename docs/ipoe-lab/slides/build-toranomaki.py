@@ -949,7 +949,7 @@ def build():
              "!環境変数を付けて再実行 (下記)"],
         ],
         [2.6, 3.5, 2.5, 3.6],
-        footer="ra に切り替えたら → sudo CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 ./setup-map-br.sh\n※ NGN 側だけ切り替えて BR を再実行しないと IPv4 が全断する (build.md §3)",
+        footer="ra に切り替えたら → sudo CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 CE_PSID=3 ./setup-map-br.sh\n※ NGN 側だけ切り替えて BR を再実行しないと IPv4 が全断する (build.md §3)",
         fsize=12,
     )
 

@@ -438,7 +438,7 @@ uci commit network && /etc/init.d/network restart
 NGN 側を `ra` にしたら **BR も張り替えが必要**です:
 
 ```bash
-sudo CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 \
+sudo CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 CE_PSID=3 \
   ./ipoe/vne/setup-map-br.sh
 ```
 
