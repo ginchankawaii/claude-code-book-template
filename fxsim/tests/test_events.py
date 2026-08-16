@@ -55,3 +55,27 @@ def test_next_high_impact_and_minutes():
 def test_summary_shape():
     s = _cal().summary("USD_JPY", NOW, within_hours=24)
     assert s and all({"in_minutes", "currency", "title", "impact"} <= set(d) for d in s)
+
+
+def test_anthropic_calendar_skips_paid_refresh_when_cache_is_fresh(tmp_path, monkeypatch):
+    # A restart storm burned 810 paid web-search calls in two days because
+    # fetch() never checked the cache age. A fresh cache must short-circuit
+    # BEFORE any SDK/API access.
+    import app.events as E
+    fresh = tmp_path / "calendar.json"
+    fresh.write_text('[{"time": "2026-08-20T12:30:00+00:00", "currency": "USD", '
+                     '"title": "CPI", "impact": "high"}]')
+    monkeypatch.setattr(E, "CALENDAR_FILE", fresh)
+    monkeypatch.setattr(E.settings, "anthropic_api_key", "sk-test")
+
+    import builtins
+    real_import = builtins.__import__
+
+    def bomb(name, *a, **k):
+        if name == "anthropic":
+            raise AssertionError("paid path touched despite fresh cache")
+        return real_import(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", bomb)
+
+    cal = E.AnthropicCalendar().fetch({"USD", "JPY"})
+    assert any(e.title == "CPI" for e in cal.events)

@@ -155,7 +155,8 @@ class EconomicCalendar:
 # --------------------------------------------------------------------------- #
 # backends
 # --------------------------------------------------------------------------- #
-def _load_file(path: Path = CALENDAR_FILE) -> EconomicCalendar:
+def _load_file(path: Path | None = None) -> EconomicCalendar:
+    path = path if path is not None else CALENDAR_FILE   # resolve at call time
     if not path.exists():
         return EconomicCalendar([])
     try:
@@ -172,7 +173,8 @@ def _load_file(path: Path = CALENDAR_FILE) -> EconomicCalendar:
     return EconomicCalendar(events)
 
 
-def _cache_events(events: list[EconomicEvent], path: Path = CALENDAR_FILE) -> None:
+def _cache_events(events: list[EconomicEvent], path: Path | None = None) -> None:
+    path = path if path is not None else CALENDAR_FILE   # resolve at call time
     path.write_text(json.dumps({"events": [e.to_dict() for e in events]}, indent=2))
 
 
@@ -196,10 +198,26 @@ class AnthropicCalendar:
         "\"previous\": <str or \"\">}}."
     )
 
+    # Do not re-fetch while the cached calendar is younger than this. A paid
+    # web-search call per process start let a container restart storm burn 810
+    # calls (~8.6M tokens) in two days — the cache-age gate caps the worst case
+    # at ~2 calls/day no matter how often the process restarts.
+    MAX_AGE_H = 12.0
+
     def __init__(self, model: str | None = None) -> None:
         self.model = model or settings.decision_model
 
     def fetch(self, currencies: set[str]) -> EconomicCalendar:
+        try:
+            if CALENDAR_FILE.exists():
+                age_h = (datetime.now(timezone.utc).timestamp()
+                         - CALENDAR_FILE.stat().st_mtime) / 3600.0
+                if age_h < self.MAX_AGE_H:
+                    print(f"[cal] cached calendar is {age_h:.1f}h old (<{self.MAX_AGE_H:.0f}h)"
+                          f" — skipping the paid refresh", flush=True)
+                    return _load_file()
+        except Exception:
+            pass
         try:
             import anthropic
         except ImportError:
