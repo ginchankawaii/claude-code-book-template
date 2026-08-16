@@ -153,6 +153,17 @@ def derive(map_e, ce_prefix):
     psid = ea & ((1 << p) - 1) if p else 0
     ipv4 = ipaddress.IPv4Address(int(r4.network_address) + v4_suffix)
 
+    # **share-ratio が 1 のとき、Cisco は psid_offset を無視して 6 に固定する。**
+    # ドキュメントの記述 (「share ratio が 1 なら port-offset-bits は 6、
+    # start-port は 1024 に自動設定される」) のとおりで、実機でも確認した:
+    #   配った psIdOffset=0 → show nat64 map-e は Port-offset-bits 6 / Start-port 1024
+    # 結果、全ポートではなく **ウェルノウンポートを除いた 64512 個** になる。
+    # ここを 0 のまま計算すると 65536 と出て、実機と 1024 ずれる。
+    cisco_override = None
+    if p == 0 and a != 6:
+        cisco_override = a
+        a = 6
+
     # ポート範囲: m = 16 - a - p 個の連続ビット
     m = 16 - a - p
     if m < 0:
@@ -190,6 +201,7 @@ def derive(map_e, ce_prefix):
         "map_address": map_addr,
         "map_address_draft03": map_addr_d03,
         "br": map_e.get("br"),
+        "cisco_override": cisco_override,
     }
 
 
@@ -224,6 +236,10 @@ def report(d, doc=None):
     print("   BR アドレス         : %s" % d["br"])
     print("   使えるポート        : %d 個 (%d レンジ x %d 連続ポート)"
           % (d["total_ports"], len(d["ranges"]), 1 << d["contiguous_bits"]))
+    if d["cisco_override"] is not None:
+        print("     ※ share-ratio が 1 なので psid_offset を %d → 6 に読み替えました"
+              % d["cisco_override"])
+        print("        (Cisco の実装がそうするため。実機で確認済み)")
     head = ", ".join("%d-%d" % r for r in d["ranges"][:4])
     tail = "%d-%d" % d["ranges"][-1] if d["ranges"] else "-"
     print("     先頭  : %s ..." % head)
@@ -242,6 +258,14 @@ SELFTEST_RULE = {
     "rules": [{"ipv6": "2001:db8:1000::/40", "ipv4": "198.51.100.0/24",
                "ea_length": 16, "psid_offset": 4}],
 }
+# 固定IP1 相当 (share-ratio 1)。期待値は **実機 C1111-8P の実測**:
+#   Share-ratio 1 / Contiguous-ports 1024 / Start-port 1024 / Port-offset-bits 6
+#   → 63 レンジ x 1024 = 64512 ポート (ウェルノウンポートだけ除外)
+SELFTEST_RULE_FIXED = {
+    "br": "2001:db8:9999::1",
+    "rules": [{"ipv6": "2001:db8:1000::/40", "ipv4": "198.51.100.0/24",
+               "ea_length": 8, "psid_offset": 0}],
+}
 SELFTEST_CASES = [
     # (説明, 委譲プレフィックス, 期待IPv4, 期待PSID, 期待MAPアドレス(RFC7597),
     #  期待MAPアドレス(draft-03), 期待ポート数)
@@ -257,9 +281,15 @@ SELFTEST_CASES = [
 
 def selftest():
     ok = True
-    for (desc, prefix, exp_v4, exp_psid, exp_addr,
-         exp_addr_d03, exp_ports) in SELFTEST_CASES:
-        d = derive(SELFTEST_RULE, prefix)
+    cases = [(SELFTEST_RULE,) + c for c in SELFTEST_CASES] + [
+        # 固定IP1 相当。**実機 C1111-8P で実測した値**と突き合わせる
+        (SELFTEST_RULE_FIXED, "固定IP1 相当 (share-ratio 1)", "2001:db8:1014:300::/64",
+         "198.51.100.20", 0, "2001:db8:1014:300:0:c633:6414:0",
+         "2001:db8:1014:300:c6:3364:1400:0", 64512),
+    ]
+    for (rule, desc, prefix, exp_v4, exp_psid, exp_addr,
+         exp_addr_d03, exp_ports) in cases:
+        d = derive(rule, prefix)
         checks = [
             ("IPv4", str(d["ipv4"]), exp_v4),
             ("PSID", str(d["psid"]), str(exp_psid)),
