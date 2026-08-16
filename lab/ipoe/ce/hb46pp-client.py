@@ -250,8 +250,15 @@ def report(d, doc=None):
     print("     末尾  : %s" % tail)
     print(W)
     print(" ラボの BR をこの CPE に向ける場合:")
-    print("   CE_MAP_ADDR=%s CE_SHARED_V4=%s \\" % (d["map_address"], d["ipv4"]))
-    print("     sudo ./ipoe/vne/setup-map-br.sh")
+    print("   **CE の実装で並びが違う。実機の show ipv6 interface brief で確認して選ぶこと。**")
+    print("   Cisco (draft-03, 実機はこちら):")
+    print("     CE_MAP_ADDR=%s CE_SHARED_V4=%s CE_PSID=%d \\"
+          % (d["map_address_draft03"], d["ipv4"], d["psid"]))
+    print("       sudo ./ipoe/vne/setup-map-br.sh")
+    print("   OpenWrt など (RFC 7597):")
+    print("     CE_MAP_ADDR=%s CE_SHARED_V4=%s CE_PSID=%d \\"
+          % (d["map_address"], d["ipv4"], d["psid"]))
+    print("       sudo ./ipoe/vne/setup-map-br.sh")
     print(W)
 
 

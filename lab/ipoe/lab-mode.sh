@@ -188,16 +188,28 @@ case "${1:-status}" in
     # 実機 Cisco を CE にするときはこのコマンドではなく `prov rule` を使うこと
     # (そちらは draft-03 の値を渡し、入口検査のポート集合も合わせる)。
     detect
-    map_env=""
+    # 入口検査の PSID も方式に合わせて明示的に渡す (共有IP: RA=3 / PD=5, PSID長 8 / オフセット 4)。
+    # アドレスは RFC7597 だが、enforce はアドレスから抽出せず CE_PSID を使うので整合する。
     if [ "$(state_get v6mode)" = "ra" ]; then
-      map_env="CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 "
+      map_env="CE_MAP_ADDR=2001:db8:1014:300:0:c633:6414:3 CE_SHARED_V4=198.51.100.20 CE_PSID=3 CE_PSID_LEN=8 CE_PSID_OFFSET=4 "
       echo "[lab-mode] IPv4 の運び方を MAP-E にします (RA 方式用のパラメータで起動)..."
     else
+      map_env="CE_PSID=5 CE_PSID_LEN=8 CE_PSID_OFFSET=4 "
       echo "[lab-mode] IPv4 の運び方を MAP-E にします (PD 方式用のパラメータで起動)..."
     fi
     rsh "$VNE" "sudo ./ipoe/vne/setup-aftr.sh stop 2>/dev/null; sudo ${map_env}./ipoe/vne/setup-map-br.sh" \
       || die "MAP-E BR の起動に失敗しました"
     state_set ipv4mode mape
+    # **mape は shared 前提で BR を張る。**もしルール配布サーバが fixed を配ったまま
+    # だと、サーバ (fixed) と BR (shared) が食い違って CE が全断する (監査 I3)。
+    # 状態に rule を持っていないので、ここで警告だけ出す (自動で書き換えると
+    # サーバに触れない環境で落ちるため、あえて手動判断に委ねる)。
+    state_set rule shared
+    echo
+    echo "  ※ この経路は shared (240 ポート) 固定です。**Cisco + ルール配布サーバ**を"
+    echo "     使うなら ./lab-mode.sh prov rule を使ってください。"
+    echo "     直前に prov rule fixed を配っていたら、サーバも shared に戻すこと:"
+    echo "         ./lab-mode.sh prov rule shared"
     echo
     echo "  → **受講者に CPE 側を MAP-E に設定させてください。**"
     echo "     CPE に入れる値は build.md §3 の表のとおりです (方式ごとに違います)。"
@@ -260,17 +272,19 @@ case "${1:-status}" in
         # 共有IP のルールは /40 + 16 = /56 で、RA の /64 とは偶然一致しているだけ。
         # ここを取り違えて BR を張ると、CE は送っているのに戻りが 0 になる
         # (サイクル 13 で実際に踏んだ)。
+        # PSID も明示的に渡す (shared: RA=3 / PD=5, fixed: 0)。
+        # **アドレスから抽出させない (監査 I3。抽出はレイアウト依存で誤る)。**
         if [ "$(state_get v6mode)" = "ra" ]; then
           v4="198.51.100.20"; ceprefix="2001:db8:1014:300::/64"
           case "$3" in
-            shared) ce="2001:db8:1014:300:c6:3364:1400:300" ;;
-            fixed)  ce="2001:db8:1014:300:c6:3364:1400:0" ;;
+            shared) ce="2001:db8:1014:300:c6:3364:1400:300"; psid=3 ;;
+            fixed)  ce="2001:db8:1014:300:c6:3364:1400:0";   psid=0 ;;
           esac
         else
           v4="198.51.100.10"; ceprefix="2001:db8:100a:500::/56"
           case "$3" in
-            shared) ce="2001:db8:100a:500:c6:3364:a00:500" ;;
-            fixed)  ce="2001:db8:100a:500:c6:3364:a00:0" ;;
+            shared) ce="2001:db8:100a:500:c6:3364:a00:500"; psid=5 ;;
+            fixed)  ce="2001:db8:100a:500:c6:3364:a00:0";   psid=0 ;;
           esac
         fi
         # 固定IP は「その顧客の委譲プレフィックスと IPv4」を名指しするルールなので、
@@ -281,15 +295,17 @@ case "${1:-status}" in
         if [ "$3" = "fixed" ]; then
           rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule fixed ${ceprefix} ${v4}" \
             || die "ルールの差し替えに失敗しました"
-          enf="CE_PSID_LEN=0 CE_PSID_OFFSET=6"     # share-ratio 1
+          enf="CE_PSID=${psid} CE_PSID_LEN=0 CE_PSID_OFFSET=6"     # share-ratio 1
         else
           rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule shared" \
             || die "ルールの差し替えに失敗しました"
-          enf="CE_PSID_LEN=8 CE_PSID_OFFSET=4"     # ea-len 16 → 240 ポート
+          enf="CE_PSID=${psid} CE_PSID_LEN=8 CE_PSID_OFFSET=4"     # ea-len 16 → 240 ポート
         fi
         echo "[lab-mode] BR を新しい CE アドレスに張り替えます: ${ce}"
         rsh "$VNE" "sudo CE_MAP_ADDR=${ce} CE_SHARED_V4=${v4} ${enf} ./ipoe/vne/setup-map-br.sh" \
           || die "BR の張り替えに失敗しました"
+        # **サーバと BR の rule を状態に記録する。**mape 遷移が食い違いを警告できるように
+        state_set rule "$3"
         echo
         case "$3" in
           shared) echo "  → 共有IP (256 分割 / 240 ポート) を配ります" ;;
