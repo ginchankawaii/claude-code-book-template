@@ -3022,7 +3022,35 @@ CE_PSID 既定を 5 にしたことで、**CE_PSID を渡さない既存の RA �
 呼び出し元である。build.md / runbook / study-guide / proxmox-prototype / 虎の巻スライド /
 setup-map-br.sh ヘッダの RA コマンドに CE_PSID=3 を挿入した。
 
-(この時点で機械的な systematic ラウンド 2 を並行実行中。結果は追記する。)
+#### ラウンド 2: 12 エージェント / CONFIRMED 7
+
+**ラウンド1の修正が 3 つの意味で不完全だった。**
+- CRITICAL: **本番ランブック (手順N) の CE_PSID 抜け**。ラウンド1の doc 修正の grep が
+  RFC7597 形式しか見ず draft-03 形式の実案件ランブックを見落としていた
+- report() の固定IP コマンドが CE_PSID_LEN/OFFSET を省いて 99.6% を落とす (fix D 不完全)
+- fix C の `state rule` が誰も読まない dead state (state_get rule ゼロ)
+- setup-ruleserver.sh `rule fixed` の引数検証が無い / MAP_ENFORCE の typo fail-open
+
+すべて修正・閉鎖証明 (引数検証は不正3種 exit1、MAP_ENFORCE=on で fail-safe ON を実測)。
+
+#### ラウンド 3: 6 エージェント / CONFIRMED 3 (実質 1)
+
+**ラウンド2の reconcile 修正が新バグを生んでいた** (3 エージェントが同一箇所を検出)。
+`state_set rule shared` を reconcile の成否と無関係に無条件で書いていたため、
+INET 未設定/失敗のとき **サーバ=fixed / BR=shared / state=shared / banner="共有IP"** の
+三者不一致を恒久固定。ラウンド2で banner に rule を出したことで、dead state が
+**目に見える偽 status に格上げ**されていた。
+
+修正: restore ブランチと同じ規律 (成功を確認してから state を書く)。失敗時は `MISMATCH` を
+記録し status で警告し続ける。閉鎖証明: stub ssh でシェル状態機械を再現し、
+INET未設定/reconcile失敗 → MISMATCH、成功経路 → shared を確認。
+
+**教訓**: **修正は 3 ラウンド連続で新しいバグを生んだ。**ラウンド1で「直した」ものが
+ラウンド2で不完全と分かり、ラウンド2の修正がラウンド3で新バグを生んだ。
+「バグは一番新しいコードに棲む」が文字どおり成立した。loop-until-dry を規律として
+持っていなければ、どのラウンドでも「直った」と誤って完了宣言していた。
+
+(ラウンド 4 で 2 連続ゼロを確認中。まだ完了宣言していない。)
 
 ---
 
