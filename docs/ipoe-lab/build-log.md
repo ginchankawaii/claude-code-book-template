@@ -2984,6 +2984,48 @@ MAP-ENFORCE-DROP: IN=map0 SRC=198.51.100.20 DST=203.0.113.53 PROTO=UDP SPT=1024 
 
 ---
 
+### サイクル 15: 敵対的監査 (loop-until-dry)(2026-08-16)
+
+ユーザーから敵対的監査の枠組みが与えられた: **信頼の土台を先に作り、直交する専門レンズを
+ファンアウトし、発見を別の独立エージェントがゼロから反証し、修正は攻撃者の武器で閉鎖証明し、
+2ラウンド連続で新規ゼロになるまで完了宣言しない。**対象は サイクル 11〜14 の新規コード。
+守るべきもの = 「ラボが PASS を出したら本番でも通る」という判断の正しさ。
+
+#### step 0 (信頼の土台) 自体が 1 件目を出した
+
+参照実装の selftest が、**固定IP1 として /40 + ea 8 のルール**を検証していた。これは
+End-user /48 を作り black hole になった設定 (サイクル 13)。ハーネスが「実機で通らない
+config」を合格させていた。実機で通った /64 + ea 0 に差し替え、3 ケース全部が実機一致する
+状態にしてから監査を開始した。
+
+#### ラウンド 1: 14 エージェント / CONFIRMED 8 (実質 4 root) / 埋め草 0
+
+**一番痛いのは、サイクル 14 で入れたばかりの map-enforce だった** (バグは一番新しい
+コードに棲む、を地で行った)。
+
+| # | 重大度 | 中身 | 修正 |
+|---|---|---|---|
+| A | **CRITICAL** | PSID をアドレスのバイト位置から抽出 (draft-03 前提)。だが mape/既定は RFC7597 並び。PD 既定で PSID 5 を 2560 と誤り、**BR が CE の通信を自分で落とすサイレント全断** | 抽出をやめ CE_PSID を明示的に渡す |
+| B | HIGH | enforce 計算/nft 失敗でトンネルは生きたまま enforce 無し = BR 全開 (fail-open)。再実行でも古い map0 が残る | 順序を map0削除→enforce→map0作成 に。失敗時は作成前に die = fail-closed |
+| C | HIGH | rule (shared/fixed) が状態に無く mape が既定 shared で張り替え → サーバ fixed と食い違い | state に rule を持たせ mape は警告 |
+| D | HIGH | report()/既定値が RFC7597 を案内するが実機は draft-03 | 両方を CE_PSID 付きで出す |
+
+**閉鎖証明 (step 5)**: 攻撃者の再現を修正後コードに再実行。
+- A: 全 4 経路で CE の割当内ポートが許可される (故障 再現せず)
+- B: offset10+len8 (m<0) で実行 → die (exit 1)、map0 存在せず、enforce 無し (fail-closed 実測)
+- 生きている実機 (fixed-IP) で regression 無し (drop 0)
+
+#### ラウンド 2 で自分の修正が別の手順を壊したのを発見
+
+CE_PSID 既定を 5 にしたことで、**CE_PSID を渡さない既存の RA 切替コマンドが
+「PSID 5 で enforce を張り RA CE (PSID 3) を落とす」黒穴に化けた。**ドキュメントもコードの
+呼び出し元である。build.md / runbook / study-guide / proxmox-prototype / 虎の巻スライド /
+setup-map-br.sh ヘッダの RA コマンドに CE_PSID=3 を挿入した。
+
+(この時点で機械的な systematic ラウンド 2 を並行実行中。結果は追記する。)
+
+---
+
 ## 3. 未検証項目トラッカー
 
 **実走で潰すべき仮説の一覧です。** 設計時に「たぶんこうなる」で書いた箇所と、
@@ -3177,7 +3219,10 @@ CML 側で External Connector として認識させるには **CML の再起動�
    sudo CE_WAN6=<新CEのWAN側IPv6> ./lab/ipoe/vne/setup-aftr.sh
 
    # MAP-E (BR) — モードに応じた期待値を build.md §3 の表から取る
-   sudo CE_MAP_ADDR=<新CEのMAPアドレス> CE_SHARED_V4=<共有IPv4> ./lab/ipoe/vne/setup-map-br.sh
+   # **CE_PSID を必ず付ける** (共有IP: RA=3 / PD=5, 固定IP=0)。省くと既定 5 で
+   # enforce が張られ、PSID の違う CE を BR が黙って落とす (監査サイクル 15)。
+   # 固定IP のときは CE_PSID_LEN=0 CE_PSID_OFFSET=6 も付ける。
+   sudo CE_MAP_ADDR=<新CEのMAPアドレス> CE_SHARED_V4=<共有IPv4> CE_PSID=<PSID> ./lab/ipoe/vne/setup-map-br.sh
    ```
 
 5. **期待値を照合する**([build.md](build.md) §3 の表)。共有 IPv4 / PSID / MAP アドレスが一致するか

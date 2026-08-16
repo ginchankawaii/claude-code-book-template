@@ -137,17 +137,43 @@ case "$MODE" in
     # 固定IP のルールは **その顧客のプレフィックスと IPv4 を名指しする**ので、
     # CE ごとに違う。第 3 引数で委譲プレフィックスと IPv4 を差し替えられるようにする。
     #   例) setup-ruleserver.sh rule fixed 2001:db8:100a:500::/56 198.51.100.10
+    # fixed で prefix/v4 を渡すときは **両方揃っていること**を先に確かめる。
+    # 片方だけ・空だと、テンプレート (RA固定 .20//64) を黙って配ってしまい、
+    # 別の CE 向けに間違ったルールを配布する事故になる (監査サイクル 15)。
+    if [ "${2:-}" = "fixed" ] && { [ -n "${3:-}" ] || [ -n "${4:-}" ]; }; then
+      if [ -z "${3:-}" ] || [ -z "${4:-}" ]; then
+        echo "rule fixed で委譲プレフィックスを差し替えるときは <prefix> と <v4> の両方を渡してください" >&2
+        echo "  例) $0 rule fixed 2001:db8:100a:500::/56 198.51.100.10" >&2
+        exit 1
+      fi
+    fi
     python3 - "$SRC" "${ETC}/response-jp01.json" "${3:-}" "${4:-}" <<'PY'
-import json, sys
+import ipaddress, json, sys
 src, dst, prefix, v4 = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 with open(src, encoding="utf-8") as f:
     doc = json.load(f)
 clean = {k: v for k, v in doc.items() if not k.startswith("_comment")}
 r = clean["basicMapRules"][0]
 if prefix:
+    # **形式を検証する。**/ が無い、長さが数字でない、IPv6 として不正、はここで弾く。
+    if "/" not in prefix:
+        sys.exit("prefix は <IPv6>/<長さ> の形で渡してください: %r" % prefix)
     net, _, plen = prefix.partition("/")
-    r["ipv6Prefix"], r["ipv6PrefixLength"] = net, plen or r["ipv6PrefixLength"]
+    if not plen.isdigit() or not (0 <= int(plen) <= 128):
+        sys.exit("prefix の長さが不正です: %r" % prefix)
+    try:
+        ipaddress.IPv6Network(prefix, strict=False)
+    except ValueError as e:
+        sys.exit("prefix が IPv6 として不正です: %s" % e)
+    r["ipv6Prefix"], r["ipv6PrefixLength"] = net, plen
 if v4:
+    # v4 に / を付けて渡す誤りを弾く (ipv4Prefix と ipv4PrefixLength は別フィールド)
+    if "/" in v4:
+        sys.exit("v4 は長さを付けずに渡してください (例 198.51.100.10)。長さは ipv4PrefixLength: %r" % v4)
+    try:
+        ipaddress.IPv4Address(v4)
+    except ValueError as e:
+        sys.exit("v4 が IPv4 として不正です: %s" % e)
     r["ipv4Prefix"] = v4
 with open(dst, "w", encoding="utf-8") as f:
     json.dump(clean, f, indent=2, ensure_ascii=False)

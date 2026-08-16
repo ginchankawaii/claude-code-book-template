@@ -458,7 +458,7 @@ show ipv6 interface brief
 `GigabitEthernet0/0/0` に増えている方が MAP CE アドレスです。その値で BR を張ります:
 
 ```bash
-ssh root@192.168.11.20 "ssh labadmin@fe80::be24:11ff:feb9:3fb1%vmbr0 'sudo CE_MAP_ADDR=2001:db8:1014:300:c6:3364:1400:300 CE_SHARED_V4=198.51.100.20 ./ipoe/vne/setup-map-br.sh'"
+ssh root@192.168.11.20 "ssh labadmin@fe80::be24:11ff:feb9:3fb1%vmbr0 'sudo CE_MAP_ADDR=2001:db8:1014:300:c6:3364:1400:300 CE_SHARED_V4=198.51.100.20 CE_PSID=3 ./ipoe/vne/setup-map-br.sh'"
 ```
 
 ### 【手順 N-2】LAN を作って PC から確認する

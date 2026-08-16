@@ -116,8 +116,9 @@ detect() {
 }
 
 banner() {
-  local v6mode ipv4mode fault v6note v4note
+  local v6mode ipv4mode fault v6note v4note rule
   v6mode="$(state_get v6mode)"; ipv4mode="$(state_get ipv4mode)"; fault="$(state_get fault)"
+  rule="$(state_get rule)"
   case "$v6mode" in
     ra) v6note="RA 方式  … ひかり電話なし相当。/64 が 1 本だけ来る" ;;
     pd) v6note="PD 方式  … ひかり電話あり相当。/56 がまとめて降りる" ;;
@@ -135,6 +136,13 @@ banner() {
   echo "----------------------------------------------------------------"
   printf "  IPv6 の配り方 : %s\n" "$v6note"
   printf "  IPv4 の運び方 : %s\n" "$v4note"
+  if [ "$ipv4mode" = "mape" ] && [ -n "$rule" ]; then
+    case "$rule" in
+      shared) printf "  配布ルール    : 共有IP (240 ポート)\n" ;;
+      fixed)  printf "  配布ルール    : 固定IP1 相当 (64512 ポート)\n" ;;
+      *)      printf "  配布ルール    : %s\n" "$rule" ;;
+    esac
+  fi
   printf "  障害の注入    : %s\n" "${fault:-なし}"
   echo "----------------------------------------------------------------"
   printf "  受講者が見るべき出口アドレス : %s\n" "$(expected_src4)"
@@ -197,19 +205,29 @@ case "${1:-status}" in
       map_env="CE_PSID=5 CE_PSID_LEN=8 CE_PSID_OFFSET=4 "
       echo "[lab-mode] IPv4 の運び方を MAP-E にします (PD 方式用のパラメータで起動)..."
     fi
+    # **mape は shared 前提で BR を張る。**もしルール配布サーバが fixed を配ったまま
+    # だと、サーバ (fixed) と BR (shared) が食い違って CE が全断する (監査 I3)。
+    # **記録した rule を読んで、fixed だったらサーバも shared に戻して整合させる。**
+    # (監査サイクル 15: 以前は rule を書くだけで誰も読まない dead state だった)
+    prev_rule="$(state_get rule)"
     rsh "$VNE" "sudo ./ipoe/vne/setup-aftr.sh stop 2>/dev/null; sudo ${map_env}./ipoe/vne/setup-map-br.sh" \
       || die "MAP-E BR の起動に失敗しました"
     state_set ipv4mode mape
-    # **mape は shared 前提で BR を張る。**もしルール配布サーバが fixed を配ったまま
-    # だと、サーバ (fixed) と BR (shared) が食い違って CE が全断する (監査 I3)。
-    # 状態に rule を持っていないので、ここで警告だけ出す (自動で書き換えると
-    # サーバに触れない環境で落ちるため、あえて手動判断に委ねる)。
     state_set rule shared
     echo
-    echo "  ※ この経路は shared (240 ポート) 固定です。**Cisco + ルール配布サーバ**を"
+    if [ "$prev_rule" = "fixed" ]; then
+      echo "  ⚠ 直前に prov rule fixed を配っていました。BR は shared に戻したので、"
+      echo "     **ルール配布サーバも shared に戻して整合させます。**"
+      if [ -n "${INET:-}" ]; then
+        rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule shared" \
+          && echo "     → サーバも shared に戻しました" \
+          || echo "     → **サーバのリセットに失敗。手動で ./lab-mode.sh prov rule shared を実行してください**"
+      else
+        echo "     → INET が未設定です。**手動で ./lab-mode.sh prov rule shared を実行してください**"
+      fi
+    fi
+    echo "  ※ この経路は shared (240 ポート) 固定です。Cisco + ルール配布サーバを"
     echo "     使うなら ./lab-mode.sh prov rule を使ってください。"
-    echo "     直前に prov rule fixed を配っていたら、サーバも shared に戻すこと:"
-    echo "         ./lab-mode.sh prov rule shared"
     echo
     echo "  → **受講者に CPE 側を MAP-E に設定させてください。**"
     echo "     CPE に入れる値は build.md §3 の表のとおりです (方式ごとに違います)。"

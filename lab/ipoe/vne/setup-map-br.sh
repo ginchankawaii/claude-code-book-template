@@ -98,7 +98,11 @@ ip -6 route replace 2001:db8:1000::/40 via ${CORE_NGN}
 modprobe ip6_tunnel
 ip -6 tunnel del map0 2>/dev/null || true          # (1) 転送を先に落とす
 nft delete table ip map-enforce 2>/dev/null || true
-if [ "${MAP_ENFORCE}" = "1" ]; then
+# **明示的に 0 のときだけ無効。**それ以外 (1/on/yes/typo/空欄) は有効側に倒す。
+# `= "1"` の厳密一致だと "on" や "yes" のタイポで enforce を丸ごと飛ばして
+# 全開トンネルを張ってしまう (typo fail-open, 監査サイクル 15)。
+# enforce ON が安全側なので、曖昧な値は ON と解釈する。
+if [ "${MAP_ENFORCE}" != "0" ]; then
   # ポート集合は RFC 7597 5.1:
   #   a=オフセット, p=PSID長, m=16-a-p
   #   各 j (1..2^a-1) について (j << (16-a)) | (PSID << m) から 2^m 個
@@ -159,7 +163,7 @@ ip route replace ${CE_SHARED_V4}/32 dev map0   # 共有 IPv4 宛の復路をト�
 
 echo "[VNE] MAP-E BR 起動: BR=${BR_ADDR}, CE=${CE_MAP_ADDR}, 共有IPv4=${CE_SHARED_V4}"
 echo "      CE のアドレスが異なる場合: CE_MAP_ADDR=<addr> $0 で再実行"
-if [ "${MAP_ENFORCE}" = "1" ]; then
+if [ "${MAP_ENFORCE}" != "0" ]; then
   echo "      入口検査: 有効 (PSID=${ENF_PSID} / 許可ポート ${ENF_PORTS} 個。トンネルより先に張る fail-closed)"
   echo "        割当外から来た通信は落として dmesg に MAP-ENFORCE-DROP を出します"
   echo "        **MAP-E が通らないときは journalctl -k | grep MAP-ENFORCE を先に見ること**"

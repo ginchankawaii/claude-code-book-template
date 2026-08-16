@@ -251,13 +251,18 @@ def report(d, doc=None):
     print(W)
     print(" ラボの BR をこの CPE に向ける場合:")
     print("   **CE の実装で並びが違う。実機の show ipv6 interface brief で確認して選ぶこと。**")
+    # **入口検査のポート集合を決める 3 つ (PSID / PSID長 / オフセット) を全部渡す。**
+    # CE_PSID だけだと LEN/OFFSET が既定 (8/4=240ポート) のままになり、
+    # share-ratio 1 の CE (64512 ポート) をほぼ全部落とす (監査サイクル 15 で確認)。
+    enf = "CE_PSID=%d CE_PSID_LEN=%d CE_PSID_OFFSET=%d" % (
+        d["psid"], d["psid_length"], d["psid_offset"])
     print("   Cisco (draft-03, 実機はこちら):")
-    print("     CE_MAP_ADDR=%s CE_SHARED_V4=%s CE_PSID=%d \\"
-          % (d["map_address_draft03"], d["ipv4"], d["psid"]))
+    print("     CE_MAP_ADDR=%s CE_SHARED_V4=%s %s \\"
+          % (d["map_address_draft03"], d["ipv4"], enf))
     print("       sudo ./ipoe/vne/setup-map-br.sh")
     print("   OpenWrt など (RFC 7597):")
-    print("     CE_MAP_ADDR=%s CE_SHARED_V4=%s CE_PSID=%d \\"
-          % (d["map_address"], d["ipv4"], d["psid"]))
+    print("     CE_MAP_ADDR=%s CE_SHARED_V4=%s %s \\"
+          % (d["map_address"], d["ipv4"], enf))
     print("       sudo ./ipoe/vne/setup-map-br.sh")
     print(W)
 
