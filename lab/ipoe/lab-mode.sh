@@ -222,8 +222,17 @@ case "${1:-status}" in
     # rule shared は冪等 (既に shared でも無害)、サーバ未構築なら向こうが
     # 「差し替え不要」で exit 0 を返すので、常に打ってよい。
     # state は **reconcile の結果が確認できたときだけ** shared を書く。
+    # **破壊的変更は先に告知する** (ラウンド5 #3: 成功パスから告知が消えていた)。
+    # rule fixed で渡したカスタム値 (委譲プレフィックス/IPv4) はサーバ上で
+    # shared テンプレートに上書きされて失われる。
+    if [ "$prev_rule" = "fixed" ] || [ "$prev_rule" = "MISMATCH" ]; then
+      echo "  ⚠ 直前まで shared でない配布 (${prev_rule}) でした。"
+      echo "     **サーバのルールを shared テンプレートで上書きします**"
+      echo "     (prov rule fixed で渡したカスタム値は失われます)。"
+    fi
     if [ -n "${INET:-}" ]; then
-      if rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule shared"; then
+      # RULE_IF_BUILT=1: 未構築なら「差し替え不要」で正常終了してよい文脈 (冪等 reconcile)
+      if rsh "$INET" "sudo RULE_IF_BUILT=1 ./ipoe/inet/setup-ruleserver.sh rule shared"; then
         state_set rule shared
       else
         state_set rule MISMATCH
@@ -235,9 +244,10 @@ case "${1:-status}" in
       # INET 無しではサーバの実態を確認できない。fixed/MISMATCH の痕跡があれば
       # 警告を維持し、無ければ shared とみなす (未構築構成での偽警告を避ける)。
       # **これは自己申告の限界** — state ファイルを消すと痕跡ごと消える (§限界)。
+      # 文言は方向を断定しない (MISMATCH は ssh 失敗だけでも書かれるため)。
       if [ "$prev_rule" = "fixed" ] || [ "$prev_rule" = "MISMATCH" ]; then
         state_set rule MISMATCH
-        echo "  ⚠ INET が未設定でサーバを確認できません。**以前 fixed を配っていた形跡があります。**"
+        echo "  ⚠ INET が未設定で、サーバと揃っているか確認できません (直前の記録: ${prev_rule})。"
         echo "     INET を設定して ./lab-mode.sh prov rule shared で揃えてください。"
       else
         state_set rule shared
@@ -260,18 +270,28 @@ case "${1:-status}" in
     # ラボにこれが無かったため、長らく本番に無い「手書き BMR」経路だけを検証していた。
     need INET "INET-SIM"
     case "${2:-status}" in
-      on|https)
-        echo "[lab-mode] ルール配布サーバを起動します (TXT は HTTPS を案内)..."
-        rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh https" \
+      on|https|http)
+        scheme="https"; [ "$2" = "http" ] && scheme="http"
+        echo "[lab-mode] ルール配布サーバを起動します (TXT は ${scheme} を案内)..."
+        # **構築はルールを共有IP テンプレートに初期化する** (setup-ruleserver.sh の仕様)。
+        # rule fixed を配った後に再構築すると、サーバは shared に戻るのに state だけ
+        # fixed のままになり status が嘘をつく (監査ラウンド5 #2)。state を追随させる。
+        prev_rule="$(state_get rule)"
+        rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh ${scheme}" \
           || die "ルール配布サーバの起動に失敗しました"
+        if [ "$prev_rule" = "fixed" ] || [ "$prev_rule" = "MISMATCH" ]; then
+          # サーバは shared に初期化されたが、BR は fixed 向けのまま = 不一致
+          state_set rule MISMATCH
+          echo
+          echo "  ⚠ **構築によりサーバのルールは共有IP テンプレートに初期化されました。**"
+          echo "     BR は直前の設定 (${prev_rule}) のままなので不一致です。"
+          echo "     揃えるには: ./lab-mode.sh prov rule shared  (または prov rule fixed)"
+        else
+          state_set rule shared
+        fi
         echo
         echo "  → CPE は 4over6.info の DNS TXT でサーバを発見します。"
         echo "     ルータ側の手順は docs/ipoe-lab/mape-provisioning.md §3"
-        ;;
-      http)
-        echo "[lab-mode] ルール配布サーバを起動します (TXT は HTTP を案内)..."
-        rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh http" \
-          || die "ルール配布サーバの起動に失敗しました"
         ;;
       off|stop)
         rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh stop" \
@@ -327,21 +347,20 @@ case "${1:-status}" in
         # **入口検査のポート集合もルールに合わせて渡す。**
         # ここがズレると、正しい CE の通信を BR が落として
         # 「原因の分からない断続失敗」になる (自分で作った罠を自分で踏む形)
+        # **不整合になり得る区間に入る前に、悲観的に MISMATCH を書く。**
+        # サーバ切替の rsh は「リモートでは適用されたのに接続断で失敗が返る」ことがあり
+        # (ラウンド5 #6)、成功後に書く方式だと die 時に state が旧値のまま嘘をつく。
+        # 偽警告側に倒す: 全部成功したら最後に確定値で上書きされる。
+        state_set rule MISMATCH
         if [ "$3" = "fixed" ]; then
           rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule fixed ${ceprefix} ${v4}" \
-            || die "ルールの差し替えに失敗しました"
+            || die "ルールの差し替えに失敗しました (status に不一致警告が出ます。再実行で解消)"
           enf="CE_PSID=${psid} CE_PSID_LEN=0 CE_PSID_OFFSET=6"     # share-ratio 1
         else
           rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule shared" \
-            || die "ルールの差し替えに失敗しました"
+            || die "ルールの差し替えに失敗しました (status に不一致警告が出ます。再実行で解消)"
           enf="CE_PSID=${psid} CE_PSID_LEN=8 CE_PSID_OFFSET=4"     # ea-len 16 → 240 ポート
         fi
-        # **サーバは切り替わったが BR はまだ**の中間状態を、先に MISMATCH として記録する。
-        # この直後の BR 張り替えが失敗して die しても、state は「不一致」という真実を指し、
-        # status が警告を出し続ける。旧値のまま die すると status が嘘をつく
-        # (監査サイクル 15 ラウンド 4: 旧値=fixed で prov rule shared が部分失敗すると
-        #  「固定IP1 相当」と表示するのにサーバは shared を配っていた)。
-        state_set rule MISMATCH
         echo "[lab-mode] BR を新しい CE アドレスに張り替えます: ${ce}"
         rsh "$VNE" "sudo CE_MAP_ADDR=${ce} CE_SHARED_V4=${v4} ${enf} ./ipoe/vne/setup-map-br.sh" \
           || die "BR の張り替えに失敗しました (サーバは ${3} に切替済み。status に不一致警告が出ます。再実行で解消)"

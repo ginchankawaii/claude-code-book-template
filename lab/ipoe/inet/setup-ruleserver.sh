@@ -129,12 +129,20 @@ case "$MODE" in
     # ラボの BR は終点を静的に持つため、切り替えたら必ず張り替えること
     # (lab-mode.sh prov rule はそこまで自動でやる)。
     [ "$(id -u)" = "0" ] || { echo "root で実行してください (sudo)" >&2; exit 1; }
-    # **サーバ未構築なら差し替えるものが無い。**正常終了する (何も配っていないので
-    # desync も起きない)。ここで失敗扱いにすると、prov を一度も使っていない構成で
-    # lab-mode.sh mape が毎回「不一致」と偽警告を出す (監査サイクル 15 ラウンド 4)。
+    # **サーバ未構築のときの挙動は呼び出し文脈で違う。**
+    #   mape の reconcile (RULE_IF_BUILT=1) … 「何も配っていない = desync なし」なので
+    #     正常終了してよい。失敗扱いにすると未構築構成の mape が毎回偽警告を出す (ラウンド4)
+    #   prov rule (既定)              … 利用者は「このルールを配る」つもりで打っている。
+    #     未構築で exit 0 すると「配っているつもりで何も配っていない」嘘の成功になる
+    #     (ラウンド5 #1: BR だけ張り替わり status が固定IP と断言していた)
     if [ ! -d "${ETC}" ]; then
-      echo "[INET-SIM] プロビジョニングサーバは未構築です (差し替え不要)"
-      exit 0
+      if [ "${RULE_IF_BUILT:-0}" = "1" ]; then
+        echo "[INET-SIM] プロビジョニングサーバは未構築です (差し替え不要)"
+        exit 0
+      fi
+      echo "プロビジョニングサーバが未構築です。先に構築してください:" >&2
+      echo "  sudo $0 https   (または http)" >&2
+      exit 1
     fi
     case "${2:-}" in
       shared) SRC="${SRC_DIR}/ruleserver-response-jp01.json" ;;
