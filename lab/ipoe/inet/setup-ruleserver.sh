@@ -129,6 +129,13 @@ case "$MODE" in
     # ラボの BR は終点を静的に持つため、切り替えたら必ず張り替えること
     # (lab-mode.sh prov rule はそこまで自動でやる)。
     [ "$(id -u)" = "0" ] || { echo "root で実行してください (sudo)" >&2; exit 1; }
+    # **サーバ未構築なら差し替えるものが無い。**正常終了する (何も配っていないので
+    # desync も起きない)。ここで失敗扱いにすると、prov を一度も使っていない構成で
+    # lab-mode.sh mape が毎回「不一致」と偽警告を出す (監査サイクル 15 ラウンド 4)。
+    if [ ! -d "${ETC}" ]; then
+      echo "[INET-SIM] プロビジョニングサーバは未構築です (差し替え不要)"
+      exit 0
+    fi
     case "${2:-}" in
       shared) SRC="${SRC_DIR}/ruleserver-response-jp01.json" ;;
       fixed)  SRC="${SRC_DIR}/ruleserver-response-jp01-fixed.json" ;;
@@ -188,6 +195,13 @@ print("    ipv6Prefix=%s/%s  ipv4Prefix=%s/%s"
 print("    eaBitLength=%s psIdOffset=%s  → End-user プレフィックス /%d"
       % (r["eaBitLength"], r["psIdOffset"], eup))
 PY
+    # **JSON は差し替えたが、サーバプロセスが止まっていたら何も配られない。**
+    # exit 0 のまま黙っていると「state=shared なのに実際は何も配っていない」という
+    # 読み戻しでしか気づけない状態になる (監査サイクル 15 ラウンド 4 の指摘)。
+    if ! systemctl is-active --quiet mape-ruleserver 2>/dev/null; then
+      echo "  ⚠ **mape-ruleserver サービスが起動していません。**JSON は差し替えましたが"
+      echo "     何も配られていません。起動するには: sudo $0 https (または http)"
+    fi
     echo "  サーバの再起動は不要です (要求のたびに読み直します)"
     echo "  **CPE が取り直すまで最大 8 分かかります。**すぐ試すならルータ側で:"
     echo "      delete /force bootflash:/mape/mape-rule.json"
