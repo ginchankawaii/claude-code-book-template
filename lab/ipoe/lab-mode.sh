@@ -248,27 +248,35 @@ case "${1:-status}" in
         # 委譲プレフィックス × ルール で決まる CE の MAP アドレス (draft-03 の並び)。
         # 値の出どころは lab/ipoe/ce/hb46pp-client.py の計算 (--selftest で照合できる)。
         #
-        # **前半は委譲された /64 ではない。**ルールから決まる End-user プレフィックス
-        # (ルールの /40 + EA長) で、そこから下は 0 で埋まる。
-        #   shared (ea 16) → /56 … 委譲 /64 と偶然一致する
-        #   fixed  (ea  8) → /48 … **4 番目のブロックが 0 になる**
+        # **MAP アドレスの前半は End-user プレフィックス** (ルールの ipv6PrefixLength
+        # + eaBitLength)。**委譲された /64 ではない。**
+        # 固定IP のルールは委譲プレフィックスと同じ長さ (/64 or /56) を名指しするので、
+        # End-user プレフィックス = 委譲プレフィックスになり、両者は一致する。
+        # 共有IP のルールは /40 + 16 = /56 で、RA の /64 とは偶然一致しているだけ。
         # ここを取り違えて BR を張ると、CE は送っているのに戻りが 0 になる
         # (サイクル 13 で実際に踏んだ)。
         if [ "$(state_get v6mode)" = "ra" ]; then
-          v4="198.51.100.20"
+          v4="198.51.100.20"; ceprefix="2001:db8:1014:300::/64"
           case "$3" in
             shared) ce="2001:db8:1014:300:c6:3364:1400:300" ;;
-            fixed)  ce="2001:db8:1014:0:c6:3364:1400:0" ;;
+            fixed)  ce="2001:db8:1014:300:c6:3364:1400:0" ;;
           esac
         else
-          v4="198.51.100.10"
+          v4="198.51.100.10"; ceprefix="2001:db8:100a:500::/56"
           case "$3" in
             shared) ce="2001:db8:100a:500:c6:3364:a00:500" ;;
-            fixed)  ce="2001:db8:100a:0:c6:3364:a00:0" ;;
+            fixed)  ce="2001:db8:100a:500:c6:3364:a00:0" ;;
           esac
         fi
-        rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule ${3}" \
-          || die "ルールの差し替えに失敗しました"
+        # 固定IP は「その顧客の委譲プレフィックスと IPv4」を名指しするルールなので、
+        # モードに応じた値を渡す (共有IP のルールは CE に依存しないので渡さない)
+        if [ "$3" = "fixed" ]; then
+          rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule fixed ${ceprefix} ${v4}" \
+            || die "ルールの差し替えに失敗しました"
+        else
+          rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule shared" \
+            || die "ルールの差し替えに失敗しました"
+        fi
         echo "[lab-mode] BR を新しい CE アドレスに張り替えます: ${ce}"
         rsh "$VNE" "sudo CE_MAP_ADDR=${ce} CE_SHARED_V4=${v4} ./ipoe/vne/setup-map-br.sh" \
           || die "BR の張り替えに失敗しました"

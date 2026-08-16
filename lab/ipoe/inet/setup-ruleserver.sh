@@ -134,18 +134,33 @@ case "$MODE" in
       fixed)  SRC="${SRC_DIR}/ruleserver-response-jp01-fixed.json" ;;
       *) echo "rule のあとは shared / fixed です" >&2; exit 1 ;;
     esac
-    python3 - "$SRC" "${ETC}/response-jp01.json" <<'PY'
+    # 固定IP のルールは **その顧客のプレフィックスと IPv4 を名指しする**ので、
+    # CE ごとに違う。第 3 引数で委譲プレフィックスと IPv4 を差し替えられるようにする。
+    #   例) setup-ruleserver.sh rule fixed 2001:db8:100a:500::/56 198.51.100.10
+    python3 - "$SRC" "${ETC}/response-jp01.json" "${3:-}" "${4:-}" <<'PY'
 import json, sys
-src, dst = sys.argv[1], sys.argv[2]
+src, dst, prefix, v4 = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 with open(src, encoding="utf-8") as f:
     doc = json.load(f)
 clean = {k: v for k, v in doc.items() if not k.startswith("_comment")}
+r = clean["basicMapRules"][0]
+if prefix:
+    net, _, plen = prefix.partition("/")
+    r["ipv6Prefix"], r["ipv6PrefixLength"] = net, plen or r["ipv6PrefixLength"]
+if v4:
+    r["ipv4Prefix"] = v4
 with open(dst, "w", encoding="utf-8") as f:
     json.dump(clean, f, indent=2, ensure_ascii=False)
     f.write("\n")
-r = clean["basicMapRules"][0]
-print("[INET-SIM] jp01 のルールを差し替えました: eaBitLength=%s psIdOffset=%s"
-      % (r["eaBitLength"], r["psIdOffset"]))
+# **End-user プレフィックス長は網が配る長さと一致していないといけない。**
+# 食い違うと CPE は網に存在しないアドレスから送信し、戻りが来なくなる
+eup = int(r["ipv6PrefixLength"]) + int(r["eaBitLength"])
+print("[INET-SIM] jp01 のルールを差し替えました")
+print("    ipv6Prefix=%s/%s  ipv4Prefix=%s/%s"
+      % (r["ipv6Prefix"], r["ipv6PrefixLength"],
+         r["ipv4Prefix"], r["ipv4PrefixLength"]))
+print("    eaBitLength=%s psIdOffset=%s  → End-user プレフィックス /%d"
+      % (r["eaBitLength"], r["psIdOffset"], eup))
 PY
     echo "  サーバの再起動は不要です (要求のたびに読み直します)"
     echo "  **CPE が取り直すまで最大 8 分かかります。**すぐ試すならルータ側で:"

@@ -1,36 +1,41 @@
 {
   "_comment_1": "jp01 形式・**固定IP1 相当** (share-ratio 1 = IPv4 を他人と共有しない)。",
   "_comment_2": [
-    "共有版 (ruleserver-response-jp01.json) との違いは eaBitLength だけ。",
-    "  16 → IPv4サフィックス 8 + PSID 8  = 共有。256 分割・240 ポート",
-    "   8 → IPv4サフィックス 8 + PSID 0  = 専有。分割なし・全ポート",
-    "IPv4 アドレスは **どちらも同じ 198.51.100.20** になる (EA の上位 8 ビットが同じため)。",
-    "変わるのは『ポートを何人で分けるか』だけ。共有IPと固定IPの違いが、",
-    "**サーバが返す数字ひとつ**で決まることを見せるための教材でもある。"
+    "**EA ビットを使わない。**顧客の IPv4 をそのまま /32 で配る。",
+    "  ipv4Prefix 198.51.100.20/32 + eaBitLength 0  → 分割なし・全ポート",
+    "共有版 (ruleserver-response-jp01.json) は逆に、/24 の帯を配って",
+    "EA ビットで『何番を使うか』を CPE に計算させる。"
   ],
   "_comment_3": [
-    "**注意: CE の MAP アドレスが変わる。** PSID がアドレスに埋まっているため。",
-    "  共有 (PSID 3) → 2001:db8:1014:300:c6:3364:1400:300",
-    "  固定 (PSID 0) → 2001:db8:1014:300:c6:3364:1400:0",
-    "ラボの BR は終点を静的に持つので、切り替えたら必ず張り替えること。",
-    "`lab-mode.sh prov rule fixed` はそこまで自動でやる。"
+    "**ipv6Prefix は CPE に降りている委譲プレフィックスと同じ長さにすること。**",
+    "MAP アドレスの前半は End-user プレフィックス (ipv6PrefixLength + eaBitLength) で決まる。",
+    "ここが網の配る長さと食い違うと、**CPE は網に存在しないアドレスから送信し、",
+    "戻りが一切来なくなる** (サイクル 13 で実際に踏んだ)。",
+    "  誤: ipv6Prefix /40 + eaBitLength 8 → End-user /48 → 2001:db8:1014:0:...   (網に無い)",
+    "  正: ipv6Prefix /64 + eaBitLength 0 → End-user /64 → 2001:db8:1014:300:... (網と一致)"
   ],
   "_comment_4": [
-    "**この設定は実機で未検証** (2026-08-15 時点)。導出値は参照実装で確認済みだが、",
-    "C1111-8P が share-ratio 1 のルールをどう解釈するかは未確認。",
-    "Cisco のドキュメントには『share ratio が 1 のときは port-offset-bits を 6、",
-    "start-port を 1024 に自動設定する』とあるので、psIdOffset の扱いが変わる可能性がある。",
-    "郡山の案件が固定IP1 なので、**次のサイクルで実機確認すること。**"
+    "**この値は RA 方式 (委譲 2001:db8:1014:300::/64) 専用。**",
+    "固定IP のルールは『その顧客のプレフィックスと IPv4』を名指しするので、",
+    "本質的に CE ごとに違う。実サービスでもそうなっている。",
+    "PD 方式で使うときは setup-ruleserver.sh rule fixed <委譲プレフィックス> で差し替える",
+    "(lab-mode.sh prov rule fixed はモードを見て自動で渡す)。"
+  ],
+  "_comment_5": [
+    "実機 C1111-8P (17.09.05f) の挙動:",
+    "  Share-ratio 1 / Contiguous-ports 1024 / Start-port 1024 / Port-offset-bits 6",
+    "  → 63 レンジ x 1024 = 64512 ポート (ウェルノウンポートだけ除外)",
+    "psIdOffset に 0 を配っても、ルータが 6 に上書きする (Cisco のドキュメントどおり)。"
   ],
 
   "basicMapRules": [
     {
       "brIpv6Address": "2001:db8:9999::1",
-      "ipv6Prefix": "2001:db8:1000::",
-      "ipv6PrefixLength": "40",
-      "ipv4Prefix": "198.51.100.0",
-      "ipv4PrefixLength": "24",
-      "eaBitLength": "8",
+      "ipv6Prefix": "2001:db8:1014:300::",
+      "ipv6PrefixLength": "64",
+      "ipv4Prefix": "198.51.100.20",
+      "ipv4PrefixLength": "32",
+      "eaBitLength": "0",
       "psIdOffset": "0"
     }
   ]
