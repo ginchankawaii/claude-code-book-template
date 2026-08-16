@@ -262,13 +262,21 @@ SELFTEST_RULE = {
     "rules": [{"ipv6": "2001:db8:1000::/40", "ipv4": "198.51.100.0/24",
                "ea_length": 16, "psid_offset": 4}],
 }
-# 固定IP1 相当 (share-ratio 1)。期待値は **実機 C1111-8P の実測**:
-#   Share-ratio 1 / Contiguous-ports 1024 / Start-port 1024 / Port-offset-bits 6
-#   → 63 レンジ x 1024 = 64512 ポート (ウェルノウンポートだけ除外)
+# 固定IP1 相当 (share-ratio 1)。**実機 C1111-8P で実際に通ったルールそのもの。**
+#   ルールは顧客の IPv4 を /32 で名指しし、EA ビットを使わない。
+#   ipv6Prefix は委譲プレフィックスと同じ /64 にする (End-user プレフィックス = /64 = 網と一致)。
+#   実機の実測:
+#     Share-ratio 1 / Contiguous-ports 1024 / Start-port 1024 / Port-offset-bits 6
+#     → 63 レンジ x 1024 = 64512 ポート (ウェルノウンポートだけ除外)
+#     MAP アドレス (draft-03) 2001:db8:1014:300:c6:3364:1400:0 / 送信元ポート 1024+
+#
+# **注意: これ以前は /40 + ea 8 のルールで検証していたが、それは End-user /48 を作り、**
+# **網の配る /64 と食い違って black hole になった (build-log サイクル 13)。**
+# ハーネスの基準値は「実機で通った config」でなければならない。
 SELFTEST_RULE_FIXED = {
     "br": "2001:db8:9999::1",
-    "rules": [{"ipv6": "2001:db8:1000::/40", "ipv4": "198.51.100.0/24",
-               "ea_length": 8, "psid_offset": 0}],
+    "rules": [{"ipv6": "2001:db8:1014:300::/64", "ipv4": "198.51.100.20/32",
+               "ea_length": 0, "psid_offset": 0}],
 }
 SELFTEST_CASES = [
     # (説明, 委譲プレフィックス, 期待IPv4, 期待PSID, 期待MAPアドレス(RFC7597),
@@ -287,11 +295,11 @@ def selftest():
     ok = True
     cases = [(SELFTEST_RULE,) + c for c in SELFTEST_CASES] + [
         # 固定IP1 相当。**実機 C1111-8P で実測した値**と突き合わせる
-        # **End-user プレフィックスが /48 になるので RA の /64 とは食い違う。**
+        # **実機で通ったルール (/64 + ea 0)。** End-user プレフィックス = /64 = 網と一致。
         # 期待値は実機が実際に送信元にしていたアドレス (サイクル 13 の tcpdump)。
         (SELFTEST_RULE_FIXED, "固定IP1 相当 (share-ratio 1)", "2001:db8:1014:300::/64",
-         "198.51.100.20", 0, "2001:db8:1014::c633:6414:0",
-         "2001:db8:1014:0:c6:3364:1400:0", 64512),
+         "198.51.100.20", 0, "2001:db8:1014:300:0:c633:6414:0",
+         "2001:db8:1014:300:c6:3364:1400:0", 64512),
     ]
     for (rule, desc, prefix, exp_v4, exp_psid, exp_addr,
          exp_addr_d03, exp_ports) in cases:
