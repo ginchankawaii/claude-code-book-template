@@ -43,6 +43,7 @@ case "${1:-}" in
     ip -6 tunnel del map0 2>/dev/null || true
     # **入口検査も必ず消す。**残すと次の検証で「原因の分からない断続失敗」になる
     nft delete table ip map-enforce 2>/dev/null || true
+    rm -f /run/map-br.state
     echo "[VNE] MAP-E BR を停止しました (トンネル・復路・入口検査を削除)"; exit 0 ;;
 esac
 
@@ -160,6 +161,14 @@ fi
 ip -6 tunnel add map0 mode ipip6 local ${BR_ADDR} remote ${CE_MAP_ADDR} encaplimit none
 ip link set map0 up mtu 1460
 ip route replace ${CE_SHARED_V4}/32 dev map0   # 共有 IPv4 宛の復路をトンネルへ
+
+# **BR 自身が「いま何で構成されているか」を書く。**lab-mode の status はこれを
+# 実測として読む (第三者の記帳ではなく、構成した本人が成功直後に書く記録)。
+# /run は tmpfs で VM 再起動と共に消える = トンネルの実態と生存期間が一致する。
+enf_on=1; [ "${MAP_ENFORCE}" = "0" ] && enf_on=0
+printf 'psid=%s\nlen=%s\noffset=%s\nenforce=%s\nshared_v4=%s\nce=%s\n' \
+  "${CE_PSID}" "${CE_PSID_LEN}" "${CE_PSID_OFFSET}" "${enf_on}" "${CE_SHARED_V4}" "${CE_MAP_ADDR}" \
+  > /run/map-br.state
 
 echo "[VNE] MAP-E BR 起動: BR=${BR_ADDR}, CE=${CE_MAP_ADDR}, 共有IPv4=${CE_SHARED_V4}"
 echo "      CE のアドレスが異なる場合: CE_MAP_ADDR=<addr> $0 で再実行"

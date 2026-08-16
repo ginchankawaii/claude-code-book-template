@@ -115,10 +115,52 @@ detect() {
   fi
 }
 
+# ── 配布ルールの実測 ────────────────────────────────────────────────
+# **記帳 (state に書く) はしない。表示のたびに実物を読む。**
+# 記帳方式は「部分失敗で記録が実態とズレて status が嘘をつく」を監査で
+# 3 ラウンド連続 (R3〜R6) 生んだ。実測なら言えるのは 一致/不一致/確認不可 だけで、
+# 古い記録を断言する嘘が構造的に起こらない。
+#
+# server_rule: サーバが「いま配っている」ルール。配布 JSON の eaBitLength を読む
+#   (この JSON はサーバが要求のたびに読み直す実物そのもの)
+# br_rule:     BR が「いま構成されている」ルール。setup-map-br.sh が成功直後に
+#   自分で書く /run/map-br.state を読む (tmpfs なので再起動で実態ごと消える)
+server_rule() {
+  [ -n "${INET:-}" ] || { echo unknown; return; }
+  local ea
+  ea="$(rsh "$INET" "sed -n 's/.*\"eaBitLength\": \"\([0-9]*\)\".*/\1/p' /etc/mape-ruleserver/response-jp01.json 2>/dev/null" 2>/dev/null | head -1)"
+  case "$ea" in
+    16) echo shared ;;
+    0)  echo fixed ;;
+    "") echo unbuilt ;;
+    *)  echo "ea=${ea}" ;;
+  esac
+}
+br_rule() {
+  [ -n "${VNE:-}" ] || { echo unknown; return; }
+  local len
+  len="$(rsh "$VNE" "sed -n 's/^len=//p' /run/map-br.state 2>/dev/null" 2>/dev/null | head -1)"
+  case "$len" in
+    8)  echo shared ;;
+    0)  echo fixed ;;
+    "") echo none ;;
+    *)  echo "len=${len}" ;;
+  esac
+}
+rule_jp() {
+  case "$1" in
+    shared)  echo "共有IP (240 ポート)" ;;
+    fixed)   echo "固定IP1 相当 (64512 ポート)" ;;
+    unbuilt) echo "未構築" ;;
+    none)    echo "停止中/記録なし" ;;
+    unknown) echo "確認不可 (未設定)" ;;
+    *)       echo "$1" ;;
+  esac
+}
+
 banner() {
-  local v6mode ipv4mode fault v6note v4note rule
+  local v6mode ipv4mode fault v6note v4note
   v6mode="$(state_get v6mode)"; ipv4mode="$(state_get ipv4mode)"; fault="$(state_get fault)"
-  rule="$(state_get rule)"
   case "$v6mode" in
     ra) v6note="RA 方式  … ひかり電話なし相当。/64 が 1 本だけ来る" ;;
     pd) v6note="PD 方式  … ひかり電話あり相当。/56 がまとめて降りる" ;;
@@ -136,13 +178,19 @@ banner() {
   echo "----------------------------------------------------------------"
   printf "  IPv6 の配り方 : %s\n" "$v6note"
   printf "  IPv4 の運び方 : %s\n" "$v4note"
-  if [ "$ipv4mode" = "mape" ] && [ -n "$rule" ]; then
-    case "$rule" in
-      shared)   printf "  配布ルール    : 共有IP (240 ポート)\n" ;;
-      fixed)    printf "  配布ルール    : 固定IP1 相当 (64512 ポート)\n" ;;
-      MISMATCH) printf "  配布ルール    : ⚠ サーバと BR が不一致の可能性。prov rule shared|fixed で揃えてください\n" ;;
-      *)        printf "  配布ルール    : %s\n" "$rule" ;;
-    esac
+  if [ "$ipv4mode" = "mape" ]; then
+    # **実測して表示する** (記帳を読むのではなく)。理由は server_rule のコメント参照
+    local sr brr
+    sr="$(server_rule)"; brr="$(br_rule)"
+    if [ "$sr" = "$brr" ] && { [ "$sr" = "shared" ] || [ "$sr" = "fixed" ]; }; then
+      printf "  配布ルール    : %s (サーバ・BR 一致を実測)\n" "$(rule_jp "$sr")"
+    elif { [ "$sr" = "shared" ] || [ "$sr" = "fixed" ]; } && \
+         { [ "$brr" = "shared" ] || [ "$brr" = "fixed" ]; }; then
+      printf "  配布ルール    : ⚠ 不一致 (サーバ=%s / BR=%s)。prov rule で揃えてください\n" \
+        "$(rule_jp "$sr")" "$(rule_jp "$brr")"
+    else
+      printf "  配布ルール    : サーバ=%s / BR=%s\n" "$(rule_jp "$sr")" "$(rule_jp "$brr")"
+    fi
   fi
   printf "  障害の注入    : %s\n" "${fault:-なし}"
   echo "----------------------------------------------------------------"
@@ -208,50 +256,23 @@ case "${1:-status}" in
     fi
     # **mape は shared 前提で BR を張る。**もしルール配布サーバが fixed を配ったまま
     # だと、サーバ (fixed) と BR (shared) が食い違って CE が全断する (監査 I3)。
-    # **記録した rule を読んで、fixed だったらサーバも shared に戻して整合させる。**
-    # (監査サイクル 15: 以前は rule を書くだけで誰も読まない dead state だった)
-    prev_rule="$(state_get rule)"
     rsh "$VNE" "sudo ./ipoe/vne/setup-aftr.sh stop 2>/dev/null; sudo ${map_env}./ipoe/vne/setup-map-br.sh" \
       || die "MAP-E BR の起動に失敗しました"
     state_set ipv4mode mape
     echo
-    # **サーバとの整合は prev_rule で場合分けせず「毎回」取りにいく (冪等)。**
-    # 分岐で場合分けしていた間、穴が出続けた (監査サイクル 15):
-    #   ラウンド3 = 無条件 state_set が reconcile 失敗時に嘘を書く
-    #   ラウンド4 = MISMATCH が「fixed でない」側に落ちて reconcile を素通り
-    # rule shared は冪等 (既に shared でも無害)、サーバ未構築なら向こうが
-    # 「差し替え不要」で exit 0 を返すので、常に打ってよい。
-    # state は **reconcile の結果が確認できたときだけ** shared を書く。
-    # **破壊的変更は先に告知する** (ラウンド5 #3: 成功パスから告知が消えていた)。
-    # rule fixed で渡したカスタム値 (委譲プレフィックス/IPv4) はサーバ上で
-    # shared テンプレートに上書きされて失われる。
-    if [ "$prev_rule" = "fixed" ] || [ "$prev_rule" = "MISMATCH" ]; then
-      echo "  ⚠ 直前まで shared でない配布 (${prev_rule}) でした。"
-      echo "     **サーバのルールを shared テンプレートで上書きします**"
-      echo "     (prov rule fixed で渡したカスタム値は失われます)。"
-    fi
+    # **ルール状態の記帳はしない。status が表示時に実測する** (server_rule のコメント参照)。
+    # サーバとの整合は毎回冪等に取りにいく。破壊的変更の告知は「実測した現在値」に基づく
+    # (記録に基づく告知は、実行しない操作を告知する嘘を生んだ: 監査 R6 #3)。
     if [ -n "${INET:-}" ]; then
+      if [ "$(server_rule)" = "fixed" ]; then
+        echo "  ⚠ サーバは現在 固定IP ルールを配っています。"
+        echo "     **shared テンプレートで上書きします** (prov rule fixed のカスタム値は失われます)。"
+      fi
       # RULE_IF_BUILT=1: 未構築なら「差し替え不要」で正常終了してよい文脈 (冪等 reconcile)
-      if rsh "$INET" "sudo RULE_IF_BUILT=1 ./ipoe/inet/setup-ruleserver.sh rule shared"; then
-        state_set rule shared
-      else
-        state_set rule MISMATCH
-        echo "  ⚠ **ルール配布サーバを shared に揃えられませんでした。**"
-        echo "     サーバと BR の配布ルールが食い違っている可能性があります。"
-        echo "     status に警告が出続けます。解消するには: ./lab-mode.sh prov rule shared"
-      fi
+      rsh "$INET" "sudo RULE_IF_BUILT=1 ./ipoe/inet/setup-ruleserver.sh rule shared" \
+        || echo "  ⚠ サーバを shared に揃えられませんでした。下の status の実測を確認してください。"
     else
-      # INET 無しではサーバの実態を確認できない。fixed/MISMATCH の痕跡があれば
-      # 警告を維持し、無ければ shared とみなす (未構築構成での偽警告を避ける)。
-      # **これは自己申告の限界** — state ファイルを消すと痕跡ごと消える (§限界)。
-      # 文言は方向を断定しない (MISMATCH は ssh 失敗だけでも書かれるため)。
-      if [ "$prev_rule" = "fixed" ] || [ "$prev_rule" = "MISMATCH" ]; then
-        state_set rule MISMATCH
-        echo "  ⚠ INET が未設定で、サーバと揃っているか確認できません (直前の記録: ${prev_rule})。"
-        echo "     INET を設定して ./lab-mode.sh prov rule shared で揃えてください。"
-      else
-        state_set rule shared
-      fi
+      echo "  ※ INET 未設定のため、ルール配布サーバの状態は確認・変更していません。"
     fi
     echo "  ※ この経路は shared (240 ポート) 前提です。Cisco + ルール配布サーバを"
     echo "     使うなら ./lab-mode.sh prov rule を使ってください。"
@@ -274,21 +295,14 @@ case "${1:-status}" in
         scheme="https"; [ "$2" = "http" ] && scheme="http"
         echo "[lab-mode] ルール配布サーバを起動します (TXT は ${scheme} を案内)..."
         # **構築はルールを共有IP テンプレートに初期化する** (setup-ruleserver.sh の仕様)。
-        # rule fixed を配った後に再構築すると、サーバは shared に戻るのに state だけ
-        # fixed のままになり status が嘘をつく (監査ラウンド5 #2)。state を追随させる。
-        prev_rule="$(state_get rule)"
+        # 直前に fixed を配っていたかどうかの記帳・追随はしない —
+        # status が配布 JSON と BR マーカーを実測して一致/不一致を表示する
+        # (部分失敗しても実測なので嘘にならない。監査 R5 #2 / R6 #1 の解)。
         rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh ${scheme}" \
-          || die "ルール配布サーバの起動に失敗しました"
-        if [ "$prev_rule" = "fixed" ] || [ "$prev_rule" = "MISMATCH" ]; then
-          # サーバは shared に初期化されたが、BR は fixed 向けのまま = 不一致
-          state_set rule MISMATCH
-          echo
-          echo "  ⚠ **構築によりサーバのルールは共有IP テンプレートに初期化されました。**"
-          echo "     BR は直前の設定 (${prev_rule}) のままなので不一致です。"
-          echo "     揃えるには: ./lab-mode.sh prov rule shared  (または prov rule fixed)"
-        else
-          state_set rule shared
-        fi
+          || die "ルール配布サーバの起動に失敗しました (status の実測で現状を確認できます)"
+        echo
+        echo "  ※ 構築によりルールは **共有IP テンプレートに初期化**されています。"
+        echo "     固定IP を配っていた場合は ./lab-mode.sh prov rule fixed で入れ直してください。"
         echo
         echo "  → CPE は 4over6.info の DNS TXT でサーバを発見します。"
         echo "     ルータ側の手順は docs/ipoe-lab/mape-provisioning.md §3"
@@ -347,25 +361,25 @@ case "${1:-status}" in
         # **入口検査のポート集合もルールに合わせて渡す。**
         # ここがズレると、正しい CE の通信を BR が落として
         # 「原因の分からない断続失敗」になる (自分で作った罠を自分で踏む形)
-        # **不整合になり得る区間に入る前に、悲観的に MISMATCH を書く。**
-        # サーバ切替の rsh は「リモートでは適用されたのに接続断で失敗が返る」ことがあり
-        # (ラウンド5 #6)、成功後に書く方式だと die 時に state が旧値のまま嘘をつく。
-        # 偽警告側に倒す: 全部成功したら最後に確定値で上書きされる。
-        state_set rule MISMATCH
+        # **ルール状態の記帳はしない** — 部分失敗しても status が配布 JSON と
+        # BR マーカーを実測して一致/不一致を表示する (監査 R3〜R6 の教訓)。
+        # die の文言も「再実行で解消」とは約束しない — 原因がサーバ未構築なら
+        # 再実行しても直らない (R6 #4)。実測 status に誘導する。
         if [ "$3" = "fixed" ]; then
           rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule fixed ${ceprefix} ${v4}" \
-            || die "ルールの差し替えに失敗しました (status に不一致警告が出ます。再実行で解消)"
+            || die "ルールの差し替えに失敗しました (上のエラーが原因。./lab-mode.sh status で実態を確認)"
           enf="CE_PSID=${psid} CE_PSID_LEN=0 CE_PSID_OFFSET=6"     # share-ratio 1
         else
           rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule shared" \
-            || die "ルールの差し替えに失敗しました (status に不一致警告が出ます。再実行で解消)"
+            || die "ルールの差し替えに失敗しました (上のエラーが原因。./lab-mode.sh status で実態を確認)"
           enf="CE_PSID=${psid} CE_PSID_LEN=8 CE_PSID_OFFSET=4"     # ea-len 16 → 240 ポート
         fi
         echo "[lab-mode] BR を新しい CE アドレスに張り替えます: ${ce}"
-        rsh "$VNE" "sudo CE_MAP_ADDR=${ce} CE_SHARED_V4=${v4} ${enf} ./ipoe/vne/setup-map-br.sh" \
-          || die "BR の張り替えに失敗しました (サーバは ${3} に切替済み。status に不一致警告が出ます。再実行で解消)"
-        # サーバも BR も ${3} になった。ここで確定値を書く
-        state_set rule "$3"
+        # **prov rule は MAP-E 前提の経路。**mape と同じく AFTR を止め、モードも揃える。
+        # 止めないと dslite 中に打ったとき AFTR と MAP BR が同居して経路が汚れる (R6 #5)
+        rsh "$VNE" "sudo ./ipoe/vne/setup-aftr.sh stop 2>/dev/null; sudo CE_MAP_ADDR=${ce} CE_SHARED_V4=${v4} ${enf} ./ipoe/vne/setup-map-br.sh" \
+          || die "BR の張り替えに失敗しました (サーバは ${3} に切替済みの可能性。./lab-mode.sh status で実態を確認)"
+        state_set ipv4mode mape
         echo
         case "$3" in
           shared) echo "  → 共有IP (256 分割 / 240 ポート) を配ります" ;;
