@@ -174,18 +174,22 @@ def derive(map_e, ce_prefix):
         start = (j << (16 - a)) | (psid << m)
         ranges.append((start, start + (1 << m) - 1))
 
-    # MAP CE アドレス。**実装によって 2 種類あるので両方出す。**
+    # MAP CE アドレスの前半は **End-user IPv6 プレフィックス**。
     #
-    #   RFC 7597 5.2 : インタフェース ID = 0000:<IPv4>:<PSID>
-    #   draft-03     : 1 バイト右にずれた並び (0x00 <IPv4> <PSID> 0x00)
+    # **委譲された /64 ではない。**ルールから決まる「ルールのプレフィックス長 + EA長」で、
+    # そこから下は 0 で埋める (RFC 7597 5.2)。
     #
-    # Cisco IOS XE を `version draft-ietf-softwire-map-03` で動かすと **後者**を使う。
-    # 実測 (C1111-8P 17.09.05f、サイクル 11):
-    #   RFC 7597 なら 2001:db8:1014:300:0:c633:6414:3
-    #   実機が付けたのは 2001:db8:1014:300:c6:3364:1400:300
-    # **ラボの BR はトンネル終点を静的に持つので、ここを間違えると IPv4 が全断する。**
-    # CE を繋いだら必ず実機の `show ipv6 interface brief` で確認すること。
-    ce64 = int(ce.network_address) >> 64 << 64
+    #   共有IP (ea 16): /40 + 16 = /56 → 2001:db8:1014:300:: (RA の /64 と偶然一致する)
+    #   固定IP (ea  8): /40 +  8 = /48 → 2001:db8:1014::     (RA の /64 と食い違う)
+    #
+    # **ここを委譲プレフィックスで計算すると、共有IPでは当たるが固定IPで外す。**
+    # サイクル 13 で実際に踏んだ: BR を 2001:db8:1014:300:c6:3364:1400:0 に向けたが、
+    # 実機は 2001:db8:1014:0:c6:3364:1400:0 から送っていて IPv4 が全断した。
+    eup_len = r6.prefixlen + k
+    if eup_len > 64:
+        die("End-user プレフィックスが /%d になり、インタフェース ID と重なります"
+            % eup_len)
+    ce64 = int(ce.network_address) >> (128 - eup_len) << (128 - eup_len)
     iid_rfc = (int(ipv4) << 16) | psid
     iid_d03 = ((int(ipv4) << 16) | psid) << 8
     map_addr = ipaddress.IPv6Address(ce64 | iid_rfc)
@@ -283,9 +287,11 @@ def selftest():
     ok = True
     cases = [(SELFTEST_RULE,) + c for c in SELFTEST_CASES] + [
         # 固定IP1 相当。**実機 C1111-8P で実測した値**と突き合わせる
+        # **End-user プレフィックスが /48 になるので RA の /64 とは食い違う。**
+        # 期待値は実機が実際に送信元にしていたアドレス (サイクル 13 の tcpdump)。
         (SELFTEST_RULE_FIXED, "固定IP1 相当 (share-ratio 1)", "2001:db8:1014:300::/64",
-         "198.51.100.20", 0, "2001:db8:1014:300:0:c633:6414:0",
-         "2001:db8:1014:300:c6:3364:1400:0", 64512),
+         "198.51.100.20", 0, "2001:db8:1014::c633:6414:0",
+         "2001:db8:1014:0:c6:3364:1400:0", 64512),
     ]
     for (rule, desc, prefix, exp_v4, exp_psid, exp_addr,
          exp_addr_d03, exp_ports) in cases:

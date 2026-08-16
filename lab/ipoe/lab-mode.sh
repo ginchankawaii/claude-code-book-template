@@ -247,17 +247,24 @@ case "${1:-status}" in
           die "prov rule のあとは shared / fixed です" ;; esac
         # 委譲プレフィックス × ルール で決まる CE の MAP アドレス (draft-03 の並び)。
         # 値の出どころは lab/ipoe/ce/hb46pp-client.py の計算 (--selftest で照合できる)。
+        #
+        # **前半は委譲された /64 ではない。**ルールから決まる End-user プレフィックス
+        # (ルールの /40 + EA長) で、そこから下は 0 で埋まる。
+        #   shared (ea 16) → /56 … 委譲 /64 と偶然一致する
+        #   fixed  (ea  8) → /48 … **4 番目のブロックが 0 になる**
+        # ここを取り違えて BR を張ると、CE は送っているのに戻りが 0 になる
+        # (サイクル 13 で実際に踏んだ)。
         if [ "$(state_get v6mode)" = "ra" ]; then
           v4="198.51.100.20"
           case "$3" in
             shared) ce="2001:db8:1014:300:c6:3364:1400:300" ;;
-            fixed)  ce="2001:db8:1014:300:c6:3364:1400:0" ;;
+            fixed)  ce="2001:db8:1014:0:c6:3364:1400:0" ;;
           esac
         else
           v4="198.51.100.10"
           case "$3" in
             shared) ce="2001:db8:100a:500:c6:3364:a00:500" ;;
-            fixed)  ce="2001:db8:100a:500:c6:3364:a00:0" ;;
+            fixed)  ce="2001:db8:100a:0:c6:3364:a00:0" ;;
           esac
         fi
         rsh "$INET" "sudo ./ipoe/inet/setup-ruleserver.sh rule ${3}" \
