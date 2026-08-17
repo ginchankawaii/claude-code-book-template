@@ -360,6 +360,7 @@ def test_lock_taken_over_when_predecessor_is_dead(tmp_path, monkeypatch):
 def test_lock_refused_while_holder_is_live(tmp_path, monkeypatch):
     import socket
     monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
+    monkeypatch.setattr(R, "LOCK_REFUSE_PAUSE_S", 0)
     monkeypatch.setattr(R, "_holder_is_alive", lambda pid, host: True)
     _write_lock(tmp_path, 4242, 600, socket.gethostname(), age_s=30)
     with pytest.raises(SystemExit) as e:
@@ -371,9 +372,10 @@ def test_lock_taken_over_from_unknowable_holder_after_one_missed_heartbeat(tmp_p
     # Another container's PIDs are invisible: fall back to age, but only one
     # missed heartbeat + slack (poll+120), not 3x poll.
     monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
-    _write_lock(tmp_path, 4242, 600, "other-container", age_s=300)
-    with pytest.raises(SystemExit):
-        R._acquire_brain_lock(600)
+    monkeypatch.setattr(R, "LOCK_REFUSE_PAUSE_S", 0)
+    monkeypatch.setattr(R, "LOCK_WATCH_TICK_S", 0.01)
+    monkeypatch.setattr(R._time, "sleep", lambda s: None)
+    # already past the staleness window (poll+120) -> adopted immediately
     _write_lock(tmp_path, 4242, 600, "other-container", age_s=800)
     assert R._acquire_brain_lock(600) is not None
 
@@ -389,3 +391,35 @@ def test_lock_released_on_graceful_stop(tmp_path, monkeypatch):
     _write_lock(tmp_path, os.getpid() + 1, 600, "other")
     R._release_lock(tmp_path / "steady_brain.lock")
     assert (tmp_path / "steady_brain.lock").exists()
+
+
+def test_legacy_format_lock_is_adopted(tmp_path, monkeypatch):
+    # Pre-upgrade locks have no host field; treating them as "unknowable" left
+    # the operator crash-looping for 12 minutes after upgrading.
+    monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
+    (tmp_path / "steady_brain.lock").write_text("1 1786947797 600\n")   # old format
+    assert R._acquire_brain_lock(600) is not None
+
+
+def test_unknowable_holder_is_watched_not_crash_looped(tmp_path, monkeypatch):
+    # A holder in another PID namespace: wait and watch its heartbeat instead
+    # of exiting immediately (which produced the restart storm). Never patch
+    # time.time globally here — it hangs pytest.
+    monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
+    monkeypatch.setattr(R, "LOCK_WATCH_TICK_S", 0.01)
+    monkeypatch.setattr(R, "LOCK_REFUSE_PAUSE_S", 0)
+    lock = _write_lock(tmp_path, 4242, 1, "other-container", age_s=100)  # poll=1 -> ~21s window
+    monkeypatch.setattr(R._time, "sleep", lambda s: None)
+    assert R._acquire_brain_lock(1) is not None          # never refreshed -> ours
+
+    lock = _write_lock(tmp_path, 4242, 1, "other-container", age_s=100)
+    ticks = {"n": 0}
+
+    def touch_then_sleep(_s):
+        ticks["n"] += 1
+        if ticks["n"] == 1:
+            lock.touch()                                 # holder heartbeat
+    monkeypatch.setattr(R._time, "sleep", touch_then_sleep)
+    with pytest.raises(SystemExit) as e:
+        R._acquire_brain_lock(1)
+    assert e.value.code == 2

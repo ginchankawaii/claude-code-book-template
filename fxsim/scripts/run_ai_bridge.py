@@ -144,6 +144,12 @@ def _load_bars(instrument: str, granularity: str, sma_n: int, history_csv: str):
 # a 0.007-lot intent into a heartbeat-less, fail-safe-less limbo.
 FLAT_EPS = 0.01
 
+# How often to re-check an unknowable lock holder's heartbeat while waiting.
+LOCK_WATCH_TICK_S = 15.0
+# Pause before exiting on a genuine double-brain, so the supervisor's restart
+# loop does not hammer the log every second.
+LOCK_REFUSE_PAUSE_S = 30.0
+
 
 def _lock_line(poll: int) -> str:
     return f"{os.getpid()} {int(_time.time())} {int(poll)} {socket.gethostname()}\n"
@@ -201,11 +207,40 @@ def _acquire_brain_lock(poll: int) -> Optional[Path]:
             elif age >= stale_after:
                 print(f"[ai] stale brain lock ({age:.0f}s old > {stale_after:.0f}s) — "
                       f"taking over", flush=True)
-            else:
+            elif alive is True:
                 print(f"[ai] FATAL: another brain is LIVE on {lock} (heartbeat {age:.0f}s "
-                      f"ago, pid {pid}@{host or '?'}, poll {holder_poll}s). Two writers on "
-                      f"one bridge liquidate each other — refusing to start.", flush=True)
+                      f"ago, pid {pid}@{host}, poll {holder_poll}s). Two writers on one "
+                      f"bridge liquidate each other — refusing to start.", flush=True)
+                _time.sleep(LOCK_REFUSE_PAUSE_S)    # damp the supervisor restart loop
                 raise SystemExit(2)
+            elif not host:
+                # Pre-upgrade lock format (no host field). Such a lock can only
+                # have been written by the code we just replaced, i.e. by a
+                # predecessor that has since exited — adopting it beats another
+                # crash loop, which is what stranded the operator twice.
+                print(f"[ai] legacy brain lock (no host field, {age:.0f}s old) — assuming "
+                      f"it belongs to the replaced predecessor; taking over", flush=True)
+            else:
+                # Unknowable holder (another container's PID namespace). Do NOT
+                # exit into a restart loop: WAIT and watch the heartbeat. A live
+                # brain touches the lock every poll; a dead one never will.
+                wait_s = stale_after - age
+                print(f"[ai] lock held by {pid}@{host}, liveness unknowable — watching its "
+                      f"heartbeat for up to {wait_s:.0f}s instead of crash-looping",
+                      flush=True)
+                mtime0 = lock.stat().st_mtime
+                deadline = _time.time() + wait_s
+                while _time.time() < deadline:
+                    _time.sleep(min(LOCK_WATCH_TICK_S, max(1.0, deadline - _time.time())))
+                    try:
+                        if lock.stat().st_mtime > mtime0:
+                            print(f"[ai] FATAL: holder {pid}@{host} refreshed its heartbeat "
+                                  f"— it is LIVE. Refusing to start.", flush=True)
+                            _time.sleep(LOCK_REFUSE_PAUSE_S)
+                            raise SystemExit(2)
+                    except FileNotFoundError:
+                        break                      # holder released it: ours
+                print(f"[ai] holder {pid}@{host} never refreshed — taking over", flush=True)
         _touch_lock(lock, poll)
         _arm_lock_release(lock)
         return lock
