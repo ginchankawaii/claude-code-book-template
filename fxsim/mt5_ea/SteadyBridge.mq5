@@ -11,7 +11,8 @@
 //|     steady_bars.csv    (EA -> Python)  time,open,high,low,close |
 //|     steady_status.csv  (EA -> Python)  balance,equity,pos_lots  |
 //|     steady_signal.txt  (Python -> EA)                          |
-//|       "LONG <lots> [EXP <unix>]" | "FLAT 0 [EXP <unix>]"        |
+//|       "LONG <lots> [SEQ <n>] [EXP <unix>] [SL <price>]"          |
+//|       | "FLAT 0 [SEQ <n>] [EXP <unix>]"                          |
 //+------------------------------------------------------------------+
 #property strict
 #include <Trade/Trade.mqh>
@@ -30,10 +31,48 @@ input double InpResizePct     = 0.20;    // ... or >= this fraction of current s
 CTrade trade;
 datetime g_expiry = 0;   // last EXP token seen on the signal (0 = heartbeat-less)
 
+//--- execution-sequence gate (round-5, CRITICAL) --------------------
+//  steady_signal.txt is a STANDING target that this EA re-executes on
+//  every timer tick, with no memory of having acted. Round-4 added a
+//  real broker SL that closes the position server-side — so the moment
+//  the stop filled, the still-standing "LONG <lots>" line made the very
+//  next tick (<=30s) re-buy the same size: no decision, no trend check,
+//  and — its stop now being at/through the market — NO stop. The same
+//  hole silently undid the operator's own manual closes within 30s.
+//
+//  Rule: the EA may ALWAYS reduce or close (the safe direction), but may
+//  only OPEN or INCREASE when the brain issues a NEW order, i.e. when the
+//  SEQ token changes. Heartbeats repeat SEQ, so they only maintain the
+//  broker stop and the expiry — they can never re-open a closed position.
+//  The executed SEQ is persisted in a terminal GlobalVariable so a restart
+//  of MT5 does not re-open a position that was closed while it was down.
+long   g_exec_seq  = 0;    // last SEQ we opened/increased on
+string g_exec_key  = "";   // same, for unsequenced (manual/legacy) signals
+bool   g_held_flat = false;// warned once about holding flat on a heartbeat
+
+string SeqGvName() { return "SteadyBridge_seq_" + InpSymbol + "_" + (string)InpMagic; }
+
+//  A new order is one we have not executed. SEQ is authoritative; an
+//  unsequenced signal (hand-written file, pre-round-5 brain) falls back to
+//  the line content with the ever-changing EXP token removed.
+bool IsNewOrder(long seq, string key)
+{
+   if(seq > 0) return seq != g_exec_seq;
+   return key != g_exec_key;
+}
+
+void CommitExec(long seq, string key)
+{
+   g_exec_key = key;
+   if(seq > 0) { g_exec_seq = seq; GlobalVariableSet(SeqGvName(), (double)seq); }
+}
+
 int OnInit()
 {
    trade.SetExpertMagicNumber(InpMagic);
    trade.SetDeviationInPoints(20);
+   if(GlobalVariableCheck(SeqGvName()))
+      g_exec_seq = (long)GlobalVariableGet(SeqGvName());
    EventSetTimer(InpTimerSec);
    ExportAll();
    ProcessSignal();
@@ -202,9 +241,11 @@ void ApplyStopLoss(double sl_px, double cur)
 }
 
 //--- read + act on the Python signal -------------------------------
-//  signal: "LONG <lots>" | "SHORT <lots>" | "FLAT 0"  [+ " EXP <unix-utc>"]
-//  Tracks the AI's target size: opens, flips, and RESIZES an open position
+//  signal: "LONG <lots>" | "FLAT 0"  [+ " SEQ <n>" " EXP <unix>" " SL <px>"]
+//  Tracks the brain's target size: opens, flips, and RESIZES an open position
 //  (add / partial-close) toward the target, with a deadband to avoid churn.
+//  Opening and increasing require a NEW order (changed SEQ); reducing and
+//  closing are always permitted. See the round-5 note on the sequence gate.
 void ProcessSignal()
 {
    if(!FileIsExist(InpSignalFile, FILE_COMMON)) return;
@@ -237,11 +278,17 @@ void ProcessSignal()
    //                    the stop price instead of the next poll's close.
    long   expiry = 0;
    double sl_px  = 0.0;
+   long   seq    = 0;
    for(int i = 2; i + 1 < k; i += 2)
    {
-      if(parts[i] == "EXP")     expiry = StringToInteger(parts[i + 1]);
-      else if(parts[i] == "SL") sl_px  = StringToDouble(parts[i + 1]);
+      if(parts[i] == "EXP")      expiry = StringToInteger(parts[i + 1]);
+      else if(parts[i] == "SL")  sl_px  = StringToDouble(parts[i + 1]);
+      else if(parts[i] == "SEQ") seq    = StringToInteger(parts[i + 1]);
    }
+   // Order identity for the open/increase gate: everything that defines the
+   // order, with the per-heartbeat EXP deliberately excluded.
+   string order_key = action + " " + DoubleToString(lots_raw, 3) + " SL "
+                    + DoubleToString(sl_px, 5);
    g_expiry = (datetime)expiry;                // chart status (UpdateStatusComment)
    if(expiry > 0 && (long)TimeGMT() > expiry)
    {
@@ -266,18 +313,34 @@ void ProcessSignal()
    double cur = CurrentLots();                // signed: + long / - short
    ApplyStopLoss(sl_px, cur);
 
-   // 1) FLAT -> close everything
+   // 1) FLAT -> close everything. Closing is the safe direction and is never
+   //    gated: an expired or flat signal must always be able to flatten.
    if(target == 0.0) { if(MathAbs(cur) > 0) CloseAll(); return; }
    // 2) opposite sign -> flip: close now, reopen on next tick
    if(cur != 0.0 && (cur > 0) != (target > 0)) { CloseAll(); return; }
-   // 3) flat -> open fresh in the target direction (longs carry the brain's
-   //    protective stop as a REAL broker SL when the signal provides one)
+   // 3) flat -> open, but ONLY on a new order. A repeated SEQ means the brain
+   //    is heartbeating an order it already placed; if the book is empty the
+   //    position was closed by the broker stop, the EXP fail-safe or the
+   //    operator, and re-buying it here would undo exactly that (round-5).
    if(cur == 0.0)
    {
-      if(target > 0) trade.Buy(MathAbs(target), InpSymbol, 0.0, ValidLongSL(sl_px), 0.0);
-      else           trade.Sell(MathAbs(target), InpSymbol);
+      if(target <= 0) return;                   // long-or-flat: never sell
+      if(!IsNewOrder(seq, order_key))
+      {
+         if(!g_held_flat)
+            Print("SteadyBridge: flat, but this signal is a HEARTBEAT of order ",
+                  seq, " which was already executed -> NOT re-opening. The "
+                  "position was closed by the stop, the fail-safe or you; the "
+                  "brain must decide again before any new entry.");
+         g_held_flat = true;
+         return;
+      }
+      g_held_flat = false;
+      if(trade.Buy(MathAbs(target), InpSymbol, 0.0, ValidLongSL(sl_px), 0.0))
+         CommitExec(seq, order_key);
       return;
    }
+   g_held_flat = false;
    // 4) same direction -> resize toward target if outside the deadband.
    //    A dust book (below the deadband floor itself) must always converge:
    //    the round-4 audit wedged the state at 0.004 lots forever otherwise.
@@ -288,12 +351,24 @@ void ProcessSignal()
    if(MathAbs(diff) < band) return;           // close enough -> hold (no churn)
    if(diff > 0)
    {
+      // Increasing is the risk-adding direction, so it needs a new order too:
+      // a partial external close (partial stop fill, manual trim) must not be
+      // silently refilled by a heartbeat. The brain re-decides instead.
+      if(!IsNewOrder(seq, order_key))
+      {
+         Print("SteadyBridge: book ", DoubleToString(cur_abs, 2), " is under target ",
+               DoubleToString(tgt_abs, 2), " but this signal is a HEARTBEAT of order ",
+               seq, " -> not adding. Part of the position was closed outside the "
+               "brain; it will reconcile and decide.");
+         return;
+      }
       double add = NormalizeLots(diff);
-      if(add > 0) { if(target > 0) trade.Buy(add, InpSymbol); else trade.Sell(add, InpSymbol); }
+      if(add > 0 && target > 0 && trade.Buy(add, InpSymbol))
+         CommitExec(seq, order_key);
    }
    else
    {
-      ReduceBy(NormalizeLots(-diff));          // trim toward target
+      ReduceBy(NormalizeLots(-diff));          // trim toward target: always allowed
    }
 }
 //+------------------------------------------------------------------+

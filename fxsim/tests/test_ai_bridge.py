@@ -42,8 +42,8 @@ def wired(monkeypatch):
     monkeypatch.setattr(bridge, "read_status",
                         lambda *a, **k: {"balance": 500000.0, "equity": 500000.0, "position_lots": 0.0})
     monkeypatch.setattr(bridge, "write_signal",
-                        lambda action, lots, base=None, expires_at=None, sl=None:
-                            written.append((action, round(lots, 2))))
+                        lambda action, lots, base=None, expires_at=None, sl=None,
+                        seq=None: written.append((action, round(lots, 2))))
     # the bundled test candles are historical: disable the live freshness and
     # single-bar-jump guards (daily bars legitimately move >3%)
     monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
@@ -434,3 +434,133 @@ def test_unknowable_holder_is_waited_out_not_crash_looped(tmp_path, monkeypatch)
 
     assert R._acquire_brain_lock(1) is not None          # waited, then acquired
     assert ticks["n"] == 4                               # 3 beats survived, 4th lapsed
+
+
+# ---- round-5: order identity (SEQ), the fix for the re-buying EA ------------
+#
+# steady_signal.txt is a STANDING target the EA re-executes every 30s with no
+# memory. Once round-4 gave the broker a real SL, every stop-out was re-bought
+# within 30s from the still-standing LONG line — no decision, no stop. SEQ is
+# what lets the EA tell "the brain ordered this" from "the brain is repeating
+# itself", so these tests pin the property the EA's gate depends on.
+
+def _seq_run(monkeypatch, window, dec, seq, position_lots=None):
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: window)
+    if position_lots is not None:
+        monkeypatch.setattr(bridge, "read_status",
+                            lambda *a, **k: {"balance": 500000.0, "equity": 500000.0,
+                                             "position_lots": position_lots})
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0, ai_authority="entry")
+    return R.decide_once(cfg, "USD_JPY", 0.04, 5.0, str(DATA_DIR / "USD_JPY_D.csv"),
+                         _Trader(dec), dry=False, trigger="test", granularity="D",
+                         sma_n=90, seq=seq, prev_stop=150.0)
+
+
+def test_hold_reuses_the_standing_order_seq(wired, monkeypatch):
+    # THE property the EA's re-open gate rests on: a hold is not a new order.
+    # If a hold minted a new SEQ, the EA would treat the heartbeat as a fresh
+    # entry and re-buy a position the broker stop had just closed.
+    res = _seq_run(monkeypatch, _UP, _Dec(True, "long", 0.9), seq=1234, position_lots=0.5)
+    assert res["action"] == "LONG" and not res["fresh"]
+    assert res["seq"] == 1234
+
+
+def test_fresh_entry_mints_a_new_seq(wired, monkeypatch):
+    res = _seq_run(monkeypatch, _UP, _Dec(True, "long", 0.9), seq=1234, position_lots=0.0)
+    assert res["fresh"] and res["seq"] > 1234
+
+
+def test_flat_mints_a_new_seq(wired, monkeypatch):
+    res = _seq_run(monkeypatch, _DOWN, _Dec(True, "long", 0.9), seq=1234, position_lots=0.5)
+    assert res["action"] == "FLAT" and res["seq"] > 1234
+
+
+def test_seq_is_monotonic_across_restarts():
+    # A counter that restarted at 1 would read to the EA as a brand-new order.
+    import time as _t
+    assert R._next_seq(0) >= int(_t.time())
+    huge = int(_t.time()) + 10_000          # a seq minted by a future restart
+    assert R._next_seq(huge) == huge + 1    # never goes backwards
+    assert R._next_seq(R._next_seq(5)) > R._next_seq(5) - 1
+
+
+def test_signal_seq_round_trips_through_the_bridge(tmp_path):
+    bridge.write_signal("LONG", 0.17, base=tmp_path, expires_at=1786947797,
+                        sl=158.25, seq=999)
+    line = (tmp_path / bridge.SIGNAL_FILE).read_text().strip()
+    assert line == "LONG 0.17 SEQ 999 EXP 1786947797 SL 158.250"
+    got = bridge.read_signal(base=tmp_path)
+    assert got == {"action": "LONG", "lots": 0.17, "seq": 999,
+                   "expires_at": 1786947797, "sl": 158.25}
+    # a signal with no optional tokens still parses, and an absent file is None
+    bridge.write_signal("FLAT", 0.0, base=tmp_path)
+    assert bridge.read_signal(base=tmp_path)["seq"] is None
+    assert bridge.read_signal(base=tmp_path / "nope") is None
+
+
+# ---- round-5: reconciliation of a book that shrank -------------------------
+
+def test_position_shrink_is_adopted_not_refilled():
+    # A partial external close (partial stop fill, manual trim) must not be
+    # re-bought by the heartbeat: intent_lots only ever adopted UPWARD before.
+    intent, intent_lots, pos = "LONG", 1.20, 0.40
+    if intent == "LONG" and pos >= R.FLAT_EPS:
+        if pos < intent_lots - R.FLAT_EPS:
+            intent_lots = pos
+    assert intent_lots == 0.40
+
+
+# ---- round-5: lock verdicts (liveness before age) --------------------------
+
+def test_live_holder_is_never_evicted_by_age(tmp_path, monkeypatch):
+    # Age is a fallback for holders we cannot SEE. Applying it to a holder we
+    # can see evicted a provably-running brain after one missed heartbeat —
+    # e.g. one errored tick — recreating the double-brain the lock prevents.
+    import socket
+    lock = _write_lock(tmp_path, 4242, 600, socket.gethostname(), age_s=99999)
+    monkeypatch.setattr(R, "_holder_is_alive", lambda pid, host: True)
+    verdict, msg = R._lock_verdict(lock, 600)
+    assert verdict == "wait" and "LIVE" in msg
+
+
+def test_unreadable_lock_is_waited_on_not_adopted(tmp_path):
+    # A torn read used to be adopted as a free lock, pre-empting a live brain.
+    lock = tmp_path / "steady_brain.lock"
+    lock.write_text("")
+    assert R._lock_verdict(lock, 600)[0] == "wait"
+    lock.write_text("garbage not a pid\n")
+    assert R._lock_verdict(lock, 600)[0] == "wait"
+
+
+def test_legacy_lock_with_a_live_local_pid_is_not_stolen(tmp_path, monkeypatch):
+    # Legacy locks carry no host, but they were only ever written from inside
+    # this container — so the pid IS checkable, and must be checked.
+    import scripts.run_ai_bridge as _R
+    lock = tmp_path / "steady_brain.lock"
+    lock.write_text("4242 1786947797 600\n")
+    monkeypatch.setattr(_R, "_holder_is_alive",
+                        lambda pid, host: True if host else None)
+    assert _R._lock_verdict(lock, 600)[0] == "wait"
+    monkeypatch.setattr(_R, "_holder_is_alive", lambda pid, host: None)
+    assert _R._lock_verdict(lock, 600)[0] == "take"
+
+
+def test_lock_is_not_released_by_a_foreign_host_with_the_same_pid(tmp_path):
+    # Every containerised brain is PID 1: a pid-only ownership check made any
+    # brain delete any other brain's lock on shutdown.
+    import os
+    lock = tmp_path / "steady_brain.lock"
+    lock.write_text(f"{os.getpid()} 1786947797 600 some-other-container\n")
+    R._release_lock(lock)
+    assert lock.exists()                       # not ours: left alone
+    lock.write_text(R._lock_line(600))         # ours: pid AND host match
+    R._release_lock(lock)
+    assert not lock.exists()
+
+
+def test_lock_heartbeat_is_atomic(tmp_path):
+    # An in-place rewrite gave readers a torn line; tmp+rename cannot.
+    lock = tmp_path / "steady_brain.lock"
+    R._touch_lock(lock, 600)
+    assert R._lock_verdict(lock, 600)[0] in ("take", "wait")   # parses cleanly
+    assert not list(tmp_path.glob("*.tmp"))                    # no debris left

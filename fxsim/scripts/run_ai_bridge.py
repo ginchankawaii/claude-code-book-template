@@ -188,31 +188,48 @@ def _lock_verdict(lock: Path, poll: int) -> tuple[str, str]:
         age = _time.time() - lock.stat().st_mtime
     except FileNotFoundError:
         return "take", "lock released by its holder"
-    pid, holder_poll, host = 0, poll, ""
+    pid, holder_poll, host, parsed = 0, poll, "", False
     try:
         parts = lock.read_text().split()
         if len(parts) >= 1:
             pid = int(parts[0])
+            parsed = True
         if len(parts) >= 3:
             holder_poll = max(1, int(float(parts[2])))
         if len(parts) >= 4:
             host = parts[3]
     except Exception:
-        pass
+        parsed = False
+    if not parsed:
+        # Unreadable/torn/garbage lock. Adopting it unconditionally let a torn
+        # read pre-empt a LIVE incumbent (round-5). Wait one tick instead: a
+        # torn read heals on the next write, a truly corrupt lock ages out.
+        return "wait", f"brain lock is unreadable ({age:.0f}s old) — re-reading"
+    # LIVENESS BEFORE AGE. The age fallback exists only for holders we cannot
+    # see; applying it to a holder we CAN see evicts a brain that is provably
+    # running the moment it misses one heartbeat (round-5: a single slow tick
+    # or an errored tick was enough), which is the double-brain the lock exists
+    # to prevent.
     alive = _holder_is_alive(pid, host)
-    stale_after = holder_poll + 120                # one missed heartbeat + slack
     if alive is False:
         return "take", f"previous brain (pid {pid}) is gone — taking over its lock"
-    if age >= stale_after:
-        return "take", (f"brain lock is stale ({age:.0f}s old > {stale_after:.0f}s) — "
-                        f"taking over")
-    if not host:
-        # Pre-upgrade lock format (no host field). Only the code we just
-        # replaced writes those, i.e. a predecessor that has since exited.
-        return "take", f"legacy brain lock (no host field, {age:.0f}s old) — taking over"
     if alive is True:
-        return "wait", (f"another brain is LIVE (pid {pid}@{host}, heartbeat {age:.0f}s "
-                        f"ago) — standing by until it stops")
+        return "wait", (f"another brain is LIVE (pid {pid}@{host}) — standing by until "
+                        f"it stops")
+    stale_after = holder_poll + 120                # one missed heartbeat + slack
+    if age >= stale_after:
+        return "take", (f"brain lock is stale ({age:.0f}s old > {stale_after:.0f}s) and "
+                        f"its holder is unreachable — taking over")
+    if not host:
+        # Pre-upgrade lock format (no host field). Those were only ever written
+        # from inside this container, so the PID is meaningful here even though
+        # the lock does not say so — check it before adopting, rather than
+        # assuming the writer has exited (round-5: that assumption evicted a
+        # live incumbent still running the previous release).
+        if _holder_is_alive(pid, socket.gethostname()) is True:
+            return "wait", (f"legacy brain lock whose pid {pid} is LIVE here — standing "
+                            f"by until it stops")
+        return "take", f"legacy brain lock (no host field, {age:.0f}s old) — taking over"
     return "wait", (f"lock held by {pid}@{host}, liveness unknowable — standing by until "
                     f"its heartbeat lapses (~{stale_after - age:.0f}s)")
 
@@ -250,11 +267,18 @@ def _acquire_brain_lock(poll: int) -> Optional[Path]:
 
 
 def _release_lock(lock: Optional[Path]) -> None:
-    """Drop the lock if we still own it, so a successor starts immediately."""
+    """Drop the lock if we still own it, so a successor starts immediately.
+
+    Ownership is (pid, host), never pid alone: every containerised brain is
+    PID 1, so a pid-only check made any brain delete any other brain's lock on
+    shutdown — handing the bridge to a second writer (round-5)."""
     if lock is None:
         return
     try:
-        if lock.exists() and int(lock.read_text().split()[0]) == os.getpid():
+        parts = lock.read_text().split()
+        mine = int(parts[0]) == os.getpid()
+        same_host = len(parts) < 4 or parts[3] == socket.gethostname()
+        if mine and same_host:
             lock.unlink()
     except Exception:
         pass
@@ -272,11 +296,16 @@ def _arm_lock_release(lock: Path) -> None:
 
 
 def _touch_lock(lock: Optional[Path], poll: int) -> None:
-    if lock is not None:
-        try:
-            lock.write_text(_lock_line(poll))
-        except Exception:
-            pass
+    """Heartbeat the lock. Atomic tmp+rename: an in-place rewrite gave readers
+    a torn line, and a torn line used to be adopted as a free lock."""
+    if lock is None:
+        return
+    try:
+        tmp = lock.with_name(lock.name + f".{os.getpid()}.tmp")
+        tmp.write_text(_lock_line(poll))
+        os.replace(tmp, lock)
+    except Exception:
+        pass
 
 
 def _trend_gate(instrument: str, granularity: str, sma_n: int,
@@ -369,13 +398,25 @@ def build_context(instrument: str, candles, status: dict, granularity: str = "D"
     }
 
 
+def _next_seq(prev: int) -> int:
+    """Mint an order id for the bridge's SEQ token.
+
+    Wall-clock seconds, so it keeps increasing across brain restarts — a
+    counter that restarted at 1 would read to the EA as a brand-new order and
+    re-open a position closed while the brain was down. The +1 keeps it
+    strictly increasing if two orders land inside the same second."""
+    return max(int(prev) + 1, int(_time.time()))
+
+
 def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float,
                 history_csv: str, trader: AITrader, dry: bool, trigger: str,
                 granularity: str = "D", sma_n: int = 90,
-                prev_stop: Optional[float] = None) -> Optional[dict]:
-    """One full decision. Returns {"action","lots","stop","fresh"} or None if the
-    bridge wasn't ready. "stop" is the protective stop the resident loop must
-    enforce (new on fresh entries, carried on holds, None when flat)."""
+                prev_stop: Optional[float] = None, seq: int = 0) -> Optional[dict]:
+    """One full decision. Returns {"action","lots","stop","fresh","seq"} or None
+    if the bridge wasn't ready. "stop" is the protective stop the resident loop
+    must enforce (new on fresh entries, carried on holds, None when flat).
+    "seq" is the bridge order id: a HOLD re-asserts the standing order's id so
+    the EA does not treat it as a new entry, anything else mints a fresh one."""
     status = bridge.read_status()
     if status is None or (status.get("equity") or 0) <= 0:
         print("[ai] waiting for EA status (balance/equity). Is SteadyBridge attached & synced?",
@@ -522,12 +563,18 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
         print(f"      - {f}", flush=True)
     if plan:
         print(f"      ↳ 保有方針: {plan}", flush=True)
+    # A HOLD re-asserts the order the EA already executed, so it MUST carry the
+    # same SEQ: minting a new one would license the EA to open a position that
+    # the broker stop had just closed. Everything else is a new order.
+    out_seq = int(seq) if (action == "LONG" and not fresh and seq) else _next_seq(seq)
     if dry:
         print("[ai][DRY] signal NOT written", flush=True)
     else:
-        bridge.write_signal(action, lots, sl=stop_price if action == "LONG" else None)
-        print(f"[ai] wrote signal: {action} {lots:.2f}", flush=True)
-    return {"action": action, "lots": lots, "stop": stop_price, "fresh": fresh}
+        bridge.write_signal(action, lots, sl=stop_price if action == "LONG" else None,
+                            seq=out_seq)
+        print(f"[ai] wrote signal: {action} {lots:.2f} (seq {out_seq})", flush=True)
+    return {"action": action, "lots": lots, "stop": stop_price, "fresh": fresh,
+            "seq": out_seq}
 
 
 def main() -> None:
@@ -575,22 +622,17 @@ def main() -> None:
         except Exception:
             pass
         _, prev_stop, _ = _restore_state(args.granularity)
+        live = bridge.read_signal()
         decide_once(cfg, args.instrument, args.max_risk, args.max_lots, args.history,
                     trader, args.dry, trigger="manual",
-                    granularity=args.granularity, sma_n=args.sma, prev_stop=prev_stop)
+                    granularity=args.granularity, sma_n=args.sma, prev_stop=prev_stop,
+                    seq=int((live or {}).get("seq") or 0))
         return
 
     print(f"[ai] resident. model={trader.model} max_risk={args.max_risk} "
           f"daily_gap={args.daily_gap_h}h event_window={args.event_window_min}m "
           f"poll={args.poll}s gate_cd={args.gate_cooldown_min}m veto_ttl={args.veto_ttl_h}h "
           f"signal_ttl={args.signal_ttl_min}m", flush=True)
-    # intent = the brain's last ordered state; the loop's job is to make the
-    # book converge to it and never to silently re-adopt a diverging book.
-    intent, stop_price, last_decision = _restore_state(args.granularity)
-    intent_lots = 0.0
-    if intent:
-        stop_txt = f" stop {stop_price:.3f}" if stop_price else ""
-        print(f"[ai] restored state: intent {intent}{stop_txt}", flush=True)
     last_gate = 0.0
     veto_until = 0.0
     acted_events: set[str] = set()
@@ -611,6 +653,47 @@ def main() -> None:
             print(f"[ai] stop-exit DB record failed: {exc}", flush=True)
 
     brain_lock = _acquire_brain_lock(args.poll)
+    # STATE IS READ ONLY AFTER THE LOCK IS OURS. _acquire_brain_lock blocks for
+    # as long as an incumbent keeps trading, and the incumbent mutates exactly
+    # this state — reading it first meant taking over with a snapshot minutes
+    # old and then acting on it with no decision: liquidating a position the
+    # incumbent had opened, or republishing a superseded stop as the live
+    # broker SL (round-5, critical).
+    #
+    # intent = the brain's last ordered state; the loop's job is to make the
+    # book converge to it and never to silently re-adopt a diverging book.
+    intent, stop_price, last_decision = _restore_state(args.granularity)
+    intent_lots = 0.0
+    # SEQ identifies the order standing on the bridge. It must be REUSED by the
+    # heartbeat and only re-minted by a fresh decision, so recover the live
+    # order's SEQ from the bridge instead of minting one: a restart that minted
+    # a new SEQ would read to the EA as a brand-new order and re-open a
+    # position that had been stopped out while this brain was down.
+    order_seq = 0
+    live = bridge.read_signal()
+    if live and live.get("action") == "LONG" and live.get("seq"):
+        order_seq = int(live["seq"])
+    seen_long = False        # a LONG intent whose fill we actually observed
+    if intent:
+        stop_txt = f" stop {stop_price:.3f}" if stop_price else ""
+        seq_txt = f" seq {order_seq}" if order_seq else ""
+        print(f"[ai] restored state: intent {intent}{stop_txt}{seq_txt}", flush=True)
+    if intent == "LONG" and not order_seq:
+        # The DB says LONG but the bridge carries no order id (a pre-round-5
+        # signal, or none at all), so we cannot say WHICH order that intent
+        # refers to — and an unidentifiable LONG heartbeat is precisely what
+        # licenses the EA to re-open. Settle it against the book, once, now.
+        book = float((bridge.read_status() or {}).get("position_lots") or 0.0)
+        if book >= FLAT_EPS:
+            intent_lots, seen_long = book, True
+            order_seq = _next_seq(0)
+            print(f"[ai] adopting the live book of {book:.2f} lots as order "
+                  f"{order_seq}", flush=True)
+        else:
+            print("[ai] restored intent LONG but the book is empty and the bridge "
+                  "carries no order id — adopting FLAT; re-entry goes through a "
+                  "fresh gate decision", flush=True)
+            intent, intent_lots, stop_price = "FLAT", 0.0, None
     last_probe_ok = _time.time()
     # While LONG and blind (no trusted probe) beyond this grace, the heartbeat
     # is withheld so the EA's EXP fail-safe can flatten the book (Round-4: the
@@ -620,7 +703,6 @@ def main() -> None:
     blind_grace_s = max(3 * args.poll, 60)
     entry_attempts = 0
     entry_backoff_until = 0.0
-    seen_long = False        # a LONG intent whose fill we actually observed
 
     while True:
         try:
@@ -644,6 +726,15 @@ def main() -> None:
                     # reads to the EA as close-everything — Round-4 chaos (c))
                 if intent == "LONG" and pos >= FLAT_EPS:
                     seen_long = True              # the order was really filled
+                    if pos < intent_lots - FLAT_EPS:
+                        # SHRANK without this brain ordering it (partial stop
+                        # fill, manual trim, margin close). Adopt the smaller
+                        # book: keeping the old target made the heartbeat
+                        # re-buy the part that was just closed (round-5).
+                        print(f"[ai] book SHRANK externally {intent_lots:.2f} -> "
+                              f"{pos:.2f} lots — adopting the smaller size instead of "
+                              f"re-buying the difference", flush=True)
+                        intent_lots = pos
 
                 # RECONCILIATION (final fuzz, critical): if a position we SAW
                 # open is now gone without this brain ordering it (broker SL
@@ -670,6 +761,7 @@ def main() -> None:
                         print(f"[ai] external-close DB record failed: {exc}", flush=True)
                     intent, intent_lots, stop_price = "FLAT", 0.0, None
                     seen_long = False
+                    order_seq = _next_seq(order_seq)   # the standing order is void
                     last_gate = _time.time()      # cooldown before any re-entry
 
                 # Round-4 chaos (d): a restored stop IMPLAUSIBLY far above the
@@ -697,7 +789,8 @@ def main() -> None:
                         print(f"[ai][DRY] STOP hit ({price:.3f} <= {stop_price:.3f}); "
                               f"FLAT NOT written", flush=True)
                     else:
-                        bridge.write_signal("FLAT", 0.0)
+                        order_seq = _next_seq(order_seq)
+                        bridge.write_signal("FLAT", 0.0, seq=order_seq)
                         print(f"[ai] STOP hit: last {price:.3f} <= stop {stop_price:.3f} "
                               f"-> FLAT (gate may re-enter if trend holds)", flush=True)
                         record_stop_exit(price, stop_price, pos, now)
@@ -737,8 +830,9 @@ def main() -> None:
                 res = decide_once(cfg, args.instrument, args.max_risk, args.max_lots,
                                   args.history, trader, args.dry, trigger,
                                   granularity=args.granularity, sma_n=args.sma,
-                                  prev_stop=stop_price)
+                                  prev_stop=stop_price, seq=order_seq)
                 if res is not None:
+                    order_seq = res["seq"]
                     intent = res["action"]
                     intent_lots = res["lots"] if res["action"] == "LONG" else 0.0
                     stop_price = res["stop"]
@@ -786,10 +880,17 @@ def main() -> None:
                 ttl = int(args.signal_ttl_min * 60)
                 bridge.write_signal(intent, intent_lots if intent == "LONG" else 0.0,
                                     expires_at=(int(_time.time()) + ttl) if ttl > 0 else None,
-                                    sl=stop_price if intent == "LONG" else None)
-            _touch_lock(brain_lock, args.poll)
+                                    sl=stop_price if intent == "LONG" else None,
+                                    seq=order_seq)
         except Exception as exc:
             print(f"[ai] loop error: {exc}", flush=True)
+        finally:
+            # LIVENESS, not success: a tick that raised still proves this
+            # process is alive and still owns the bridge. Heartbeating only on
+            # success let a recurring error age the lock out from under a
+            # running brain, inviting the second writer the lock exists to
+            # prevent (round-5).
+            _touch_lock(brain_lock, args.poll)
         _time.sleep(args.poll)
 
 

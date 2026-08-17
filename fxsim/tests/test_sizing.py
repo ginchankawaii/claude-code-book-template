@@ -84,3 +84,35 @@ def test_engine_dyn_leverage_respects_hard_cap():
     eng.step(df, Signal(1, 0.6, "long"))
     price = df.iloc[-1]["close"]
     assert abs(eng.state.position.units) * price <= 5.0 * eng.balance * 1.001
+
+
+def test_live_sizing_never_exceeds_the_leverage_cap():
+    # The live path ROUNDED to the lot step after applying the cap, pushing the
+    # order back over it by up to half a step on every entry — notional the
+    # backtest (which truncates) never carried. Property-check the invariant
+    # across the whole plausible balance/price/ATR grid.
+    from app.ai_trader import size_lots, UNITS_PER_LOT
+    cap = 5.0
+    worst = 0.0
+    for balance in (100_000, 300_000, 500_000, 1_000_000, 2_750_000):
+        for price in (99.5, 128.37, 147.0, 159.944, 183.21):
+            for atr in (0.4, 0.85, 1.37, 2.9):
+                for conv in (0.2, 0.6, 0.85, 1.0):
+                    lots = size_lots("long", conv, balance, atr, 0.01, 0.04, 5.0,
+                                     price=price, max_leverage=cap)
+                    lev = lots * UNITS_PER_LOT * price / balance
+                    assert lev <= cap + 1e-9, (
+                        f"{lev:.4f}x > {cap}x at balance={balance} price={price} "
+                        f"atr={atr} conviction={conv} lots={lots}")
+                    worst = max(worst, lev)
+    assert worst > 4.0, "grid never actually reached the cap — test is vacuous"
+
+
+def test_sizing_truncates_to_the_lot_step_without_float_drift():
+    from app.ai_trader import size_lots
+    # The leverage cap binds at exactly 5.8*500k/(100*100k) = 0.29 lots, and
+    # 0.29/0.01 = 28.999999999999996 in binary: a bare floor would silently
+    # drop a whole lot step here.
+    lots = size_lots("long", 1.0, 500_000, 0.1, 0.01, 0.04, 5.0,
+                     price=100.0, max_leverage=5.8)
+    assert abs(lots - 0.29) < 1e-9, lots

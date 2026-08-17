@@ -56,14 +56,20 @@ def read_status(base: Optional[Path] = None) -> Optional[dict]:
 
 
 def write_signal(action: str, lots: float, base: Optional[Path] = None,
-                 expires_at: Optional[int] = None, sl: Optional[float] = None) -> Path:
+                 expires_at: Optional[int] = None, sl: Optional[float] = None,
+                 seq: Optional[int] = None) -> Path:
     """Atomically publish the target order ("LONG 0.10" | "FLAT 0").
 
     Atomic tmp+rename so the EA can never read a half-written line (a torn
     read parsed as lots=0 would flatten a healthy position).
 
-    Optional suffix tokens (older EAs only parse the first two, so both are
+    Optional suffix tokens (older EAs only parse the first two, so all are
     backward-compatible):
+      " SEQ <n>"         — order identity. The signal file is a STANDING target
+        that the EA re-executes every tick, so without this a heartbeat is
+        indistinguishable from a new order and the EA re-buys a position that
+        the broker stop just closed (round-5, critical). A sequence-aware EA
+        may always reduce or close, but only opens/increases when SEQ changes.
       " EXP <unix-utc>"  — a heartbeat-aware EA treats an expired order as
         FLAT: the fail-safe for a dead (or blind — round-4) Python brain.
       " SL <price>"      — an SL-aware EA mirrors the brain's protective stop
@@ -75,6 +81,8 @@ def write_signal(action: str, lots: float, base: Optional[Path] = None,
     d.mkdir(parents=True, exist_ok=True)
     path = d / SIGNAL_FILE
     line = f"{action.upper()} {lots:.2f}"
+    if seq:
+        line += f" SEQ {int(seq)}"
     if expires_at:
         line += f" EXP {int(expires_at)}"
     if sl and sl > 0:
@@ -83,3 +91,38 @@ def write_signal(action: str, lots: float, base: Optional[Path] = None,
     tmp.write_text(line + "\n")
     os.replace(tmp, path)
     return path
+
+
+def read_signal(base: Optional[Path] = None) -> Optional[dict]:
+    """Parse the order currently standing on the bridge, or None.
+
+    The brain reads this back on startup: the live order's SEQ must be REUSED
+    by the heartbeat, never re-minted. A restart that minted a fresh SEQ would
+    look to the EA like a brand-new order and re-open a position that had been
+    stopped out while the brain was down.
+    """
+    path = (base or common_files_dir()) / SIGNAL_FILE
+    try:
+        parts = path.read_text().split()
+    except (OSError, ValueError):
+        return None
+    if not parts:
+        return None
+    out: dict = {"action": parts[0].upper(), "lots": 0.0,
+                 "seq": None, "expires_at": None, "sl": None}
+    try:
+        out["lots"] = float(parts[1]) if len(parts) >= 2 else 0.0
+    except ValueError:
+        return None
+    for i in range(2, len(parts) - 1, 2):
+        key, raw = parts[i].upper(), parts[i + 1]
+        try:
+            if key == "SEQ":
+                out["seq"] = int(raw)
+            elif key == "EXP":
+                out["expires_at"] = int(raw)
+            elif key == "SL":
+                out["sl"] = float(raw)
+        except ValueError:
+            continue
+    return out

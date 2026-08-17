@@ -198,32 +198,59 @@ class AnthropicCalendar:
         "\"previous\": <str or \"\">}}."
     )
 
-    # Do not re-fetch while the cached calendar is younger than this. A paid
+    # Do not re-fetch while the last ATTEMPT is younger than this. A paid
     # web-search call per process start let a container restart storm burn 810
-    # calls (~8.6M tokens) in two days — the cache-age gate caps the worst case
-    # at ~2 calls/day no matter how often the process restarts.
+    # calls (~8.6M tokens) in two days — this gate caps the worst case at ~2
+    # calls/day no matter how often the process restarts.
     MAX_AGE_H = 12.0
 
     def __init__(self, model: str | None = None) -> None:
         self.model = model or settings.decision_model
 
-    def fetch(self, currencies: set[str]) -> EconomicCalendar:
+    def _attempt_stamp(self) -> Path:
+        return CALENDAR_FILE.with_name(CALENDAR_FILE.name + ".attempt")
+
+    def _too_soon(self) -> bool:
+        """Rate-limit on the last ATTEMPT, not the last success.
+
+        Gating on the cached file's mtime only closed the gate when a fetch
+        SUCCEEDED and parsed. A refresh that failed — expired key, network
+        block, an unparseable reply — left the cache old, so every restart paid
+        for another web search: exactly the storm this gate was added to stop.
+        """
+        now = datetime.now(timezone.utc).timestamp()
+        for p in (self._attempt_stamp(), CALENDAR_FILE):
+            try:
+                if p.exists() and (now - p.stat().st_mtime) / 3600.0 < self.MAX_AGE_H:
+                    age_h = (now - p.stat().st_mtime) / 3600.0
+                    print(f"[cal] last calendar {'attempt' if p is not CALENDAR_FILE else 'refresh'}"
+                          f" was {age_h:.1f}h ago (<{self.MAX_AGE_H:.0f}h) — skipping the paid"
+                          f" refresh", flush=True)
+                    return True
+            except OSError:
+                continue
+        return False
+
+    def _mark_attempt(self) -> None:
         try:
-            if CALENDAR_FILE.exists():
-                age_h = (datetime.now(timezone.utc).timestamp()
-                         - CALENDAR_FILE.stat().st_mtime) / 3600.0
-                if age_h < self.MAX_AGE_H:
-                    print(f"[cal] cached calendar is {age_h:.1f}h old (<{self.MAX_AGE_H:.0f}h)"
-                          f" — skipping the paid refresh", flush=True)
-                    return _load_file()
-        except Exception:
+            self._attempt_stamp().parent.mkdir(parents=True, exist_ok=True)
+            self._attempt_stamp().write_text(
+                datetime.now(timezone.utc).isoformat() + "\n")
+        except OSError:
             pass
+
+    def fetch(self, currencies: set[str]) -> EconomicCalendar:
+        if self._too_soon():
+            return _load_file()
         try:
             import anthropic
         except ImportError:
             return _load_file()
         if not settings.anthropic_api_key:
             return _load_file()
+        # Stamp BEFORE the call: a crash, timeout or kill mid-request must still
+        # count as an attempt, or a restart loop bills for every restart.
+        self._mark_attempt()
         try:
             client = anthropic.Anthropic(api_key=settings.anthropic_api_key,
                                          timeout=120.0, max_retries=1)

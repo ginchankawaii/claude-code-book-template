@@ -15,6 +15,7 @@ Falls back to FLAT (stand aside) on any API/parse error — never crashes the lo
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from typing import Optional
 
@@ -155,5 +156,11 @@ def size_lots(action: str, conviction: float, balance: float, atr: float, pip: f
     lots = min(units / UNITS_PER_LOT, max_lots)
     if max_leverage > 0 and price > 0:
         lots = min(lots, max_leverage * balance / (price * UNITS_PER_LOT))
-    lots = round(lots / min_lot) * min_lot
+    # TRUNCATE to the lot step, never round. Rounding to nearest pushed the
+    # order back OVER the leverage cap that was just applied — up to half a lot
+    # step of unauthorised notional on every entry, which the backtest (which
+    # truncates) never paid for. The epsilon is for binary representation:
+    # 0.29/0.01 = 28.999999999999996 would otherwise lose a whole step.
+    lots = math.floor(lots / min_lot + 1e-9) * min_lot
+    lots = round(lots, 8)
     return lots if lots >= min_lot else 0.0

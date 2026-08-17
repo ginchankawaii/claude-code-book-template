@@ -79,3 +79,35 @@ def test_anthropic_calendar_skips_paid_refresh_when_cache_is_fresh(tmp_path, mon
 
     cal = E.AnthropicCalendar().fetch({"USD", "JPY"})
     assert any(e.title == "CPI" for e in cal.events)
+
+
+def test_paid_refresh_is_gated_on_the_ATTEMPT_not_the_success(tmp_path, monkeypatch):
+    # The original gate only closed when a fetch SUCCEEDED and parsed. A
+    # failing refresh (expired key, blocked network, unparseable reply) left
+    # the cache old, so every container restart paid for another web search —
+    # the exact storm the gate was added to stop (810 calls / ~8.6M tokens).
+    from app import events as E
+    cal_file = tmp_path / "calendar.json"
+    monkeypatch.setattr(E, "CALENDAR_FILE", cal_file)
+    monkeypatch.setattr(E.settings, "anthropic_api_key", "sk-test", raising=False)
+
+    calls = {"n": 0}
+
+    class _Boom:
+        def __init__(self, *a, **k): pass
+        @property
+        def messages(self): return self
+        def create(self, **k):
+            calls["n"] += 1
+            raise RuntimeError("API error / expired key")
+
+    import sys, types
+    fake = types.ModuleType("anthropic")
+    fake.Anthropic = _Boom
+    monkeypatch.setitem(sys.modules, "anthropic", fake)
+
+    cal = E.AnthropicCalendar(model="m")
+    for _ in range(20):                       # 20 restarts in a row
+        cal.fetch({"USD", "JPY"})
+    assert calls["n"] == 1, f"a failing refresh billed {calls['n']} times, not 1"
+    assert not cal_file.exists()              # nothing was ever cached
