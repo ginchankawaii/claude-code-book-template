@@ -99,6 +99,13 @@ ip -6 route replace 2001:db8:1000::/40 via ${CORE_NGN}
 modprobe ip6_tunnel
 ip -6 tunnel del map0 2>/dev/null || true          # (1) 転送を先に落とす
 nft delete table ip map-enforce 2>/dev/null || true
+# **マーカーも同時に消す。**これは「BR がいまどう構成されているか」の実測値として
+# lab-mode の status が読む。map0 を消した瞬間に古いマーカーが残っていると、
+# この後で die したとき **BR は存在しないのに status が「固定IP1 相当」と表示する**
+# (実測設計の目的が破れる)。実際に踏んだ: 壊れた enforce 引数で再実行すると
+# map0 は消えるがマーカーが前回値のまま残っていた。
+# 構成が最後まで成功したときだけ、末尾で書き直される。
+rm -f /run/map-br.state
 # **明示的に 0 のときだけ無効。**それ以外 (1/on/yes/typo/空欄) は有効側に倒す。
 # `= "1"` の厳密一致だと "on" や "yes" のタイポで enforce を丸ごと飛ばして
 # 全開トンネルを張ってしまう (typo fail-open, 監査サイクル 15)。
