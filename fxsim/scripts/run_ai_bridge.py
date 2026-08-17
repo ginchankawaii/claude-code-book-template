@@ -144,11 +144,10 @@ def _load_bars(instrument: str, granularity: str, sma_n: int, history_csv: str):
 # a 0.007-lot intent into a heartbeat-less, fail-safe-less limbo.
 FLAT_EPS = 0.01
 
-# How often to re-check an unknowable lock holder's heartbeat while waiting.
-LOCK_WATCH_TICK_S = 15.0
-# Pause before exiting on a genuine double-brain, so the supervisor's restart
-# loop does not hammer the log every second.
-LOCK_REFUSE_PAUSE_S = 30.0
+# How often a blocked challenger re-evaluates the incumbent's lock, and how
+# often it says so. Waiting is deliberately boring: the loop below NEVER exits.
+LOCK_WAIT_TICK_S = 30.0
+LOCK_WAIT_LOG_EVERY_S = 300.0
 
 
 def _lock_line(poll: int) -> str:
@@ -171,81 +170,79 @@ def _holder_is_alive(pid: int, host: str) -> Optional[bool]:
     return "run_ai_bridge" in cmdline
 
 
-def _acquire_brain_lock(poll: int) -> Optional[Path]:
-    """Single-writer lock in the bridge dir (Round-4 chaos: two resident brains
-    on one bridge ping-ponged LONG/FLAT — 21 spurious round trips in 45s).
+def _lock_verdict(lock: Path, poll: int) -> tuple[str, str]:
+    """What to do about an existing lock: ("take" | "wait", human message).
 
-    Lock line: "<pid> <epoch> <poll> <host>". Ownership is decided by LIVENESS
-    first and age only as a fallback — the age-only rule made an ordinary
-    restart wait 30 minutes (3x the holder's poll) while the protective stop
-    was unsupervised, because a dead predecessor's lock still looked fresh.
-    Order: (1) holder provably dead -> take over now; (2) holder unknowable
-    (other container) -> take over once it has missed a heartbeat + slack;
-    (3) holder alive -> refuse, a second writer would liquidate the first."""
+    There is deliberately no third answer. Earlier revisions could conclude
+    "refuse and exit", and that verdict — not any double-brain — is what took
+    the system down three times: the supervisor restarted the process, it
+    re-read the same lock, exited again, and the account ran unsupervised for
+    12-30 minutes at a stretch. A challenger that merely waits is strictly
+    safer: it still cannot write, and it takes over the instant the incumbent
+    stops heartbeating.
+
+    Lock line: "<pid> <epoch> <poll> <host>". Liveness decides first, age is
+    only the fallback for holders we cannot see (another container's PID
+    namespace) — a dead predecessor's lock still looks fresh."""
+    try:
+        age = _time.time() - lock.stat().st_mtime
+    except FileNotFoundError:
+        return "take", "lock released by its holder"
+    pid, holder_poll, host = 0, poll, ""
+    try:
+        parts = lock.read_text().split()
+        if len(parts) >= 1:
+            pid = int(parts[0])
+        if len(parts) >= 3:
+            holder_poll = max(1, int(float(parts[2])))
+        if len(parts) >= 4:
+            host = parts[3]
+    except Exception:
+        pass
+    alive = _holder_is_alive(pid, host)
+    stale_after = holder_poll + 120                # one missed heartbeat + slack
+    if alive is False:
+        return "take", f"previous brain (pid {pid}) is gone — taking over its lock"
+    if age >= stale_after:
+        return "take", (f"brain lock is stale ({age:.0f}s old > {stale_after:.0f}s) — "
+                        f"taking over")
+    if not host:
+        # Pre-upgrade lock format (no host field). Only the code we just
+        # replaced writes those, i.e. a predecessor that has since exited.
+        return "take", f"legacy brain lock (no host field, {age:.0f}s old) — taking over"
+    if alive is True:
+        return "wait", (f"another brain is LIVE (pid {pid}@{host}, heartbeat {age:.0f}s "
+                        f"ago) — standing by until it stops")
+    return "wait", (f"lock held by {pid}@{host}, liveness unknowable — standing by until "
+                    f"its heartbeat lapses (~{stale_after - age:.0f}s)")
+
+
+def _acquire_brain_lock(poll: int) -> Optional[Path]:
+    """Block until this process is the single writer on the bridge.
+
+    Two resident brains on one bridge ping-pong LONG/FLAT (Round-4 chaos:
+    21 spurious round trips in 45s), so only one may hold the lock. This
+    function never terminates the process to enforce that: it waits, re-judging
+    every LOCK_WAIT_TICK_S, and acquires as soon as the incumbent is gone."""
     try:
         d = bridge.common_files_dir()
         d.mkdir(parents=True, exist_ok=True)
         lock = d / "steady_brain.lock"
-        if lock.exists():
-            age = _time.time() - lock.stat().st_mtime
-            pid, holder_poll, host = 0, poll, ""
-            try:
-                parts = lock.read_text().split()
-                if len(parts) >= 1:
-                    pid = int(parts[0])
-                if len(parts) >= 3:
-                    holder_poll = max(1, int(float(parts[2])))
-                if len(parts) >= 4:
-                    host = parts[3]
-            except Exception:
-                pass
-            alive = _holder_is_alive(pid, host)
-            stale_after = holder_poll + 120        # one missed heartbeat + slack
-            if alive is False:
-                print(f"[ai] previous brain (pid {pid}) is gone — taking over its lock",
+        waited, last_log = 0.0, -LOCK_WAIT_LOG_EVERY_S
+        while lock.exists():
+            verdict, msg = _lock_verdict(lock, poll)
+            if verdict == "take":
+                print(f"[ai] {msg}", flush=True)
+                break
+            if waited - last_log >= LOCK_WAIT_LOG_EVERY_S:
+                print(f"[ai] {msg}. Waiting, not exiting (waited {waited:.0f}s).",
                       flush=True)
-            elif age >= stale_after:
-                print(f"[ai] stale brain lock ({age:.0f}s old > {stale_after:.0f}s) — "
-                      f"taking over", flush=True)
-            elif alive is True:
-                print(f"[ai] FATAL: another brain is LIVE on {lock} (heartbeat {age:.0f}s "
-                      f"ago, pid {pid}@{host}, poll {holder_poll}s). Two writers on one "
-                      f"bridge liquidate each other — refusing to start.", flush=True)
-                _time.sleep(LOCK_REFUSE_PAUSE_S)    # damp the supervisor restart loop
-                raise SystemExit(2)
-            elif not host:
-                # Pre-upgrade lock format (no host field). Such a lock can only
-                # have been written by the code we just replaced, i.e. by a
-                # predecessor that has since exited — adopting it beats another
-                # crash loop, which is what stranded the operator twice.
-                print(f"[ai] legacy brain lock (no host field, {age:.0f}s old) — assuming "
-                      f"it belongs to the replaced predecessor; taking over", flush=True)
-            else:
-                # Unknowable holder (another container's PID namespace). Do NOT
-                # exit into a restart loop: WAIT and watch the heartbeat. A live
-                # brain touches the lock every poll; a dead one never will.
-                wait_s = stale_after - age
-                print(f"[ai] lock held by {pid}@{host}, liveness unknowable — watching its "
-                      f"heartbeat for up to {wait_s:.0f}s instead of crash-looping",
-                      flush=True)
-                mtime0 = lock.stat().st_mtime
-                deadline = _time.time() + wait_s
-                while _time.time() < deadline:
-                    _time.sleep(min(LOCK_WATCH_TICK_S, max(1.0, deadline - _time.time())))
-                    try:
-                        if lock.stat().st_mtime > mtime0:
-                            print(f"[ai] FATAL: holder {pid}@{host} refreshed its heartbeat "
-                                  f"— it is LIVE. Refusing to start.", flush=True)
-                            _time.sleep(LOCK_REFUSE_PAUSE_S)
-                            raise SystemExit(2)
-                    except FileNotFoundError:
-                        break                      # holder released it: ours
-                print(f"[ai] holder {pid}@{host} never refreshed — taking over", flush=True)
+                last_log = waited
+            _time.sleep(LOCK_WAIT_TICK_S)
+            waited += LOCK_WAIT_TICK_S
         _touch_lock(lock, poll)
         _arm_lock_release(lock)
         return lock
-    except SystemExit:
-        raise
     except Exception as exc:
         print(f"[ai] brain lock unavailable ({exc}); continuing WITHOUT single-writer "
               f"protection", flush=True)

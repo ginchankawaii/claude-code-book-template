@@ -357,23 +357,31 @@ def test_lock_taken_over_when_predecessor_is_dead(tmp_path, monkeypatch):
     assert lock is not None and str(os.getpid()) in lock.read_text()
 
 
-def test_lock_refused_while_holder_is_live(tmp_path, monkeypatch):
-    import socket
+def test_live_holder_makes_the_challenger_wait_and_never_exit(tmp_path, monkeypatch):
+    # THE regression that mattered most: a challenger that exits on a live-
+    # looking lock hands the supervisor a restart loop, and the account runs
+    # unsupervised for as long as it lasts (12 and 30 minutes, twice, live).
+    # Correct behaviour is to stand by and acquire the moment the holder stops.
+    import os, socket
     monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
-    monkeypatch.setattr(R, "LOCK_REFUSE_PAUSE_S", 0)
-    monkeypatch.setattr(R, "_holder_is_alive", lambda pid, host: True)
     _write_lock(tmp_path, 4242, 600, socket.gethostname(), age_s=30)
-    with pytest.raises(SystemExit) as e:
-        R._acquire_brain_lock(600)
-    assert e.value.code == 2
+    ticks = {"n": 0}
+    monkeypatch.setattr(R, "_holder_is_alive", lambda pid, host: ticks["n"] < 3)
+
+    def fake_sleep(_s):
+        ticks["n"] += 1
+        assert ticks["n"] < 20, "waited without ever re-judging the lock"
+    monkeypatch.setattr(R._time, "sleep", fake_sleep)
+
+    lock = R._acquire_brain_lock(600)                 # no SystemExit, ever
+    assert lock is not None and str(os.getpid()) in lock.read_text()
+    assert ticks["n"] == 3                            # it really did wait
 
 
 def test_lock_taken_over_from_unknowable_holder_after_one_missed_heartbeat(tmp_path, monkeypatch):
     # Another container's PIDs are invisible: fall back to age, but only one
     # missed heartbeat + slack (poll+120), not 3x poll.
     monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
-    monkeypatch.setattr(R, "LOCK_REFUSE_PAUSE_S", 0)
-    monkeypatch.setattr(R, "LOCK_WATCH_TICK_S", 0.01)
     monkeypatch.setattr(R._time, "sleep", lambda s: None)
     # already past the staleness window (poll+120) -> adopted immediately
     _write_lock(tmp_path, 4242, 600, "other-container", age_s=800)
@@ -401,25 +409,28 @@ def test_legacy_format_lock_is_adopted(tmp_path, monkeypatch):
     assert R._acquire_brain_lock(600) is not None
 
 
-def test_unknowable_holder_is_watched_not_crash_looped(tmp_path, monkeypatch):
-    # A holder in another PID namespace: wait and watch its heartbeat instead
-    # of exiting immediately (which produced the restart storm). Never patch
-    # time.time globally here — it hangs pytest.
+def test_unknowable_holder_is_waited_out_not_crash_looped(tmp_path, monkeypatch):
+    # A holder in another PID namespace: stand by and watch its heartbeat.
+    # While it keeps beating we wait; when it stops, we take the lock. Never
+    # patch time.time globally here — it hangs pytest.
+    import os as _os, time as _t
     monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
-    monkeypatch.setattr(R, "LOCK_WATCH_TICK_S", 0.01)
-    monkeypatch.setattr(R, "LOCK_REFUSE_PAUSE_S", 0)
-    lock = _write_lock(tmp_path, 4242, 1, "other-container", age_s=100)  # poll=1 -> ~21s window
+    lock = _write_lock(tmp_path, 4242, 1, "other-container", age_s=100)  # poll=1 -> 121s window
     monkeypatch.setattr(R._time, "sleep", lambda s: None)
-    assert R._acquire_brain_lock(1) is not None          # never refreshed -> ours
+    assert R._acquire_brain_lock(1) is not None          # already lapsed -> ours
 
-    lock = _write_lock(tmp_path, 4242, 1, "other-container", age_s=100)
+    lock = _write_lock(tmp_path, 4242, 1, "other-container")             # fresh
     ticks = {"n": 0}
 
-    def touch_then_sleep(_s):
+    def holder_beats_then_dies(_s):
         ticks["n"] += 1
-        if ticks["n"] == 1:
+        assert ticks["n"] < 20, "never re-judged the lock"
+        if ticks["n"] < 4:
             lock.touch()                                 # holder heartbeat
-    monkeypatch.setattr(R._time, "sleep", touch_then_sleep)
-    with pytest.raises(SystemExit) as e:
-        R._acquire_brain_lock(1)
-    assert e.value.code == 2
+        else:
+            old = _t.time() - 300                        # holder stopped; window lapsed
+            _os.utime(lock, (old, old))
+    monkeypatch.setattr(R._time, "sleep", holder_beats_then_dies)
+
+    assert R._acquire_brain_lock(1) is not None          # waited, then acquired
+    assert ticks["n"] == 4                               # 3 beats survived, 4th lapsed
