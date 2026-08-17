@@ -694,6 +694,11 @@ def main() -> None:
                   "carries no order id — adopting FLAT; re-entry goes through a "
                   "fresh gate decision", flush=True)
             intent, intent_lots, stop_price = "FLAT", 0.0, None
+    if not order_seq and intent != "LONG":
+        # Nothing is open, so minting an id opens nothing — and it means every
+        # signal this brain writes carries SEQ, which is how the operator can
+        # tell at a glance that the sequence-gated build is the one running.
+        order_seq = _next_seq(0)
     last_probe_ok = _time.time()
     # While LONG and blind (no trusted probe) beyond this grace, the heartbeat
     # is withheld so the EA's EXP fail-safe can flatten the book (Round-4: the
