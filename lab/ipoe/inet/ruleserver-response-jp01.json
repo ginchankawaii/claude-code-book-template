@@ -1,0 +1,29 @@
+{
+  "_comment_1": "jp01 形式 (OCN バーチャルコネクト / Cisco IOS XE `nat64 provisioning mode jp01`)。",
+  "_comment_2": "**実機 C1111-8P (17.09.05f) がこの形式を受理し、MAP-E が実際に通ることを確認済み** (サイクル 11)。",
+  "_comment_3": [
+    "値は **すべて文字列** にすること。数値で返すとルータは domain を作るところまで行って",
+    "BMR を破棄する (実測)。Cisco のドキュメントの応答パラメータ表も Type=string と書いてある。",
+    "Content-Type も `application/json; charset=utf-8` を返すこと (ruleserver.py が付ける)。",
+    "フィールド名は Cisco の 15M&T ドキュメント",
+    "'Map Rule Server Response Parameters' の表に一致させてある。",
+    "器の名前 basicMapRules だけは一次情報が無く、実機が受理したことで確認した。"
+  ],
+  "_comment_4": [
+    "ラボの MAP-E BR (vne/setup-map-br.sh) と同じ値。CPE には IPv4 を教えない。",
+    "CPE が自分の委譲プレフィックスから EA ビットを展開して導出する。",
+    "  RA 方式 (2001:db8:1014:300::/64) → EA=0x1403 → 198.51.100.20 / PSID 3 / 240 ポート",
+    "  PD 方式 (2001:db8:100a:500::/56) → EA=0x0a05 → 198.51.100.10 / PSID 5 / 240 ポート"
+  ],
+  "basicMapRules": [
+    {
+      "brIpv6Address": "2001:db8:9999::1",
+      "ipv6Prefix": "2001:db8:1000::",
+      "ipv6PrefixLength": "40",
+      "ipv4Prefix": "198.51.100.0",
+      "ipv4PrefixLength": "24",
+      "eaBitLength": "16",
+      "psIdOffset": "4"
+    }
+  ]
+}

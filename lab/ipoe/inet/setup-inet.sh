@@ -1,0 +1,125 @@
+#!/bin/bash
+# INET-SIM: 模擬インターネット (Web + DNS) 構築 (Ubuntu 24.04)
+#   NIC: eth1=PG-INET
+#   usage: setup-inet.sh            … 初期構築
+#          setup-inet.sh break-v6   … IPv6 だけ死んだサイトを再現 (R6: DNSフォールバック)
+#          setup-inet.sh restore    … 復旧
+#          setup-inet.sh spoof-aftr … 市販ルータのDS-Lite自動設定向けに transix系AFTRの
+#                                     FQDNをラボAFTRへ向ける (ラボ内DNSのみの偽装)
+#                                     **初期構築を済ませてから実行すること。**
+#                                     dnsmasq 未導入の状態で叩くと restart で落ちる
+set -euo pipefail
+
+# 役割別 MAC から NIC 名を自動解決 (provision.sh で作った VM 向け。未設定の変数だけ埋める)
+if [ -f "$(dirname "$0")/../detect-ifs.sh" ]; then . "$(dirname "$0")/../detect-ifs.sh"; fi
+
+MODE="${1:-install}"
+
+case "$MODE" in
+  spoof-aftr)
+    cat > /etc/dnsmasq.d/lab-aftr-spoof.conf <<'EOF'
+# 市販ルータのAFTR自動発見をラボAFTRへ誘導 (transix / クロスパス相当)
+address=/gw.transix.jp/2001:db8:8888::1
+address=/dgw.xpass.jp/2001:db8:8888::1
+EOF
+    systemctl restart dnsmasq
+    echo "[INET-SIM] AFTR FQDN 偽装を有効化 (解除: rm /etc/dnsmasq.d/lab-aftr-spoof.conf && systemctl restart dnsmasq)"
+    exit 0 ;;
+  break-v6)
+    nft delete table ip6 break-v6 2>/dev/null || true   # 再実行で drop が重複しないよう消してから作る
+    nft -f - <<'EOF'
+table ip6 break-v6 {
+  chain input {
+    type filter hook input priority 0;
+    tcp dport { 80, 443 } drop
+  }
+}
+EOF
+    echo "[INET-SIM] IPv6 の HTTP(S) を遮断中 (AAAA は返答し続ける)"; exit 0 ;;
+  restore)
+    nft delete table ip6 break-v6 2>/dev/null || true
+    echo "[INET-SIM] 復旧済み"; exit 0 ;;
+esac
+
+INET_IF="${INET_IF:-eth1}"
+
+# dnsmasq が待ち受けるインタフェース。
+#
+# **CORE 側も必ず含めること。** CPE が引く DNS クエリは NGN 経由で来るので
+# **CORE 側インタフェースに着く**。INET 側だけを listen していると、dnsmasq は
+# 「listen 対象外のインタフェースに届いたクエリ」として**黙って捨てる**。
+# 応答を返さないので、
+#   - ping は通る / HTTP も通る / なのに名前解決だけ死ぬ
+#   - INET 側で tcpdump してもクエリが見えない (CORE 側に来ているため)
+# という非常に切り分けにくい症状になる (サイクル 3 で実際に踏んだ)。
+DNS_LISTEN="interface=${INET_IF}"
+if [ -n "${CORE_IF:-}" ] && [ "${CORE_IF}" != "${INET_IF}" ]; then
+  DNS_LISTEN="${DNS_LISTEN}
+interface=${CORE_IF}"
+fi
+
+# dnsmasq は systemd-resolved のスタブ (127.0.0.53:53) と衝突してインストール直後の
+# 起動に失敗しうるため、設定を **先に** 置いてから導入する。
+# interface= + bind-interfaces により dnsmasq は指定した NIC にしか bind しないので、
+# これだけで 127.0.0.53 との衝突は回避できる (管理 NIC は含めないこと)。
+# (DNSStubListener=no はしない: /etc/resolv.conf が stub-resolv.conf のままだと
+#  この直後の apt-get が名前解決できず失敗する)
+mkdir -p /etc/dnsmasq.d
+#
+# bind-interfaces ではなく **bind-dynamic** を使う。
+# bind-interfaces は「dnsmasq 起動時点で存在するアドレス」にしか bind しないため、
+# CORE 側のアドレス (2001:db8:ff00::2) を付けるのが setup-map-br.sh / setup-aftr.sh
+# (= このスクリプトより後に実行されうる) である以上、
+# フレッシュ構築や VM 再起動のたびに「CORE 側から来たクエリが黙って捨てられる」
+# 症状が再発する。bind-dynamic なら後から現れたアドレスにも追従しつつ、
+# 指定した NIC 以外には bind しない (127.0.0.53 との衝突回避はそのまま成立)。
+cat > /etc/dnsmasq.d/lab.conf <<EOF
+no-resolv
+${DNS_LISTEN}
+bind-dynamic
+local-ttl=3600
+address=/www.lab.example/203.0.113.80
+address=/www.lab.example/2001:db8:cafe::80
+address=/v4only.lab.example/203.0.113.80
+EOF
+
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y nginx dnsmasq nftables
+
+ip addr replace 203.0.113.80/24 dev "${INET_IF}"
+ip addr replace 203.0.113.53/24 dev "${INET_IF}"
+ip -6 addr replace 2001:db8:cafe::80/64 dev "${INET_IF}"
+ip -6 addr replace 2001:db8:cafe::53/64 dev "${INET_IF}"
+ip link set "${INET_IF}" up
+# 復路 (VNE と同居している場合は自アドレス宛 via となり失敗するが、その時は経路自体不要)
+ip route replace 100.64.0.0/10 via 203.0.113.2 || true    # PPPoE プールの復路 → BRAS
+ip route replace 198.51.100.0/24 via 203.0.113.1 || true  # MAP-E 共有 IPv4 の復路 → VNE
+ip -6 route replace default via 2001:db8:cafe::1 || true  # v6 の戻りは VNE 経由
+
+# 接続元アドレスを表示する確認ページ + MTU/MSS 検証用の大サイズファイル
+mkdir -p /var/www/html
+head -c 5M /dev/urandom > /var/www/html/big.bin
+cat > /etc/nginx/sites-available/default <<'EOF'
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    root /var/www/html;
+    location = / {
+        default_type text/plain;
+        return 200 "lab-inet OK\nsrc: $remote_addr\nhost: $host\n";
+    }
+    location / {
+        try_files $uri =404;
+    }
+}
+EOF
+# `A && B` と書かないこと。set -e は && リストの最後以外の失敗では終了しないため、
+# enable が失敗しても restart がスキップされるだけでスクリプトは進み、
+# 下の成功バナーを出して exit 0 してしまう (起動していないのに成功に見える)
+systemctl enable --now nginx
+systemctl restart nginx
+systemctl enable --now dnsmasq
+systemctl restart dnsmasq
+
+echo "[INET-SIM] http://203.0.113.80 / http://[2001:db8:cafe::80] / DNS 203.0.113.53"
+echo "  MTU/MSS 検証用: /big.bin (5MB)"

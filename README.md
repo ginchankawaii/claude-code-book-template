@@ -44,6 +44,7 @@ CCNP ENCOR(350-401)に**2026年9月(上期末)合格**するための、ギャ�
 
 - [docs/study-plan.md](docs/study-plan.md) — 7〜9月の週次学習計画・1日のルーチン・if-thenルール・モチベーション維持の仕組み
 - [docs/simulation.md](docs/simulation.md) — ENCORシミュレーション(ラボ)問題の対策メモ・頻出設定テーマ・本番の立ち回り
+- [docs/ipoe-lab/](docs/ipoe-lab/README.md) — PPPoE→IPoE切替検証ラボ(VMware)の設計・構築手順・検証マトリクス(業務用)
 
 ## 🗺️ 合格までのロードマップ
 

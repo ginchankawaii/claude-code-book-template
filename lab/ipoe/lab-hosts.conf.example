@@ -1,0 +1,13 @@
+# lab-mode.sh が使う VM の接続先。lab-hosts.conf という名前でコピーして使ってください。
+#
+# リンクローカルアドレスを使う場合は **%<ブリッジ名> を必ず付ける**こと。
+# アドレスは Proxmox なら `./proxmox/provision.sh ips` で確認できます。
+#
+NGN=labadmin@fe80::be24:11ff:feXX:XXXX%vmbr0
+VNE=labadmin@fe80::be24:11ff:feYY:YYYY%vmbr0
+INET=labadmin@fe80::be24:11ff:feZZ:ZZZZ%vmbr0
+
+# 通常の IPv4 で入る場合はこちら
+# NGN=labadmin@192.168.11.101
+# VNE=labadmin@192.168.11.102
+# INET=labadmin@192.168.11.105
