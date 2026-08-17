@@ -28,6 +28,10 @@ input string InpSignalFile = "steady_signal.txt";
 input double InpResizeMinLots = 0.10;    // resize open pos only if lot diff >= this ...
 input double InpResizePct     = 0.20;    // ... or >= this fraction of current size (deadband)
 
+// Bumped whenever the EA's execution behaviour changes, so the operator can
+// tell a recompiled EA from a stale one at a glance — the input dialog cannot.
+#define EA_BUILD "r5-seqgate"
+
 CTrade trade;
 datetime g_expiry = 0;   // last EXP token seen on the signal (0 = heartbeat-less)
 
@@ -77,7 +81,8 @@ int OnInit()
    ExportAll();
    ProcessSignal();
    UpdateStatusComment();
-   Print("SteadyBridge started on ", InpSymbol);
+   Print("SteadyBridge started on ", InpSymbol, " | build ", EA_BUILD,
+         " | last executed order SEQ ", g_exec_seq);
    return(INIT_SUCCEEDED);
 }
 
@@ -99,7 +104,8 @@ void UpdateStatusComment()
    else
       hb = StringFormat("brain OK (heartbeat valid %d more min)",
                         (int)((g_expiry - TimeGMT()) / 60));
-   Comment("SteadyBridge | pos ", DoubleToString(CurrentLots(), 2), " lots | ", hb);
+   Comment("SteadyBridge ", EA_BUILD, " | pos ", DoubleToString(CurrentLots(), 2),
+           " lots | ", hb);
 }
 
 //--- net lots of OUR positions (long +, short -) -------------------
