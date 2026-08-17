@@ -42,9 +42,13 @@ still trades. See docs/AI_TRADER.md.
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import math
 import os
+import signal
+import socket
+import sys as _sys
 import time as _time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -141,34 +145,69 @@ def _load_bars(instrument: str, granularity: str, sma_n: int, history_csv: str):
 FLAT_EPS = 0.01
 
 
+def _lock_line(poll: int) -> str:
+    return f"{os.getpid()} {int(_time.time())} {int(poll)} {socket.gethostname()}\n"
+
+
+def _holder_is_alive(pid: int, host: str) -> Optional[bool]:
+    """Is the lock holder a RUNNING brain? None when we cannot know (the lock
+    was written by another host/container, whose PIDs are invisible here)."""
+    if not host or host != socket.gethostname():
+        return None
+    if pid <= 0 or pid == os.getpid():
+        # Our own PID from a previous incarnation: a container restart hands
+        # the successor the same PID, so this is provably a dead predecessor.
+        return False
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", "replace")
+    except Exception:
+        return False                      # no such process
+    return "run_ai_bridge" in cmdline
+
+
 def _acquire_brain_lock(poll: int) -> Optional[Path]:
     """Single-writer lock in the bridge dir (Round-4 chaos: two resident brains
     on one bridge ping-ponged LONG/FLAT — 21 spurious round trips in 45s).
 
-    The lock line is "<pid> <epoch> <poll>": staleness is judged against the
-    HOLDER's own poll cadence (final fuzz: judging by the challenger's poll let
-    a --poll 1 challenger steal a healthy --poll 60 incumbent's lock)."""
+    Lock line: "<pid> <epoch> <poll> <host>". Ownership is decided by LIVENESS
+    first and age only as a fallback — the age-only rule made an ordinary
+    restart wait 30 minutes (3x the holder's poll) while the protective stop
+    was unsupervised, because a dead predecessor's lock still looked fresh.
+    Order: (1) holder provably dead -> take over now; (2) holder unknowable
+    (other container) -> take over once it has missed a heartbeat + slack;
+    (3) holder alive -> refuse, a second writer would liquidate the first."""
     try:
         d = bridge.common_files_dir()
         d.mkdir(parents=True, exist_ok=True)
         lock = d / "steady_brain.lock"
         if lock.exists():
             age = _time.time() - lock.stat().st_mtime
-            holder_poll = poll
+            pid, holder_poll, host = 0, poll, ""
             try:
                 parts = lock.read_text().split()
+                if len(parts) >= 1:
+                    pid = int(parts[0])
                 if len(parts) >= 3:
                     holder_poll = max(1, int(float(parts[2])))
+                if len(parts) >= 4:
+                    host = parts[3]
             except Exception:
                 pass
-            stale_after = max(3 * holder_poll, 180)
-            if age < stale_after:
-                print(f"[ai] FATAL: another brain holds {lock} (heartbeat {age:.0f}s ago, "
-                      f"holder poll {holder_poll}s). Two writers on one bridge liquidate "
-                      f"each other — refusing to start.", flush=True)
+            alive = _holder_is_alive(pid, host)
+            stale_after = holder_poll + 120        # one missed heartbeat + slack
+            if alive is False:
+                print(f"[ai] previous brain (pid {pid}) is gone — taking over its lock",
+                      flush=True)
+            elif age >= stale_after:
+                print(f"[ai] stale brain lock ({age:.0f}s old > {stale_after:.0f}s) — "
+                      f"taking over", flush=True)
+            else:
+                print(f"[ai] FATAL: another brain is LIVE on {lock} (heartbeat {age:.0f}s "
+                      f"ago, pid {pid}@{host or '?'}, poll {holder_poll}s). Two writers on "
+                      f"one bridge liquidate each other — refusing to start.", flush=True)
                 raise SystemExit(2)
-            print(f"[ai] stale brain lock ({age:.0f}s old) — taking over", flush=True)
         _touch_lock(lock, poll)
+        _arm_lock_release(lock)
         return lock
     except SystemExit:
         raise
@@ -178,10 +217,32 @@ def _acquire_brain_lock(poll: int) -> Optional[Path]:
         return None
 
 
+def _release_lock(lock: Optional[Path]) -> None:
+    """Drop the lock if we still own it, so a successor starts immediately."""
+    if lock is None:
+        return
+    try:
+        if lock.exists() and int(lock.read_text().split()[0]) == os.getpid():
+            lock.unlink()
+    except Exception:
+        pass
+
+
+def _arm_lock_release(lock: Path) -> None:
+    """Release the lock on a graceful stop (docker restart sends SIGTERM), so
+    the successor never has to wait out a dead predecessor's grace period."""
+    atexit.register(_release_lock, lock)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, lambda *_a, _l=lock: (_release_lock(_l), _sys.exit(0)))
+        except Exception:
+            pass
+
+
 def _touch_lock(lock: Optional[Path], poll: int) -> None:
     if lock is not None:
         try:
-            lock.write_text(f"{os.getpid()} {int(_time.time())} {int(poll)}\n")
+            lock.write_text(_lock_line(poll))
         except Exception:
             pass
 

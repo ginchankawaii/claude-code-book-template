@@ -333,3 +333,59 @@ def test_dyn_lev_pow_reverted_to_linear():
     # Round-4 tribunal (pre-registered rule): convex failed its deflated-Sharpe
     # charge at every assumed N -> the default is the linear ramp again.
     assert Settings().dyn_lev_pow == 1.0
+
+
+# ---- brain lock: liveness first, age only as fallback ----------------------
+
+def _write_lock(d, pid, poll, host, age_s=0):
+    import os as _os, time as _t
+    p = d / "steady_brain.lock"
+    p.write_text(f"{pid} {int(_t.time()) - age_s} {poll} {host}\n")
+    if age_s:
+        _os.utime(p, (_t.time() - age_s, _t.time() - age_s))
+    return p
+
+
+def test_lock_taken_over_when_predecessor_is_dead(tmp_path, monkeypatch):
+    # A container restart hands the successor the same PID; the old lock looks
+    # fresh but its writer is gone. Waiting 3x poll (30min) left the protective
+    # stop unsupervised — liveness must win over age.
+    import os, socket
+    monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
+    _write_lock(tmp_path, os.getpid(), 600, socket.gethostname(), age_s=5)
+    lock = R._acquire_brain_lock(600)
+    assert lock is not None and str(os.getpid()) in lock.read_text()
+
+
+def test_lock_refused_while_holder_is_live(tmp_path, monkeypatch):
+    import socket
+    monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
+    monkeypatch.setattr(R, "_holder_is_alive", lambda pid, host: True)
+    _write_lock(tmp_path, 4242, 600, socket.gethostname(), age_s=30)
+    with pytest.raises(SystemExit) as e:
+        R._acquire_brain_lock(600)
+    assert e.value.code == 2
+
+
+def test_lock_taken_over_from_unknowable_holder_after_one_missed_heartbeat(tmp_path, monkeypatch):
+    # Another container's PIDs are invisible: fall back to age, but only one
+    # missed heartbeat + slack (poll+120), not 3x poll.
+    monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
+    _write_lock(tmp_path, 4242, 600, "other-container", age_s=300)
+    with pytest.raises(SystemExit):
+        R._acquire_brain_lock(600)
+    _write_lock(tmp_path, 4242, 600, "other-container", age_s=800)
+    assert R._acquire_brain_lock(600) is not None
+
+
+def test_lock_released_on_graceful_stop(tmp_path, monkeypatch):
+    import os
+    monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
+    lock = R._acquire_brain_lock(600)
+    assert lock.exists()
+    R._release_lock(lock)
+    assert not lock.exists()          # successor starts immediately
+    # a lock owned by someone else is never released by us
+    _write_lock(tmp_path, os.getpid() + 1, 600, "other")
+    R._release_lock(tmp_path / "steady_brain.lock")
+    assert (tmp_path / "steady_brain.lock").exists()
