@@ -92,10 +92,16 @@ expected_src4() {
 detect() {
   local t p
   if [ -n "$VNE" ]; then
-    t="$(rsh "$VNE" "ip -6 tunnel show 2>/dev/null | cut -d: -f1" 2>/dev/null || true)"
+    # **トンネルが 1 本も無いときに ipv4mode を消す枝が要る。**
+    # 無いと、BR/AFTR の起動に失敗して die したあとも古い ipv4mode が残り続け、
+    # status が「MAP-E です」と言いながら実際には転送経路が無い状態になる (監査 R7 #3)。
+    # `OK:` を必ず出させて、到達不能 (OK 行なし) と「トンネル無し」を区別する。
+    t="$(rsh "$VNE" "echo \"OK:\$(ip -6 tunnel show 2>/dev/null | cut -d: -f1 | tr '\n' ',')\"" 2>/dev/null)"
     case "$t" in
       *dslite0*) state_set ipv4mode dslite ;;
       *map0*)    state_set ipv4mode mape ;;
+      OK:*)      state_set ipv4mode "" ;;   # 届いた上でトンネルが無い = 未設定
+      *)         : ;;                        # 到達不能。前回の値には触れない
     esac
   fi
   if [ -n "$NGN" ]; then
@@ -125,36 +131,66 @@ detect() {
 #   (この JSON はサーバが要求のたびに読み直す実物そのもの)
 # br_rule:     BR が「いま構成されている」ルール。setup-map-br.sh が成功直後に
 #   自分で書く /run/map-br.state を読む (tmpfs なので再起動で実態ごと消える)
+# **「測れなかった」を「測った結果」と混同しない。**
+# リモートに必ず `OK:` 行を出させ、それが無ければ到達不能 = 確認不可 と確定する。
+# 以前は rsh の失敗もファイル不在も同じ空文字に潰れ、ホストが落ちているだけなのに
+# 「未構築」「停止中」と断定していた (監査 R7 #4/#5)。
+#
+# server_rule: **サービスが生きているかまで見る。**JSON がディスクにあっても
+#   mape-ruleserver が止まっていれば何も配っていない (R7 #1: prov off 後に
+#   「一致を実測」と断言していた)。配布実体 = プロセス + JSON の両方。
 server_rule() {
   [ -n "${INET:-}" ] || { echo unknown; return; }
-  local ea
-  ea="$(rsh "$INET" "sed -n 's/.*\"eaBitLength\": \"\([0-9]*\)\".*/\1/p' /etc/mape-ruleserver/response-jp01.json 2>/dev/null" 2>/dev/null | head -1)"
-  case "$ea" in
-    16) echo shared ;;
-    0)  echo fixed ;;
-    "") echo unbuilt ;;
-    *)  echo "ea=${ea}" ;;
+  local out
+  out="$(rsh "$INET" "if systemctl is-active --quiet mape-ruleserver; then a=up; else a=down; fi; \
+e=\$(sed -n 's/.*\"eaBitLength\": \"\([0-9]*\)\".*/\1/p' /etc/mape-ruleserver/response-jp01.json 2>/dev/null | head -1); \
+echo \"OK:\$a:\$e\"" 2>/dev/null)"
+  case "$out" in
+    OK:down:*)  echo stopped ;;      # プロセスが無い = 配っていない
+    OK:up:16)   echo shared ;;
+    OK:up:0)    echo fixed ;;
+    OK:up:)     echo unbuilt ;;      # 生きているが JSON が無い
+    OK:up:*)    echo "ea=${out##*:}" ;;
+    *)          echo unreachable ;;  # OK 行が来ない = 届いていない
   esac
 }
+# br_rule: **len だけでなく psid も照合する。**マーカーには psid/ce も書いてあるのに
+#   len しか見ていなかったため、別モード用に張った BR (PSID 5) を「一致」と
+#   断言していた (R7 #2)。ルール種別と PSID の両方を返す。
 br_rule() {
   [ -n "${VNE:-}" ] || { echo unknown; return; }
-  local len
-  len="$(rsh "$VNE" "sed -n 's/^len=//p' /run/map-br.state 2>/dev/null" 2>/dev/null | head -1)"
+  local out len psid
+  out="$(rsh "$VNE" "l=\$(sed -n 's/^len=//p' /run/map-br.state 2>/dev/null | head -1); \
+p=\$(sed -n 's/^psid=//p' /run/map-br.state 2>/dev/null | head -1); echo \"OK:\$l:\$p\"" 2>/dev/null)"
+  case "$out" in
+    OK:*) len="${out#OK:}"; psid="${len#*:}"; len="${len%%:*}" ;;
+    *)    echo unreachable; return ;;
+  esac
   case "$len" in
-    8)  echo shared ;;
-    0)  echo fixed ;;
+    8)  echo "shared:${psid}" ;;
+    0)  echo "fixed:${psid}" ;;
     "") echo none ;;
     *)  echo "len=${len}" ;;
   esac
 }
 rule_jp() {
   case "$1" in
-    shared)  echo "共有IP (240 ポート)" ;;
-    fixed)   echo "固定IP1 相当 (64512 ポート)" ;;
-    unbuilt) echo "未構築" ;;
-    none)    echo "停止中/記録なし" ;;
-    unknown) echo "確認不可 (未設定)" ;;
-    *)       echo "$1" ;;
+    shared)      echo "共有IP (240 ポート)" ;;
+    fixed)       echo "固定IP1 相当 (64512 ポート)" ;;
+    stopped)     echo "停止中 (配っていない)" ;;
+    unbuilt)     echo "未構築" ;;
+    none)        echo "BR 停止中/記録なし" ;;
+    unknown)     echo "確認不可 (接続先未設定)" ;;
+    unreachable) echo "確認不可 (到達できず)" ;;
+    *)           echo "$1" ;;
+  esac
+}
+# その v6mode で BR が持つべき PSID (共有IP: RA=3 / PD=5、固定IP: 0)
+expected_psid() {
+  case "$1" in
+    fixed) echo 0 ;;
+    shared) [ "$(state_get v6mode)" = "ra" ] && echo 3 || echo 5 ;;
+    *) echo "" ;;
   esac
 }
 
@@ -179,17 +215,26 @@ banner() {
   printf "  IPv6 の配り方 : %s\n" "$v6note"
   printf "  IPv4 の運び方 : %s\n" "$v4note"
   if [ "$ipv4mode" = "mape" ]; then
-    # **実測して表示する** (記帳を読むのではなく)。理由は server_rule のコメント参照
-    local sr brr
+    # **実測して表示する** (記帳を読むのではなく)。理由は server_rule のコメント参照。
+    # 「一致」と言うのは **ルール種別と PSID の両方**が揃ったときだけ。
+    # 片方しか測らずに全部を断言するのが R7 #2 の指摘だった。
+    local sr brr brkind brpsid exp
     sr="$(server_rule)"; brr="$(br_rule)"
-    if [ "$sr" = "$brr" ] && { [ "$sr" = "shared" ] || [ "$sr" = "fixed" ]; }; then
-      printf "  配布ルール    : %s (サーバ・BR 一致を実測)\n" "$(rule_jp "$sr")"
-    elif { [ "$sr" = "shared" ] || [ "$sr" = "fixed" ]; } && \
-         { [ "$brr" = "shared" ] || [ "$brr" = "fixed" ]; }; then
-      printf "  配布ルール    : ⚠ 不一致 (サーバ=%s / BR=%s)。prov rule で揃えてください\n" \
-        "$(rule_jp "$sr")" "$(rule_jp "$brr")"
+    brkind="${brr%%:*}"; brpsid="${brr#*:}"; [ "$brpsid" = "$brr" ] && brpsid=""
+    if { [ "$sr" = "shared" ] || [ "$sr" = "fixed" ]; } && \
+       { [ "$brkind" = "shared" ] || [ "$brkind" = "fixed" ]; }; then
+      exp="$(expected_psid "$sr")"
+      if [ "$sr" != "$brkind" ]; then
+        printf "  配布ルール    : ⚠ 不一致 (サーバ=%s / BR=%s)。prov rule で揃えてください\n" \
+          "$(rule_jp "$sr")" "$(rule_jp "$brkind")"
+      elif [ -n "$exp" ] && [ "$brpsid" != "$exp" ]; then
+        printf "  配布ルール    : ⚠ %s だが **BR の PSID が %s (この方式では %s のはず)**。prov rule で張り直してください\n" \
+          "$(rule_jp "$sr")" "${brpsid:-不明}" "$exp"
+      else
+        printf "  配布ルール    : %s (サーバ・BR とも実測。PSID=%s)\n" "$(rule_jp "$sr")" "$brpsid"
+      fi
     else
-      printf "  配布ルール    : サーバ=%s / BR=%s\n" "$(rule_jp "$sr")" "$(rule_jp "$brr")"
+      printf "  配布ルール    : サーバ=%s / BR=%s\n" "$(rule_jp "$sr")" "$(rule_jp "$brkind")"
     fi
   fi
   printf "  障害の注入    : %s\n" "${fault:-なし}"
@@ -264,10 +309,18 @@ case "${1:-status}" in
     # サーバとの整合は毎回冪等に取りにいく。破壊的変更の告知は「実測した現在値」に基づく
     # (記録に基づく告知は、実行しない操作を告知する嘘を生んだ: 監査 R6 #3)。
     if [ -n "${INET:-}" ]; then
-      if [ "$(server_rule)" = "fixed" ]; then
-        echo "  ⚠ サーバは現在 固定IP ルールを配っています。"
-        echo "     **shared テンプレートで上書きします** (prov rule fixed のカスタム値は失われます)。"
-      fi
+      # **読めなかったときも告知する。**「fixed のときだけ告知」だと、読みが失敗した
+      # ときに告知が消えたまま次の rsh が上書きに成功しうる = 告知が最も必要な場面で
+      # 外れる向きに倒れる (監査 R7 #6)。安全側 = 分からなければ告知する。
+      case "$(server_rule)" in
+        shared) ;;                       # 上書きしても失うものが無い
+        fixed)
+          echo "  ⚠ サーバは現在 固定IP ルールを配っています。"
+          echo "     **shared テンプレートで上書きします** (prov rule fixed のカスタム値は失われます)。" ;;
+        *)
+          echo "  ⚠ サーバの現在のルールを確認できませんでした。"
+          echo "     **これから shared テンプレートで上書きします** (固定IP を配っていた場合、その値は失われます)。" ;;
+      esac
       # RULE_IF_BUILT=1: 未構築なら「差し替え不要」で正常終了してよい文脈 (冪等 reconcile)
       rsh "$INET" "sudo RULE_IF_BUILT=1 ./ipoe/inet/setup-ruleserver.sh rule shared" \
         || echo "  ⚠ サーバを shared に揃えられませんでした。下の status の実測を確認してください。"
