@@ -86,13 +86,20 @@ Dockerは**放置すると静かに容量を食う**。Windowsでは全部WSL2�
 2. **古いイメージ** — 再ビルドのたびに前の `fxsim:latest` が名無し(dangling)で残る。1本1GB弱。
 3. **コンテナログ** — json-fileドライバの既定は**無制限**。常駐サービスには
    `logging: max-size 10m / max-file 3` を設定済み（1サービス最大30MBで頭打ち）。
-   ※既存コンテナには効かないので、一度 `docker compose up -d` で作り直すこと。
+   ※既存コンテナには効かないので、一度 `docker compose up -d` で作り直すこと
+   （`restart` では適用されない）。取引コードは `./:/app` マウントなので影響なし。
 
 ```powershell
+# 0) compose を触るコマンドは必ず fxsim ディレクトリで（yml はここにある）
+cd C:\Users\penan\claude-code-book-template\fxsim
+
 # 1) まず何がどれだけ使っているか見る（RECLAIMABLE が回収可能な量）
 docker system df
 
 # 2) 使っていないイメージを削除（起動中コンテナのイメージは保護される）
+# `-a` は「どのコンテナも使っていない」イメージを全部消す。fxsim は起動中なので
+# 保護されるが、他プロジェクトのイメージ（postgres, redis 等）も消える点に注意。
+# 消えても次に使うとき再取得されるだけで、データは失われない。
 docker image prune -a -f
 
 # 3) ビルドキャッシュを削除（たいていここが一番大きい）
