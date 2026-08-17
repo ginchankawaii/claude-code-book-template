@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FX Paper-Trading Simulator</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="/static/chart.umd.js"></script>
+</head>
+<body>
+  <header>
+    <h1>💱 FX Paper-Trading Simulator</h1>
+    <div class="sub">Claude が現実レートで自動売買 — 成績を可視化</div>
+  </header>
+
+  <section class="controls card">
+    <div class="control-row">
+      <label>Run
+        <select id="runSelect"></select>
+      </label>
+      <span id="runMeta" class="meta"></span>
+      <button id="refreshBtn">↻ 更新</button>
+    </div>
+    <div class="control-row backtest">
+      <strong>新規バックテスト:</strong>
+      <label>Provider
+        <select id="btProvider"><option value="sample">sample</option><option value="oanda">oanda</option></select>
+      </label>
+      <label>Instrument <input id="btInstrument" value="USD_JPY" size="8" /></label>
+      <label>Granularity
+        <select id="btGran">
+          <option>M5</option><option selected>M15</option><option>M30</option>
+          <option>H1</option><option>H4</option>
+        </select>
+      </label>
+      <label>Bars <input id="btBars" type="number" value="1500" size="6" /></label>
+      <button id="btRun">▶ 実行</button>
+      <span id="btStatus" class="meta"></span>
+    </div>
+  </section>
+
+  <section id="stats" class="stats-grid"></section>
+
+  <section class="card">
+    <h2>エクイティカーブ（資産推移）</h2>
+    <canvas id="equityChart" height="90"></canvas>
+  </section>
+
+  <section class="card">
+    <h2>価格と売買シグナル</h2>
+    <canvas id="priceChart" height="90"></canvas>
+  </section>
+
+  <section class="card">
+    <h2>シグナル分解（テクニカル / ファンダメンタル / 統合）</h2>
+    <canvas id="signalChart" height="80"></canvas>
+  </section>
+
+  <div class="two-col">
+    <section class="card">
+      <h2>ファンダメンタル見解</h2>
+      <div id="fundamental"></div>
+    </section>
+    <section class="card">
+      <h2>取引履歴</h2>
+      <div class="table-wrap">
+        <table id="tradesTable">
+          <thead><tr>
+            <th>#</th><th>Side</th><th>Units</th><th>Entry</th><th>Exit</th>
+            <th>P&L</th><th>理由</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <footer>paper trading — 実レート・約定はシミュレーション</footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>
