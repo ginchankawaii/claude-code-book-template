@@ -28,6 +28,11 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    logging:                      # json-file の既定は無制限: 放置すると
+      driver: json-file           # C:ドライブ(WSLのvhdx)を静かに食い潰す
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # --- FX live trader (trend + Opus veto -> MT5 file bridge) ---
   fx:
@@ -48,6 +53,11 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    logging:                      # json-file の既定は無制限: 放置すると
+      driver: json-file           # C:ドライブ(WSLのvhdx)を静かに食い潰す
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # --- optional: expose the dashboard to the internet via Cloudflare Tunnel ---
   # 外出先からダッシュボードを見るための公開トンネル（ルーターのポート開放不要）。
@@ -61,6 +71,11 @@ services:
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
     depends_on: [dashboard]
     restart: unless-stopped
+    logging:                      # json-file の既定は無制限: 放置すると
+      driver: json-file           # C:ドライブ(WSLのvhdx)を静かに食い潰す
+      options:
+        max-size: "10m"
+        max-file: "3"
     profiles: ["tunnel"]
 
   # --- generic one-off runner: monitor / stock sim / tests ---

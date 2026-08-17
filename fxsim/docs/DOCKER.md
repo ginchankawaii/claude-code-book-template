@@ -74,3 +74,47 @@ docker compose up -d --build
   `host.docker.internal:18081` で Windows 上の kabuステーションに届く（compose設定済み）。
   `docker compose run --rm app python -m scripts.run_stock_ai --once --dry` 等。
 - **Windows の Python は一切不要**。`py` や `python` が壊れていても Docker には無関係。
+
+## ディスクを食い潰さない運用（Cドライブ対策）
+
+Dockerは**放置すると静かに容量を食う**。Windowsでは全部WSL2の `ext4.vhdx` に入り、
+**このファイルは一度膨らむと自動では縮まない**ので、Cドライブの空きだけが減っていく。
+
+原因は3つ、効くのもこの順:
+
+1. **ビルドキャッシュ** — `docker compose up -d --build` のたびに層が積まれる。数GBになる。
+2. **古いイメージ** — 再ビルドのたびに前の `fxsim:latest` が名無し(dangling)で残る。1本1GB弱。
+3. **コンテナログ** — json-fileドライバの既定は**無制限**。常駐サービスには
+   `logging: max-size 10m / max-file 3` を設定済み（1サービス最大30MBで頭打ち）。
+   ※既存コンテナには効かないので、一度 `docker compose up -d` で作り直すこと。
+
+```powershell
+# 1) まず何がどれだけ使っているか見る（RECLAIMABLE が回収可能な量）
+docker system df
+
+# 2) 使っていないイメージを削除（起動中コンテナのイメージは保護される）
+docker image prune -a -f
+
+# 3) ビルドキャッシュを削除（たいていここが一番大きい）
+docker builder prune -a -f
+
+# 4) 停止済みコンテナの残骸
+docker container prune -f
+```
+
+**重要**：ここまでやってもWindowsの空き容量は増えない。vhdxが縮まないため。
+Docker Desktop → **Settings → Resources → Advanced → "Disk usage" の Clean / Purge data**、
+または Docker Desktop を終了してから:
+
+```powershell
+wsl --shutdown
+Optimize-VHD -Path "$env:LOCALAPPDATA\Docker\wsl\disk\docker_data.vhdx" -Mode Full
+```
+（`Optimize-VHD` はHyper-V機能。無い場合は `diskpart` の `compact vdisk`、
+またはDocker Desktopの Clean/Purge を使う。パスはバージョンにより
+`...\Docker\wsl\data\ext4.vhdx` のこともあるので、実際に存在する方を指定する。）
+
+**やってはいけないこと**：`docker system prune --volumes` は不要。このプロジェクトは
+名前付きボリュームを使っておらず全部bind mount（`./` と MT5のCommon\Files）なので、
+消して得はなく、他プロジェクトのデータを巻き込む危険だけがある。
+`data/fxsim.db` はホスト側にあるので prune では消えない（ライブ記録は安全）。
