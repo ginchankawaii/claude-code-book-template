@@ -478,6 +478,83 @@ sudo ./ipoe/client/setup-client.sh
 
 ---
 
+## 5-b. ルール配布サーバを建てる(MAP-E の「自動設定」を再現する場合)
+
+**MAP-E を実機 CPE で検証するなら、ここは必須です。**
+
+本番の CPE は MAP ルールを手で設定されません。**事業者のサーバから取得します。**
+このサーバがラボに無いと「CPE に手でルールを書く」という**本番に存在しない経路**しか
+検証できません(それで実機 C1111-8P が 6/6 落ちて「機種が使えない」と誤判断しかけました。
+[build-log.md](build-log.md) サイクル 11〜12)。
+
+**INET-SIM で**実行します。5 秒で終わります。
+
+```bash
+sudo ./ipoe/inet/setup-ruleserver.sh https
+```
+
+| 建つもの | 値 |
+|---|---|
+| サーバ | `2001:db8:cafe::a1`(既存の Web `::80` とは別アドレス) |
+| 発見用 DNS TXT | `4over6.info` → **CPE はここからサーバを見つけます** |
+| 応答 | jp01(Cisco / OCN)と HB46PP(国内標準)を**要求の形で自動判別** |
+
+**確認**(INET-SIM で):
+
+```bash
+./ipoe/inet/setup-ruleserver.sh selftest     # JSON が返れば成立
+./ipoe/inet/setup-ruleserver.sh status       # DNS TXT と待受ポート
+```
+
+**司会用**(作業端末から):
+
+```bash
+./lab-mode.sh prov on                  # 起動
+./lab-mode.sh prov log                 # CPE から来た要求を見る (投影用)
+./lab-mode.sh prov rule shared|fixed   # 共有IP / 固定IP1相当 を切替 (BR も自動で揃う)
+```
+
+> **ルータ側の手順は [mape-provisioning.md](mape-provisioning.md) §3。**
+> Cisco IOS XE なら `nat64 provisioning mode jp01` です。HTTPS で検証するなら
+> **ラボ CA をルータに登録**します(`./lab-mode.sh prov ca` で貼り付け用が出ます)。
+
+### ⚠ BR を手で起動するときは `CE_PSID` を必ず渡す
+
+`setup-map-br.sh` は **入口検査(割当外ポートを落とす)が既定 ON** です。実 BR と
+同じ挙動にするためですが、**PSID を渡し忘れると既定値で検査が張られ、CE の通信を
+BR 自身が黙って落とします。**
+
+```bash
+# RA 方式 (ひかり電話なし) の共有IP
+sudo CE_MAP_ADDR=<CEのMAPアドレス> CE_SHARED_V4=198.51.100.20 CE_PSID=3 ./ipoe/vne/setup-map-br.sh
+
+# PD 方式 (ひかり電話あり) の共有IP … 既定のままでよい (CE_PSID=5)
+sudo ./ipoe/vne/setup-map-br.sh
+```
+
+**`lab-mode.sh mape` / `prov rule` を使えば自動で正しい値が渡ります。**手打ちのときだけ注意。
+
+落ちた通信は kernel ログに出ます。**MAP-E が通らないときは最初にここを見てください。**
+
+```bash
+journalctl -k | grep MAP-ENFORCE-DROP
+```
+
+### CE の MAP アドレスは実機で確認すること
+
+**CPE の実装で並びが違います。**Cisco を `draft-ietf-softwire-map-03` で動かすと
+RFC 7597 と **1 バイトずれます。**
+
+```
+RFC 7597 (OpenWrt など) : 2001:db8:1014:300:0:c633:6414:3
+draft-03 (Cisco 実機)   : 2001:db8:1014:300:c6:3364:1400:300
+```
+
+BR はトンネル終点を静的に持つので、**間違えると IPv4 が全断**します。
+実機の `show ipv6 interface brief` で確認してから BR を張ってください。
+
+---
+
 ## 6. 動作確認
 
 **LAB-CLIENT で**実行します。

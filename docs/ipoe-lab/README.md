@@ -10,6 +10,7 @@ NTT NGN 網・ISP の BRAS・VNE(MAP-E BR / DS-Lite AFTR)・インターネッ�
 - **会社 VMware 構築ランブック(手動作業用・**サイクル 1〜6 の実走 + 実機 892FJ 検証をもとに執筆済み**)**: [runbook-vmware.md](runbook-vmware.md)
 - 事例調査ノート(実例・失敗談と設計への反映): [research-notes.md](research-notes.md)
 - **MAP-E のルール配布(本番と同じ自動設定経路)の再現手順**: [mape-provisioning.md](mape-provisioning.md)
+- **引き継ぎシート(構築したら埋める。代打の司会が開催できるようにする枠)**: [handover-sheet.md](handover-sheet.md)
 - **構築ログ / PDCA 記録(実走の記録・未検証項目トラッカー・CE 入替手順)**: [build-log.md](build-log.md)
 - **説明会資料(座学 1 時間)**: [slides/setsumeikai.md](slides/setsumeikai.md) → `slides/setsumeikai.pptx`
 - **ハンズオン資料(150 分。触って壊して直す)**: [slides/handson.md](slides/handson.md) → `slides/handson.pptx`

@@ -138,6 +138,19 @@ NTT の NGN 網、ISP の BRAS、VNE(MAP-E の BR と DS-Lite の AFTR)、イン
 | MAP-E の共有 IPv4(RA 方式) | `198.51.100.20`(PSID 3) |
 | 模擬インターネット | `203.0.113.0/24` + `2001:db8:cafe::/64` |
 | 検証用 Web/DNS | `203.0.113.80` / `203.0.113.53` |
+| **ルール配布サーバ** | `2001:db8:cafe::a1`(発見用 DNS TXT は `4over6.info`) |
+
+### MAP-E の「自動設定」を再現する場合の注意
+
+本番の CPE はルールを手で設定されず、**事業者のサーバから取得します**。
+ラボにも同じものがあります(`~/ipoe/inet/setup-ruleserver.sh https`)。
+
+- **BR を手で起動するときは `CE_PSID` を必ず渡す。**入口検査(割当外ポートを落とす)が
+  既定 ON なので、渡し忘れると既定値で検査が張られ **BR が CE の通信を黙って落とす**
+  (RA 共有=3 / PD 共有=5 / 固定IP=0)。`lab-mode.sh` 経由なら自動
+- **CE の MAP アドレスは実装で並びが違う。**Cisco を draft-03 で動かすと RFC 7597 と
+  1 バイトずれる。実機の `show ipv6 interface brief` で確認してから BR を張ること
+- MAP-E が通らないときは `journalctl -k | grep MAP-ENFORCE-DROP` を最初に見る
 
 ---
 
