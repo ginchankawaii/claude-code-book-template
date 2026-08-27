@@ -106,9 +106,9 @@
 
   <!-- ===== 電池 ===== -->
   <rect x="420" y="560" width="200" height="95" rx="10" fill="#fff8e1" stroke="#8d6e63" stroke-width="2"/>
-  <text x="520" y="595" font-size="14" text-anchor="middle" font-weight="bold" fill="#4e342e">LiPo 502530</text>
-  <text x="520" y="615" font-size="12" text-anchor="middle" fill="#4e342e">3.7V 500mAh 保護回路付き</text>
-  <text x="520" y="633" font-size="11" text-anchor="middle" fill="#8d6e63">30 × 25 × 5.0 mm</text>
+  <text x="520" y="595" font-size="14" text-anchor="middle" font-weight="bold" fill="#4e342e">LiPo 802530 / 502530</text>
+  <text x="520" y="615" font-size="12" text-anchor="middle" fill="#4e342e">3.7V 800 / 500mAh・保護回路付き</text>
+  <text x="520" y="633" font-size="11" text-anchor="middle" fill="#8d6e63">30×25×8.0(allday) / 5.0(slim) mm</text>
   <text x="470" y="580" font-size="15" font-weight="bold" fill="#d62828" text-anchor="middle">＋</text>
   <text x="530" y="580" font-size="15" font-weight="bold" fill="#1a1a1a" text-anchor="middle">−</text>
   <text x="420" y="678" font-size="12" fill="#c62828">⚠ リード線の極性は接続前にテスターで確認（色が逆の個体あり）</text>
