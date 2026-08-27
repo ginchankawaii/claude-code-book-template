@@ -92,7 +92,11 @@ MAG_PITCH = 18.0                                # 磁石2個の中心間距離
 # 内寸幅: 左のリード曲げチャネル(2.4) + 電池(30) + 右のリッドlip逃げ。
 # allday(8mm厚)では電池上面がリッドlipの降下域まで届くため、電池右端と右lip内面の間に
 # 0.4mm以上の隙間が要る (旧値32.6では右lipと干渉し check_layout が失敗した)。
-IW = 34.0
+# v1.4: 34.0 では電池右端と右lip内面の隙間が 0.45mm しかなく、LiPo の寸法公差
+# (±0.5mm) と保護回路(PCM)端の膨らみで干渉し得た。左側と同じ 1.25mm を確保する
+# 34.8 に拡大 (下の BAT_TOL assert で恒久的に担保する)。
+IW = 34.8
+BAT_TOL = 1.0                                   # 電池の寸法公差+PCM膨らみの許容代
 XIAO_LIFT = 1.4                                 # XIAO基板下面リフト (裏面はんだ+AWG28+
                                                 #   カプトンの突出 1.0-1.5mm の逃げ空間)
 BOSS_H = 1.4                                    # 磁石ボスの内面からの突出 (電池はこの上に載る)
@@ -307,9 +311,20 @@ def check_layout():
     assert BODY_D - xiao[5] >= 0.5 - 1e-6, "XIAO stack too close to lid"
     # XIAO 横方向拘束: 左ストップリブの面が基板左端に 0.1-0.3mm で対向
     assert 0.1 <= xiao[0] - xiao_stops[0][2] <= 0.3, "XIAO left stop gap wrong"
-    # lip 帯と電池の非干渉 (厚め個体 5.3mm でも 0.4mm 以上のz隙間)
-    assert (BODY_D - LIP_D) - (bat[4] + 5.3) >= 0.4 - 1e-6, \
-        "lid lip overlaps battery (thick cell)"
+    # lip 帯と電池の非干渉。
+    #   v1.4: 旧版は電池厚を 5.3mm 固定で検算しており、allday (8.0mm) では
+    #   常に成立する空っぽの assert になっていた。実際の電池厚から判定する。
+    #   z で逃げ切れる場合 (slim) はそれでよく、z が重なる場合 (allday) は
+    #   左右の水平隙間が公差代 BAT_TOL 以上あることを要求する。
+    _bat_top_worst = bat[4] + BAT_T + 0.3        # 厚め個体 (+0.3mm) を見込む
+    _z_clear = (BODY_D - LIP_D) - _bat_top_worst
+    if _z_clear < 0.4:
+        assert lip_right[0] - bat[2] >= BAT_TOL - 1e-6, \
+            (f"battery may hit right lip: gap {lip_right[0] - bat[2]:.2f}mm "
+             f"< {BAT_TOL}mm (z clearance only {_z_clear:.2f}mm)")
+        assert bat[0] - lip_left[2] >= BAT_TOL - 1e-6, \
+            (f"battery may hit left lip: gap {bat[0] - lip_left[2]:.2f}mm "
+             f"< {BAT_TOL}mm (z clearance only {_z_clear:.2f}mm)")
     # 左 lip 内面と電池のたわみ代 (スナップ嵌合に 0.35mm 必要 → 0.5mm 以上確保)
     assert bat[0] - lip_left[2] >= 0.5 - 1e-6, "no snap deflection room at battery"
     # 電池リード曲げチャネル (左端面出射、AWG28 x2)
