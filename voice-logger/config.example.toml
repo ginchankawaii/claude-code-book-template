@@ -1,0 +1,33 @@
+# voice-logger 設定ファイル
+# コピーして config.toml として使う: cp config.example.toml config.toml
+
+[paths]
+# 音声ファイルの投入先。スマホからは Syncthing / AirDrop / SMB 等でここに置く
+inbox = "~/voice-logger/inbox"
+# 処理済み音声の退避先（音声の自動削除ポリシーは将来ここに適用）
+archive = "~/voice-logger/archive"
+# 文字起こしJSONと処理済み台帳の保存先
+state = "~/voice-logger/state"
+# Obsidian vault のルート
+obsidian_vault = "~/Obsidian/MyVault"
+# vault 内の Daily Notes フォルダ（相対パス）
+daily_notes_dir = "Daily Notes"
+
+[whisper]
+# 日本語精度重視なら large-v3、速度重視なら large-v3-turbo / distil 系
+model = "large-v3-turbo"
+device = "auto"        # "cuda" / "cpu" / "auto"
+compute_type = "auto"  # "float16" / "int8_float16" / "int8" / "auto"
+language = "ja"
+
+[ollama]
+url = "http://localhost:11434"
+# 事前に `ollama pull qwen3:14b` 等でモデルを取得しておく
+model = "qwen3:14b"
+# 長い録音を分割する際の1チャンクの文字数上限
+chunk_chars = 12000
+
+[diary]
+# Daily Note のファイル名の日付フォーマット（"YYYY-MM-DD.md" なら %Y-%m-%d）
+date_format = "%Y-%m-%d"
+section_heading = "## 🎙️ 会話ログ（自動生成）"
