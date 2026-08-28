@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="870" viewBox="0 0 980 870">
+<style>text{font-family:IPAGothic,"Hiragino Sans","Yu Gothic",Meiryo,"Noto Sans JP",sans-serif}.t{font-size:11px;fill:#222}.s{font-size:9px;fill:#555}.h{font-size:15px;fill:#111}</style>
+<rect width="980" height="870" fill="#fff"/>
+<text x="20" y="30" class="h">MindClip — 奥行き(Z)スタック比較 / 数値は hardware/pcb/height_budget.py の出力</text>
+<text x="20" y="70" class="t">v1 (基板なし) allday</text>
+<rect x="40.0" y="82" width="41.6" height="46" fill="#f0f0f0" stroke="#333" stroke-width="0.8"/>
+<text x="60.8" y="110" class="s" text-anchor="middle" transform="rotate(-0)">1.6</text>
+<text x="60.8" y="148" class="s" text-anchor="middle" transform="rotate(20 60.8 148)">背面壁</text>
+<rect x="81.6" y="82" width="36.4" height="46" fill="#f6dede" stroke="#333" stroke-width="0.8"/>
+<text x="99.8" y="110" class="s" text-anchor="middle" transform="rotate(-0)">1.4</text>
+<text x="99.8" y="148" class="s" text-anchor="middle" transform="rotate(20 99.8 148)">裏面はんだ逃げ</text>
+<rect x="118.0" y="82" width="195.0" height="46" fill="#dfe8f5" stroke="#333" stroke-width="0.8"/>
+<text x="215.5" y="110" class="s" text-anchor="middle" transform="rotate(-0)">7.5</text>
+<text x="215.5" y="148" class="s" text-anchor="middle" transform="rotate(20 215.5 148)">XIAOスタック</text>
+<rect x="313.0" y="82" width="59.8" height="46" fill="#f0f0f0" stroke="#333" stroke-width="0.8"/>
+<text x="342.9" y="110" class="s" text-anchor="middle" transform="rotate(-0)">2.3</text>
+<text x="342.9" y="148" class="s" text-anchor="middle" transform="rotate(20 342.9 148)">電池側で決まる余裕</text>
+<rect x="372.8" y="82" width="46.8" height="46" fill="#f0f0f0" stroke="#333" stroke-width="0.8"/>
+<text x="396.2" y="110" class="s" text-anchor="middle" transform="rotate(-0)">1.8</text>
+<text x="396.2" y="148" class="s" text-anchor="middle" transform="rotate(20 396.2 148)">リッド</text>
+<text x="433.6" y="110" class="t" text-anchor="start">→ 外形奥行き 14.6 mm</text>
+<text x="20" y="220" class="t">案B PCB1.0 allday</text>
+<rect x="40.0" y="232" width="41.6" height="46" fill="#f0f0f0" stroke="#333" stroke-width="0.8"/>
+<text x="60.8" y="260" class="s" text-anchor="middle" transform="rotate(-0)">1.6</text>
+<text x="60.8" y="298" class="s" text-anchor="middle" transform="rotate(20 60.8 298)">背面壁</text>
+<rect x="81.6" y="232" width="20.8" height="46" fill="#f6dede" stroke="#333" stroke-width="0.8"/>
+<text x="92.0" y="260" class="s" text-anchor="middle" transform="rotate(-0)">0.8</text>
+<text x="92.0" y="298" class="s" text-anchor="middle" transform="rotate(20 92.0 298)">基板下逃げ</text>
+<rect x="102.4" y="232" width="26.0" height="46" fill="#e8f4e8" stroke="#333" stroke-width="0.8"/>
+<text x="115.4" y="260" class="s" text-anchor="middle" transform="rotate(-0)">1.0</text>
+<text x="115.4" y="298" class="s" text-anchor="middle" transform="rotate(20 115.4 298)">キャリア基板</text>
+<rect x="128.4" y="232" width="195.0" height="46" fill="#dfe8f5" stroke="#333" stroke-width="0.8"/>
+<text x="225.9" y="260" class="s" text-anchor="middle" transform="rotate(-0)">7.5</text>
+<text x="225.9" y="298" class="s" text-anchor="middle" transform="rotate(20 225.9 298)">XIAOスタック</text>
+<rect x="323.4" y="232" width="49.4" height="46" fill="#f0f0f0" stroke="#333" stroke-width="0.8"/>
+<text x="348.1" y="260" class="s" text-anchor="middle" transform="rotate(-0)">1.9</text>
+<text x="348.1" y="298" class="s" text-anchor="middle" transform="rotate(20 348.1 298)">余裕</text>
+<rect x="372.8" y="232" width="46.8" height="46" fill="#f0f0f0" stroke="#333" stroke-width="0.8"/>
+<text x="396.2" y="260" class="s" text-anchor="middle" transform="rotate(-0)">1.8</text>
+<text x="396.2" y="298" class="s" text-anchor="middle" transform="rotate(20 396.2 298)">リッド</text>
+<text x="433.6" y="260" class="t" text-anchor="start">→ 外形奥行き 14.6 mm (変化なし)</text>
+<text x="20" y="370" class="t">v1 (基板なし) slim</text>
+<rect x="40.0" y="382" width="41.6" height="46" fill="#f0f0f0" stroke="#333" stroke-width="0.8"/>
+<text x="60.8" y="410" class="s" text-anchor="middle" transform="rotate(-0)">1.6</text>
+<text x="60.8" y="448" class="s" text-anchor="middle" transform="rotate(20 60.8 448)">背面壁</text>
+<rect x="81.6" y="382" width="36.4" height="46" fill="#f6dede" stroke="#333" stroke-width="0.8"/>
+<text x="99.8" y="410" class="s" text-anchor="middle" transform="rotate(-0)">1.4</text>
+<text x="99.8" y="448" class="s" text-anchor="middle" transform="rotate(20 99.8 448)">裏面はんだ逃げ</text>
+<rect x="118.0" y="382" width="195.0" height="46" fill="#dfe8f5" stroke="#333" stroke-width="0.8"/>
+<text x="215.5" y="410" class="s" text-anchor="middle" transform="rotate(-0)">7.5</text>
+<text x="215.5" y="448" class="s" text-anchor="middle" transform="rotate(20 215.5 448)">XIAOスタック</text>
+<rect x="313.0" y="382" width="15.6" height="46" fill="#f0f0f0" stroke="#333" stroke-width="0.8"/>
+<text x="320.8" y="410" class="s" text-anchor="middle" transform="rotate(-0)">0.6</text>
+<text x="320.8" y="448" class="s" text-anchor="middle" transform="rotate(20 320.8 448)">余裕</text>
+<rect x="328.6" y="382" width="46.8" height="46" fill="#f0f0f0" stroke="#333" stroke-width="0.8"/>
+<text x="352.0" y="410" class="s" text-anchor="middle" transform="rotate(-0)">1.8</text>
+<text x="352.0" y="448" class="s" text-anchor="middle" transform="rotate(20 352.0 448)">リッド</text>
+<text x="389.4" y="410" class="t" text-anchor="start">→ 外形奥行き 12.9 mm</text>
+<text x="20" y="520" class="t">案B PCB1.0 slim</text>
+<rect x="40.0" y="532" width="41.6" height="46" fill="#f0f0f0" stroke="#333" stroke-width="0.8"/>
+<text x="60.8" y="560" class="s" text-anchor="middle" transform="rotate(-0)">1.6</text>
+<text x="60.8" y="598" class="s" text-anchor="middle" transform="rotate(20 60.8 598)">背面壁</text>
+<rect x="81.6" y="532" width="20.8" height="46" fill="#f6dede" stroke="#333" stroke-width="0.8"/>
+<text x="92.0" y="560" class="s" text-anchor="middle" transform="rotate(-0)">0.8</text>
+<text x="92.0" y="598" class="s" text-anchor="middle" transform="rotate(20 92.0 598)">基板下逃げ</text>
+<rect x="102.4" y="532" width="26.0" height="46" fill="#e8f4e8" stroke="#333" stroke-width="0.8"/>
+<text x="115.4" y="560" class="s" text-anchor="middle" transform="rotate(-0)">1.0</text>
+<text x="115.4" y="598" class="s" text-anchor="middle" transform="rotate(20 115.4 598)">キャリア基板</text>
+<rect x="128.4" y="532" width="195.0" height="46" fill="#dfe8f5" stroke="#333" stroke-width="0.8"/>
+<text x="225.9" y="560" class="s" text-anchor="middle" transform="rotate(-0)">7.5</text>
+<text x="225.9" y="598" class="s" text-anchor="middle" transform="rotate(20 225.9 598)">XIAOスタック</text>
+<rect x="323.4" y="532" width="15.6" height="46" fill="#f0f0f0" stroke="#333" stroke-width="0.8"/>
+<text x="331.2" y="560" class="s" text-anchor="middle" transform="rotate(-0)">0.6</text>
+<text x="331.2" y="598" class="s" text-anchor="middle" transform="rotate(20 331.2 598)">余裕</text>
+<rect x="339.0" y="532" width="46.8" height="46" fill="#f0f0f0" stroke="#333" stroke-width="0.8"/>
+<text x="362.4" y="560" class="s" text-anchor="middle" transform="rotate(-0)">1.8</text>
+<text x="362.4" y="598" class="s" text-anchor="middle" transform="rotate(20 362.4 598)">リッド</text>
+<text x="399.8" y="560" class="t" text-anchor="start">→ 外形奥行き 13.3 mm (+0.4)</text>
+<text x="20" y="670" class="t">案B PCB1.6 slim</text>
+<rect x="40.0" y="682" width="41.6" height="46" fill="#f0f0f0" stroke="#333" stroke-width="0.8"/>
+<text x="60.8" y="710" class="s" text-anchor="middle" transform="rotate(-0)">1.6</text>
+<text x="60.8" y="748" class="s" text-anchor="middle" transform="rotate(20 60.8 748)">背面壁</text>
+<rect x="81.6" y="682" width="20.8" height="46" fill="#f6dede" stroke="#333" stroke-width="0.8"/>
+<text x="92.0" y="710" class="s" text-anchor="middle" transform="rotate(-0)">0.8</text>
+<text x="92.0" y="748" class="s" text-anchor="middle" transform="rotate(20 92.0 748)">基板下逃げ</text>
+<rect x="102.4" y="682" width="41.6" height="46" fill="#e8f4e8" stroke="#333" stroke-width="0.8"/>
+<text x="123.2" y="710" class="s" text-anchor="middle" transform="rotate(-0)">1.6</text>
+<text x="123.2" y="748" class="s" text-anchor="middle" transform="rotate(20 123.2 748)">キャリア基板</text>
+<rect x="144.0" y="682" width="195.0" height="46" fill="#dfe8f5" stroke="#333" stroke-width="0.8"/>
+<text x="241.5" y="710" class="s" text-anchor="middle" transform="rotate(-0)">7.5</text>
+<text x="241.5" y="748" class="s" text-anchor="middle" transform="rotate(20 241.5 748)">XIAOスタック</text>
+<rect x="339.0" y="682" width="15.6" height="46" fill="#f0f0f0" stroke="#333" stroke-width="0.8"/>
+<text x="346.8" y="710" class="s" text-anchor="middle" transform="rotate(-0)">0.6</text>
+<text x="346.8" y="748" class="s" text-anchor="middle" transform="rotate(20 346.8 748)">余裕</text>
+<rect x="354.6" y="682" width="46.8" height="46" fill="#f0f0f0" stroke="#333" stroke-width="0.8"/>
+<text x="378.0" y="710" class="s" text-anchor="middle" transform="rotate(-0)">1.8</text>
+<text x="378.0" y="748" class="s" text-anchor="middle" transform="rotate(20 378.0 748)">リッド</text>
+<text x="415.4" y="710" class="t" text-anchor="start">→ 外形奥行き 13.9 mm (+1.0)</text>
+</svg>

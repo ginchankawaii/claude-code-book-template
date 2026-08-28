@@ -1,0 +1,14 @@
+%FSLAX46Y46*%
+%MOMM*%
+%TF.GenerationSoftware,MindClip,gen_pcb.py,2.0*%
+%TF.FileFunction,Paste,Bot*%
+%TF.FilePolarity,Positive*%
+G04 MC-CARRIER-A B.Paste*
+%TF.SameCoordinates,Original*%
+G01*
+%LPD*%
+%ADD10R,1.600000X1.400000*%
+D10*
+X24600000Y37900000D03*
+X24600000Y39900000D03*
+M02*

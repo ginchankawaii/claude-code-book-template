@@ -1,0 +1,9 @@
+Comment,Designator,Footprint,LCSC Part #
+"100nF","C1,C2","MindClip:C_0805_2012Metric_MC",
+"220R","R1","MindClip:R_0805_2012Metric_MC",
+"220k","R2,R4,R5","MindClip:R_0805_2012Metric_MC",
+"330k","R3","MindClip:R_0805_2012Metric_MC",
+"JST_PH_2P","J1","MindClip:JST_PH_B2B-PH-K_1x02_P2.00mm_Vertical_MC",
+"WIRE x2","J2,J3,J4","MindClip:WireLand_SMD",
+# LCSC Part # は未指定。JLCPCB の SMT 実装を使う場合は発注前に記入すること。
+# 本プロジェクトの既定は手はんだ（0805 まで）なので実装サービスは任意。

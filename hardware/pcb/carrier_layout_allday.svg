@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="410" height="528" viewBox="0 0 410 528">
+<style>text{font-family:IPAGothic,"Hiragino Sans","Yu Gothic",Meiryo,"Noto Sans JP",sans-serif}.t{font-size:8px;fill:#222}.s{font-size:6.5px;fill:#444}.h{font-size:12px;fill:#111}.d{font-size:7px;fill:#06c}</style>
+<rect width="410" height="528" fill="#fff"/>
+<rect x="34.0" y="34.0" width="342.0" height="459.9" fill="#f7f7f7" stroke="#999" stroke-width="1.2"/>
+<rect x="48.4" y="48.4" width="313.2" height="431.1" fill="#fff" stroke="#bbb" stroke-width="1.0" stroke-dasharray="4 3"/>
+<rect x="70.0" y="240.1" width="270.0" height="225.0" fill="#fdf0d5" stroke="#e0a800" stroke-width="1.0"/>
+<text x="205.0" y="357.1" class="t" text-anchor="middle">LiPo 30x25x8 (allday)</text>
+<text x="205.0" y="384.1" class="s" text-anchor="middle">キャリア基板はここには重ねられない (電池上面 z11.0)</text>
+<rect x="51.1" y="51.1" width="307.8" height="185.4" fill="#e8f4e8" stroke="#2a7" stroke-width="1.6"/>
+<rect x="169.0" y="99.7" width="108.0" height="90.0" fill="#fff" stroke="#2a7" stroke-width="1.2" stroke-dasharray="3 2"/>
+<text x="223.0" y="178.9" class="s" text-anchor="middle">BAT+ジャンパ窓 12x10</text>
+<rect x="172.6" y="63.7" width="189.0" height="160.2" fill="none" stroke="#c33" stroke-width="1.4" stroke-dasharray="5 3"/>
+<text x="267.1" y="90.7" class="t" text-anchor="middle">XIAO ESP32S3 Sense</text>
+<text x="267.1" y="112.3" class="s" text-anchor="middle">(キャリア基板上面へ直はんだ)</text>
+<text x="366.1" y="197.8" class="s" text-anchor="end">USB-C →</text>
+<rect x="330.7" y="214.9" width="9.9" height="18.0" fill="#f2c200" stroke="#a80" stroke-width="0.6"/>
+<text x="335.7" y="247.3" class="s" text-anchor="middle" transform="rotate(-90 335.7 247.3)">5V</text>
+<rect x="307.9" y="214.9" width="9.9" height="18.0" fill="#f2c200" stroke="#a80" stroke-width="0.6"/>
+<text x="312.8" y="247.3" class="s" text-anchor="middle" transform="rotate(-90 312.8 247.3)">GND</text>
+<rect x="285.0" y="214.9" width="9.9" height="18.0" fill="#f2c200" stroke="#a80" stroke-width="0.6"/>
+<text x="290.0" y="247.3" class="s" text-anchor="middle" transform="rotate(-90 290.0 247.3)">3V3</text>
+<rect x="262.1" y="214.9" width="9.9" height="18.0" fill="#f2c200" stroke="#a80" stroke-width="0.6"/>
+<text x="267.1" y="247.3" class="s" text-anchor="middle" transform="rotate(-90 267.1 247.3)">D10</text>
+<rect x="239.3" y="214.9" width="9.9" height="18.0" fill="#f2c200" stroke="#a80" stroke-width="0.6"/>
+<text x="244.2" y="247.3" class="s" text-anchor="middle" transform="rotate(-90 244.2 247.3)">D9</text>
+<rect x="216.4" y="214.9" width="9.9" height="18.0" fill="#f2c200" stroke="#a80" stroke-width="0.6"/>
+<text x="221.4" y="247.3" class="s" text-anchor="middle" transform="rotate(-90 221.4 247.3)">D8</text>
+<rect x="193.6" y="214.9" width="9.9" height="18.0" fill="#f2c200" stroke="#a80" stroke-width="0.6"/>
+<text x="198.5" y="247.3" class="s" text-anchor="middle" transform="rotate(-90 198.5 247.3)">D7</text>
+<rect x="330.7" y="54.7" width="9.9" height="18.0" fill="#f2c200" stroke="#a80" stroke-width="0.6"/>
+<text x="335.7" y="48.4" class="s" text-anchor="middle" transform="rotate(-90 335.7 48.4)">D0</text>
+<rect x="307.9" y="54.7" width="9.9" height="18.0" fill="#f2c200" stroke="#a80" stroke-width="0.6"/>
+<text x="312.8" y="48.4" class="s" text-anchor="middle" transform="rotate(-90 312.8 48.4)">D1</text>
+<rect x="285.0" y="54.7" width="9.9" height="18.0" fill="#f2c200" stroke="#a80" stroke-width="0.6"/>
+<text x="290.0" y="48.4" class="s" text-anchor="middle" transform="rotate(-90 290.0 48.4)">D2</text>
+<rect x="262.1" y="54.7" width="9.9" height="18.0" fill="#f2c200" stroke="#a80" stroke-width="0.6"/>
+<text x="267.1" y="48.4" class="s" text-anchor="middle" transform="rotate(-90 267.1 48.4)">D3</text>
+<rect x="239.3" y="54.7" width="9.9" height="18.0" fill="#f2c200" stroke="#a80" stroke-width="0.6"/>
+<text x="244.2" y="48.4" class="s" text-anchor="middle" transform="rotate(-90 244.2 48.4)">D4</text>
+<rect x="216.4" y="54.7" width="9.9" height="18.0" fill="#f2c200" stroke="#a80" stroke-width="0.6"/>
+<text x="221.4" y="48.4" class="s" text-anchor="middle" transform="rotate(-90 221.4 48.4)">D5</text>
+<rect x="193.6" y="54.7" width="9.9" height="18.0" fill="#f2c200" stroke="#a80" stroke-width="0.6"/>
+<text x="198.5" y="48.4" class="s" text-anchor="middle" transform="rotate(-90 198.5 48.4)">D6</text>
+<rect x="55.6" y="190.6" width="54.0" height="40.5" fill="#cfe3ff" stroke="#369" stroke-width="0.8"/>
+<text x="82.6" y="215.4" class="s" text-anchor="middle">J1</text>
+<rect x="118.6" y="209.5" width="27.0" height="21.6" fill="#cfe3ff" stroke="#369" stroke-width="0.8"/>
+<text x="132.1" y="224.8" class="s" text-anchor="middle">Q1</text>
+<rect x="118.6" y="182.5" width="27.0" height="21.6" fill="#cfe3ff" stroke="#369" stroke-width="0.8"/>
+<text x="132.1" y="197.8" class="s" text-anchor="middle">Q2</text>
+<rect x="55.6" y="152.8" width="18.0" height="11.7" fill="#cfe3ff" stroke="#369" stroke-width="0.8"/>
+<text x="64.6" y="163.2" class="s" text-anchor="middle">R1</text>
+<rect x="79.0" y="152.8" width="18.0" height="11.7" fill="#cfe3ff" stroke="#369" stroke-width="0.8"/>
+<text x="88.0" y="163.2" class="s" text-anchor="middle">R2</text>
+<rect x="102.4" y="152.8" width="18.0" height="11.7" fill="#cfe3ff" stroke="#369" stroke-width="0.8"/>
+<text x="111.4" y="163.2" class="s" text-anchor="middle">R3</text>
+<rect x="55.6" y="133.0" width="18.0" height="11.7" fill="#cfe3ff" stroke="#369" stroke-width="0.8"/>
+<text x="64.6" y="143.4" class="s" text-anchor="middle">R4</text>
+<rect x="79.0" y="133.0" width="18.0" height="11.7" fill="#cfe3ff" stroke="#369" stroke-width="0.8"/>
+<text x="88.0" y="143.4" class="s" text-anchor="middle">R5</text>
+<rect x="102.4" y="133.0" width="18.0" height="11.7" fill="#cfe3ff" stroke="#369" stroke-width="0.8"/>
+<text x="111.4" y="143.4" class="s" text-anchor="middle">C1</text>
+<rect x="125.8" y="133.0" width="18.0" height="11.7" fill="#cfe3ff" stroke="#369" stroke-width="0.8"/>
+<text x="134.8" y="143.4" class="s" text-anchor="middle">C2</text>
+<rect x="147.4" y="151.9" width="18.0" height="18.0" fill="#ffe0e0" stroke="#c66" stroke-width="0.8"/>
+<text x="156.4" y="165.4" class="s" text-anchor="middle">TP1</text>
+<rect x="147.4" y="78.1" width="18.0" height="23.4" fill="#ffe0e0" stroke="#c66" stroke-width="0.8"/>
+<text x="156.4" y="94.3" class="s" text-anchor="middle">J2</text>
+<rect x="55.6" y="97.9" width="18.0" height="23.4" fill="#ffe0e0" stroke="#c66" stroke-width="0.8"/>
+<text x="64.6" y="114.1" class="s" text-anchor="middle">J3</text>
+<rect x="53.8" y="59.2" width="18.9" height="18.9" fill="#ffe0e0" stroke="#c66" stroke-width="0.8"/>
+<text x="63.2" y="73.1" class="s" text-anchor="middle">H1</text>
+<rect x="147.4" y="209.5" width="18.9" height="18.9" fill="#ffe0e0" stroke="#c66" stroke-width="0.8"/>
+<text x="156.8" y="223.5" class="s" text-anchor="middle">H2</text>
+<text x="-254.0" y="250.9" class="s" text-anchor="start">C1: 100n 0805 (VBAT)  H0.6</text>
+<text x="-254.0" y="268.0" class="s" text-anchor="start">C2: 100n 0805 (VBUS)  H0.6</text>
+<text x="-254.0" y="285.1" class="s" text-anchor="start">H1: 位置決め穴 φ2.1</text>
+<text x="-254.0" y="302.2" class="s" text-anchor="start">H2: 位置決め穴 φ2.1</text>
+<text x="-254.0" y="319.3" class="s" text-anchor="start">J1: JST B2B-PH-K-S 2P  H6.0</text>
+<text x="-254.0" y="336.4" class="s" text-anchor="start">J2: スイッチ 2P THT (D1/GND)</text>
+<text x="-254.0" y="353.5" class="s" text-anchor="start">J3: LED 2P THT (LED+/GND)</text>
+<text x="-254.0" y="370.6" class="s" text-anchor="start">Q1: AO3401A SOT-23  H1.1</text>
+<text x="-254.0" y="387.7" class="s" text-anchor="start">Q2: AO3401A SOT-23  H1.1</text>
+<text x="-254.0" y="404.8" class="s" text-anchor="start">R1: 220R 0805 (LED)  H0.6</text>
+<text x="-254.0" y="421.9" class="s" text-anchor="start">R2: 220k 0805 (VBUS hi)  H0.6</text>
+<text x="-254.0" y="439.0" class="s" text-anchor="start">R3: 330k 0805 (VBUS lo)  H0.6</text>
+<text x="-254.0" y="456.1" class="s" text-anchor="start">R4: 220k 0805 (VBAT hi)  H0.6</text>
+<text x="-254.0" y="473.2" class="s" text-anchor="start">R5: 220k 0805 (VBAT lo)  H0.6</text>
+<text x="-254.0" y="490.3" class="s" text-anchor="start">TP1: BAT+ ジャンパ (XIAO裏 BAT+ へ)</text>
+<text x="34.0" y="7.0" class="h" text-anchor="start">MC-CARRIER-A — キャリア基板レイアウト (allday) 実寸 34.2 x 20.6 x 1.0t mm</text>
+<text x="34.0" y="26.8" class="d" text-anchor="start">筐体内寸 34.8 x 47.9 / 外形 38.0 x 51.1 x 14.6 mm (GAP_BX=1.8 M_TOP=1.7 に拡大した前提)</text>
+</svg>

@@ -1,0 +1,1299 @@
+{
+  "schema": "mindclip-netlist/1.1",
+  "project": "MindClip DIY",
+  "revision": "rev.1",
+  "date": "2026-08-28",
+  "primary_config": "A1_HARNESS_V15",
+  "reading_rule": "v1.5 を実装する後段工程は config == 'A1_HARNESS_V15' の components / nets のみを読むこと。V2_SENSE_SATELLITE は設計済みだが v1.5 では実装しない。optional_blocks は一切実装しない。",
+  "source_documents": [
+    "hardware/pcb/SCHEMATIC.md",
+    "hardware/ELECTRICAL.md",
+    "hardware/MECHANICAL.md",
+    "hardware/bom.md",
+    "hardware/pcb/OPTION_A_no_pcb.md"
+  ],
+  "configurations": [
+    {
+      "id": "A1_HARNESS_V15",
+      "name": "案A-1 ハーネス v1.5（採用）",
+      "adopted": true,
+      "buildable": true,
+      "board": null,
+      "board_note": "キャリア基板・ユニバーサル基板とも作らない。全て空中配線＋コネクタ。",
+      "hand_solder_points": 10,
+      "added_height_mm": 0.0,
+      "case_change_required": false,
+      "closes_vbus_detect": false,
+      "closes_battery_monitor": false,
+      "removes_battery_polarity_risk": false,
+      "components": [
+        "U1",
+        "BT1",
+        "J1",
+        "SW1",
+        "R1",
+        "D1"
+      ],
+      "nets": [
+        "GND",
+        "BATP",
+        "BATN",
+        "SW_IN",
+        "LED_DRV",
+        "LED_A"
+      ]
+    },
+    {
+      "id": "V2_SENSE_SATELLITE",
+      "name": "[v2 / 非実装] VBUS検出＋電池電圧監視（案D サテライト基板に実装）",
+      "adopted": false,
+      "buildable": "gated",
+      "extends": "A1_HARNESS_V15",
+      "board": {
+        "type": "perfboard",
+        "part": "秋月 112019 (1.0mm厚 ユニバーサル基板)",
+        "size_mm": [
+          10.2,
+          15.9
+        ],
+        "grid": "2.54mm / 4x6 = 24穴",
+        "placement_mm": {
+          "x": [
+            1.9,
+            12.1
+          ],
+          "y": [
+            28.4,
+            44.3
+          ],
+          "z": [
+            1.6,
+            2.6
+          ]
+        },
+        "variant_support": [
+          "allday"
+        ],
+        "variant_note": "slim はコネクタ天井余裕が +0.2mm しかないため非推奨（allday 限定構成）。"
+      },
+      "gate": "SCHEMATIC.md §9.4 の離脱ゲートを1つ以上満たし、かつ XIAOスタック総厚の実測が終わってから着手する。",
+      "forbidden_implementation": "空中配線（案A-2）での実装は禁止。3端子空中スプライスが3箇所生じ、slim では左ポケット容積を103〜131%超過する。",
+      "closes_vbus_detect": true,
+      "closes_battery_monitor": true,
+      "components": [
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "C1",
+        "C2"
+      ],
+      "nets": [
+        "VBUS",
+        "VBUS_SENSE",
+        "VBAT_SENSE",
+        "GND",
+        "BATP"
+      ]
+    }
+  ],
+  "components": [
+    {
+      "ref": "U1",
+      "joint_type": "solder",
+      "config": "A1_HARNESS_V15",
+      "value": "XIAO ESP32S3 Sense",
+      "description": "Seeed Studio XIAO ESP32S3 + Sense拡張ボード（カメラは取り外して未使用）",
+      "mpn": "XIAO ESP32S3 Sense",
+      "supplier": "秋月電子 118079",
+      "package": "module 21.0 x 17.8 mm",
+      "footprint": "Seeed-Studio/OPL_Kicad_Library:XIAO-ESP32S3 (castellated 2x7 / P2.54mm)",
+      "footprint_verified": false,
+      "footprint_note": "v1.5 では基板を作らないため参考情報。基板化する場合は必ず Seeed 公式 KiCad ライブラリのフットプリントを使い、列間距離を手打ちしないこと（17.78mm は外形幅 17.8mm と整合するが未検証。案Cが使っていた 15.24mm は7ピンの列方向スパンであって列間ではないので流用禁止）。",
+      "populate": true,
+      "pins": {
+        "D0": {
+          "pad": 1,
+          "gpio": 1,
+          "adc": "ADC1_CH0",
+          "rtc_gpio": true,
+          "alt": "A0",
+          "use_v15": null,
+          "use_v2": "VBUS_SENSE"
+        },
+        "D1": {
+          "pad": 2,
+          "gpio": 2,
+          "adc": "ADC1_CH1",
+          "rtc_gpio": true,
+          "alt": "A1",
+          "use_v15": "SW_IN",
+          "use_v2": "SW_IN"
+        },
+        "D2": {
+          "pad": 3,
+          "gpio": 3,
+          "adc": "ADC1_CH2",
+          "rtc_gpio": true,
+          "alt": "A2/strap",
+          "use_v15": null,
+          "use_v2": null,
+          "forbidden": "ストラッピングピン(JTAG選択)。恒久的に使用禁止。"
+        },
+        "D3": {
+          "pad": 4,
+          "gpio": 4,
+          "adc": "ADC1_CH3",
+          "rtc_gpio": true,
+          "alt": "A3",
+          "use_v15": "LED_DRV",
+          "use_v2": "LED_DRV"
+        },
+        "D4": {
+          "pad": 5,
+          "gpio": 5,
+          "adc": "ADC1_CH4",
+          "rtc_gpio": true,
+          "alt": "A4/SDA",
+          "use_v15": null,
+          "use_v2": "VBAT_SENSE"
+        },
+        "D5": {
+          "pad": 6,
+          "gpio": 6,
+          "adc": "ADC1_CH5",
+          "rtc_gpio": true,
+          "alt": "A5/SCL",
+          "use_v15": null,
+          "use_v2": null,
+          "note": "唯一の予備ADCピン。空けておく。"
+        },
+        "D6": {
+          "pad": 7,
+          "gpio": 43,
+          "adc": null,
+          "rtc_gpio": false,
+          "alt": "U0TXD",
+          "use_v15": null,
+          "use_v2": null
+        },
+        "D7": {
+          "pad": 8,
+          "gpio": 44,
+          "adc": null,
+          "rtc_gpio": false,
+          "alt": "U0RXD",
+          "use_v15": null,
+          "use_v2": null
+        },
+        "D8": {
+          "pad": 9,
+          "gpio": 7,
+          "adc": "ADC1_CH6",
+          "rtc_gpio": true,
+          "alt": "SCK",
+          "use_v15": null,
+          "use_v2": null,
+          "forbidden": "Sense拡張ボードの microSD SPI SCK が使用中。スタブでも接続禁止。"
+        },
+        "D9": {
+          "pad": 10,
+          "gpio": 8,
+          "adc": "ADC1_CH7",
+          "rtc_gpio": true,
+          "alt": "MISO",
+          "use_v15": null,
+          "use_v2": null,
+          "forbidden": "microSD SPI MISO が使用中。接続禁止。"
+        },
+        "D10": {
+          "pad": 11,
+          "gpio": 9,
+          "adc": "ADC1_CH8",
+          "rtc_gpio": true,
+          "alt": "MOSI",
+          "use_v15": null,
+          "use_v2": null,
+          "forbidden": "microSD SPI MOSI が使用中。接続禁止。"
+        },
+        "3V3": {
+          "pad": 12,
+          "gpio": null,
+          "adc": null,
+          "rtc_gpio": false,
+          "alt": "LDO出力",
+          "use_v15": null,
+          "use_v2": null
+        },
+        "GND": {
+          "pad": 13,
+          "gpio": null,
+          "adc": null,
+          "rtc_gpio": false,
+          "alt": "GND",
+          "use_v15": "GND",
+          "use_v2": "GND"
+        },
+        "5V": {
+          "pad": 14,
+          "gpio": null,
+          "adc": null,
+          "rtc_gpio": false,
+          "alt": "USB VBUS直結",
+          "use_v15": null,
+          "use_v2": "VBUS"
+        },
+        "BATP": {
+          "pad": "rear_pad_+",
+          "gpio": null,
+          "adc": null,
+          "rtc_gpio": false,
+          "alt": "裏面 BAT+ パッド",
+          "use_v15": "BATP",
+          "use_v2": "BATP",
+          "note": "USB-Cコネクタから遠い側が＋（Seeed公式wiki）。"
+        },
+        "BATN": {
+          "pad": "rear_pad_-",
+          "gpio": null,
+          "adc": null,
+          "rtc_gpio": false,
+          "alt": "裏面 BAT− パッド",
+          "use_v15": "BATN",
+          "use_v2": "BATN",
+          "note": "USB-Cコネクタに近い側が−（Seeed公式wiki）。"
+        }
+      },
+      "pad_numbering_note": "pad 1-7 = 左列(USB側から D0..D6)、pad 8-14 = 右列(D7..D10, 3V3, GND, 5V)。XIAO共通フットプリントの慣例に基づく assumption。",
+      "internal_reserved_gpio": {
+        "GPIO41": "PDMマイク DATA（拡張ボード内部・外部14ピンには出ていない）",
+        "GPIO42": "PDMマイク CLK（同上）",
+        "GPIO7": "microSD SCK",
+        "GPIO8": "microSD MISO",
+        "GPIO9": "microSD MOSI",
+        "GPIO21": "microSD CS ＝ 内蔵ユーザーLED共用（外付けLEDを使う電気的根拠）"
+      }
+    },
+    {
+      "ref": "BT1",
+      "joint_type": "mate",
+      "config": "A1_HARNESS_V15",
+      "value": "LiPo 802530 800mAh (allday) / 502530 500mAh (slim)",
+      "description": "保護回路(PCM)内蔵・リード線付きリチウムポリマー電池。PCM放電定格は連続500mA(1C)以上・瞬時1A程度を許容すること。",
+      "supplier": "Amazon（秋月に該当サイズなし）",
+      "package": "pouch 30 x 25 x 8.0mm (allday) / 30 x 25 x 5.0mm (slim)",
+      "footprint": null,
+      "populate": true,
+      "pins": {
+        "P": {
+          "pad": "red_lead",
+          "note": "正極。リード色を信用せずテスタで確認（§5.4④）。"
+        },
+        "N": {
+          "pad": "black_lead",
+          "note": "負極。"
+        }
+      },
+      "mates_with": "J1",
+      "assumption": "セル側に JST-PH2.0 プラグが付いている個体を想定。付いていない場合はピグテールのオス側を電池リードにはんだ付けする（はんだ点+2）。"
+    },
+    {
+      "ref": "J1",
+      "joint_type": "crimp_factory",
+      "config": "A1_HARNESS_V15",
+      "value": "JST PH 2.0mm 2P コネクタ付きコード（プリクリンプ・圧着工具不要）",
+      "description": "電池を着脱可能にする極性キー付きコネクタ。BT1 のプラグと嵌合する側。",
+      "supplier": "Amazon（型番未検証=assumption）／秋月 105679 は相手側の性別・極性を要確認",
+      "package": "wire-to-wire pigtail",
+      "footprint": null,
+      "populate": true,
+      "rating": {
+        "current_a": 2.0,
+        "margin_vs_peak_300ma": "6.6x"
+      },
+      "mated_body_mm": {
+        "x": 5.8,
+        "y": 11.0,
+        "z": 4.5
+      },
+      "gender": "XIAO側（ピグテール）はコンタクトが奥まった受け側、セル側が相手側。嵌合前に常時4.2Vで帯電しているのは電池側なので、電池側の露出コンタクトを減らす向きに選ぶ（SCHEMATIC §5.2.2）。市販のオス・メス組は2本入りなので、セル到着後に嵌合する側を選び余りは予備にする。",
+      "placement_mm": {
+        "x": [
+          1.6,
+          7.4
+        ],
+        "y": [
+          28.6,
+          39.6
+        ],
+        "z": [
+          1.6,
+          6.1
+        ]
+      },
+      "placement_rule": "必ず Y方向に長辺を向けて床置きし、左内壁(x=1.6)に密着させてホットボンドで点付け固定する。断面 5.8x4.5 のうち 4.5 を高さ(z)、5.8 を幅(x) にして寝かせる（ロール指定）。ケーブル側も嵌合体から5-10mmの位置で別途固定し、嵌合部に引張が伝わらないようにする（SCHEMATIC §5.2.3）。X方向に寝かせると利用可能幅10.8mm(x1.6..12.4)を超過して xiao_stops[0] と LED曲げリード帯に干渉する。",
+      "placement_note": "rev2 で x3.0..8.8 / y31.0..42.0 から変更。旧値は CAD が SS-12D00 の端子3本(sw_terms)と LED の曲げリード(led_leads)をモデル化していなかった時点のもので、slim では端子との分離が 0.00mm（熱収縮込みで -1.35mm の実干渉）だった。",
+      "pins": {
+        "1": {
+          "pad": 1,
+          "polarity": "+",
+          "note": "キーは上下逆挿しのみを防ぐ。セル内部の赤黒逆結線は防げない（§5.4）。"
+        },
+        "2": {
+          "pad": 2,
+          "polarity": "-"
+        }
+      }
+    },
+    {
+      "ref": "SW1",
+      "joint_type": "solder",
+      "config": "A1_HARNESS_V15",
+      "value": "SS-12D00G3 スライドスイッチ 1回路2接点",
+      "description": "録音ON/OFF。電源断ではなく GPIO 入力（電池ラインを切るとUSB充電ができなくなるため）。",
+      "supplier": "秋月 115707",
+      "package": "THT 8.7 x 3.7 x 3.5mm (レバー突出2.0mm)",
+      "footprint": null,
+      "populate": true,
+      "pins": {
+        "1": {
+          "pad": 1,
+          "role": "端子A（片端）",
+          "use": "GND（デイジーチェーンの中継点）"
+        },
+        "2": {
+          "pad": 2,
+          "role": "中央（コモン）",
+          "use": "SW_IN"
+        },
+        "3": {
+          "pad": 3,
+          "role": "端子B（もう一方の端）",
+          "use": "未接続。切り落としてよい"
+        }
+      },
+      "logic": "レバーを端子A側へ = コモンが端子Aに接続 = SW_IN が GND に短絡 = LOW = 録音",
+      "solder_note": "端子1には黒線が2本入る（A-1唯一の2導体接合）。2本を先に撚る→予備はんだ→端子へ一度で流すこと。1本ずつ後付けすると先に付けた線が溶けて外れる。"
+    },
+    {
+      "ref": "R1",
+      "joint_type": "solder",
+      "config": "A1_HARNESS_V15",
+      "value": "220R",
+      "description": "LED電流制限。I=(3.3-2.0)/220=5.91mA、消費7.7mW（1/4Wに対し余裕32倍）。",
+      "spec": {
+        "resistance_ohm": 220,
+        "tolerance": "±5%",
+        "power_w": 0.25
+      },
+      "supplier": "秋月 125221",
+      "package": "axial carbon 6.3 x 2.3mm",
+      "footprint": null,
+      "populate": true,
+      "pins": {
+        "1": {
+          "pad": 1,
+          "note": "LED_DRV側"
+        },
+        "2": {
+          "pad": 2,
+          "note": "LED_A側"
+        }
+      },
+      "alternates": [
+        {
+          "option": "抵抗内蔵LED（秋月 116692 OSR5JA3134A-5V）に置換して R1 を廃止",
+          "effect": "はんだ -1点。LED_DRV と LED_A が1ネットに縮退。",
+          "status": "2台目以降の任意置換。1台目のデフォルトにはしない。",
+          "reason": "内蔵抵抗値が非公開=assumption。3.3V駆動での実電流は4〜9mAと推定のみで、暗すぎた場合に手戻りが出る。"
+        }
+      ]
+    },
+    {
+      "ref": "D1",
+      "joint_type": "solder",
+      "config": "A1_HARNESS_V15",
+      "value": "OSR5JA3Z74A 赤色LED 3mm",
+      "description": "録音中インジケータ。リッド裏に接着され、配線で本体と繋がる。",
+      "spec": {
+        "vf_typ_v": 2.1,
+        "vf_design_v": 2.0,
+        "wavelength_nm": 625,
+        "current_ma": 5.91,
+        "pwm_duty": "10-20% (平均0.59-1.18mA)"
+      },
+      "supplier": "秋月 111577",
+      "package": "THT 3mm 砲弾型",
+      "footprint": null,
+      "populate": true,
+      "pins": {
+        "A": {
+          "pad": "anode",
+          "note": "長い足"
+        },
+        "K": {
+          "pad": "cathode",
+          "note": "短い足・フランジのある側"
+        }
+      }
+    },
+    {
+      "ref": "R2",
+      "joint_type": "solder",
+      "config": "V2_SENSE_SATELLITE",
+      "value": "220k",
+      "description": "VBUS分圧の上側。",
+      "spec": {
+        "resistance_ohm": 220000,
+        "tolerance": "±1% 推奨（±5%可・§6.3）",
+        "power_w": 0.167
+      },
+      "supplier": "秋月 116224 (1/6W 220k)",
+      "package": "axial 3.5 x 1.8mm",
+      "footprint": "R_Axial_DIN0204_L3.6mm_D1.6mm_P5.08mm_Horizontal",
+      "populate": false,
+      "pins": {
+        "1": {
+          "pad": 1,
+          "note": "VBUS側"
+        },
+        "2": {
+          "pad": 2,
+          "note": "VBUS_SENSE側"
+        }
+      }
+    },
+    {
+      "ref": "R3",
+      "joint_type": "solder",
+      "config": "V2_SENSE_SATELLITE",
+      "value": "330k",
+      "description": "VBUS分圧の下側。比 0.600（E24全探索で最良グループ）。",
+      "spec": {
+        "resistance_ohm": 330000,
+        "tolerance": "±1% 推奨",
+        "power_w": 0.167
+      },
+      "supplier": "秋月 116334（型番規則からの推定・未検証）／確実な代替 1/4W 330k = 114281",
+      "package": "axial 3.5 x 1.8mm",
+      "footprint": "R_Axial_DIN0204_L3.6mm_D1.6mm_P5.08mm_Horizontal",
+      "populate": false,
+      "pins": {
+        "1": {
+          "pad": 1,
+          "note": "VBUS_SENSE側"
+        },
+        "2": {
+          "pad": 2,
+          "note": "GND側"
+        }
+      }
+    },
+    {
+      "ref": "R4",
+      "joint_type": "solder",
+      "config": "V2_SENSE_SATELLITE",
+      "value": "220k",
+      "description": "電池電圧分圧の上側。",
+      "spec": {
+        "resistance_ohm": 220000,
+        "tolerance": "±1% 推奨（±5%なら§7.2のファーム1点校正が必須）",
+        "power_w": 0.167
+      },
+      "supplier": "秋月 116224",
+      "package": "axial 3.5 x 1.8mm",
+      "footprint": "R_Axial_DIN0204_L3.6mm_D1.6mm_P5.08mm_Horizontal",
+      "populate": false,
+      "pins": {
+        "1": {
+          "pad": 1,
+          "note": "BATP側。基板上のBATPランドから取ること（電池リードの中間被覆剥き＝スプライスは禁止）"
+        },
+        "2": {
+          "pad": 2,
+          "note": "VBAT_SENSE側"
+        }
+      }
+    },
+    {
+      "ref": "R5",
+      "joint_type": "solder",
+      "config": "V2_SENSE_SATELLITE",
+      "value": "220k",
+      "description": "電池電圧分圧の下側。比 0.500。",
+      "spec": {
+        "resistance_ohm": 220000,
+        "tolerance": "±1% 推奨",
+        "power_w": 0.167
+      },
+      "supplier": "秋月 116224",
+      "package": "axial 3.5 x 1.8mm",
+      "footprint": "R_Axial_DIN0204_L3.6mm_D1.6mm_P5.08mm_Horizontal",
+      "populate": false,
+      "pins": {
+        "1": {
+          "pad": 1,
+          "note": "VBAT_SENSE側"
+        },
+        "2": {
+          "pad": 2,
+          "note": "GND側"
+        }
+      }
+    },
+    {
+      "ref": "C1",
+      "joint_type": "solder",
+      "config": "V2_SENSE_SATELLITE",
+      "value": "0.1uF",
+      "description": "VBAT_SENSE のADC入力バイパス。Thevenin 110kΩ に対し実質必須（τ=11.0ms）。",
+      "spec": {
+        "capacitance_f": 1e-07,
+        "voltage_v": 50,
+        "dielectric": "X7R/積層セラミック"
+      },
+      "supplier": "秋月（型番 assumption）",
+      "package": "THT 2.54mm ピッチ",
+      "footprint": "C_Disc_D3.0mm_W1.6mm_P2.50mm",
+      "populate": false,
+      "pins": {
+        "1": {
+          "pad": 1,
+          "note": "VBAT_SENSE側"
+        },
+        "2": {
+          "pad": 2,
+          "note": "GND側"
+        }
+      }
+    },
+    {
+      "ref": "C2",
+      "joint_type": "solder",
+      "config": "V2_SENSE_SATELLITE",
+      "value": "0.1uF",
+      "description": "VBUS_SENSE のADC入力バイパス。Thevenin 132kΩ（τ=13.2ms）。",
+      "spec": {
+        "capacitance_f": 1e-07,
+        "voltage_v": 50,
+        "dielectric": "X7R/積層セラミック"
+      },
+      "supplier": "秋月（型番 assumption）",
+      "package": "THT 2.54mm ピッチ",
+      "footprint": "C_Disc_D3.0mm_W1.6mm_P2.50mm",
+      "populate": false,
+      "pins": {
+        "1": {
+          "pad": 1,
+          "note": "VBUS_SENSE側"
+        },
+        "2": {
+          "pad": 2,
+          "note": "GND側"
+        }
+      }
+    }
+  ],
+  "nets": [
+    {
+      "name": "GND",
+      "config": "A1_HARNESS_V15",
+      "mode": "define",
+      "class": "power",
+      "nominal_v": 0.0,
+      "connections": [
+        "U1.GND",
+        "SW1.1",
+        "D1.K"
+      ],
+      "topology": "daisy_chain",
+      "topology_order": [
+        "U1.GND",
+        "SW1.1",
+        "D1.K"
+      ],
+      "note": "空中3端子スプライス（より合わせ分岐）を廃止するため、中継点をスイッチ端子側に置く。LEDリードは細くリッド開閉の引張を受けるので中継点にしない。"
+    },
+    {
+      "name": "BATP",
+      "config": "A1_HARNESS_V15",
+      "mode": "define",
+      "class": "power",
+      "nominal_v": 3.7,
+      "range_v": [
+        3.0,
+        4.2
+      ],
+      "connections": [
+        "U1.BATP",
+        "J1.1",
+        "BT1.P"
+      ],
+      "wire": {
+        "color": "赤",
+        "awg": 28
+      },
+      "note": "XIAO内蔵 BQ25101 の充電/給電経路。USB挿入中は充電出力(〜4.2V)に引かれる。"
+    },
+    {
+      "name": "BATN",
+      "config": "A1_HARNESS_V15",
+      "mode": "define",
+      "class": "power",
+      "nominal_v": 0.0,
+      "connections": [
+        "U1.BATN",
+        "J1.2",
+        "BT1.N"
+      ],
+      "wire": {
+        "color": "黒",
+        "awg": 28
+      },
+      "expected_shorted_to": "GND",
+      "verification": "未検証。SCHEMATIC.md §5.4 手順② で J1 の−側と U1.GND ピンの導通を確認すること。導通すれば GND と同一ネット。導通しなければ本ネットを独立ネットとして扱い、本ファイルを実測結果で更新する。"
+    },
+    {
+      "name": "SW_IN",
+      "config": "A1_HARNESS_V15",
+      "mode": "define",
+      "class": "signal_digital",
+      "nominal_v": null,
+      "connections": [
+        "U1.D1",
+        "SW1.2"
+      ],
+      "wire": {
+        "color": "青",
+        "awg": 28,
+        "length_mm": 50
+      },
+      "pullup": {
+        "type": "internal",
+        "resistance_ohm": 45000,
+        "current_on_ua": 73,
+        "current_off_ua": 0
+      },
+      "logic": "ON = GNDへ短絡 = LOW = 録音 / OFF = 開放 = 内部プルアップで HIGH = 同期→deep sleep",
+      "firmware_requirement": "deep sleep 移行前に rtc_gpio_pullup_en(GPIO_NUM_2) を実行すること（通常GPIOのプルアップは deep sleep で無効化される）。ウェイクは EXT0 (GPIO2, LOW)。ソフトデバウンス 20-50ms。"
+    },
+    {
+      "name": "LED_DRV",
+      "config": "A1_HARNESS_V15",
+      "mode": "define",
+      "class": "signal_digital",
+      "nominal_v": 3.3,
+      "connections": [
+        "U1.D3",
+        "R1.1"
+      ],
+      "wire": {
+        "color": "橙",
+        "awg": 28,
+        "length_mm": {
+          "allday": 60,
+          "slim": 45
+        }
+      },
+      "note": "LEDC(PWM) デューティ 10-20% で微灯を実現する。GPIO定格40mAに対し 5.91mA = 15%。"
+    },
+    {
+      "name": "LED_A",
+      "config": "A1_HARNESS_V15",
+      "mode": "define",
+      "class": "signal_analog",
+      "nominal_v": 2.0,
+      "connections": [
+        "R1.2",
+        "D1.A"
+      ],
+      "note": "熱収縮チューブで個別絶縁。R1 は空中配線で LED リードに直結する。"
+    },
+    {
+      "name": "VBUS",
+      "config": "V2_SENSE_SATELLITE",
+      "mode": "define",
+      "class": "power",
+      "nominal_v": 5.0,
+      "range_v": [
+        4.4,
+        5.25
+      ],
+      "connections": [
+        "U1.5V",
+        "R2.1"
+      ],
+      "wire": {
+        "color": "紫（専用色）",
+        "awg": 28
+      },
+      "routing_rule": "電池リード・LED配線と同じ束に入れない。左内壁寄りではなく上壁寄りを通す。GND/BATPと擦れた場合の故障が即発熱であるため、保護が熱収縮チューブだけになる箇所を作らない。",
+      "note": "XIAO の 5V ピンは USB VBUS 直結（直列ダイオードなし）。USB非挿入時は 0V。"
+    },
+    {
+      "name": "VBUS_SENSE",
+      "config": "V2_SENSE_SATELLITE",
+      "mode": "define",
+      "class": "signal_analog",
+      "connections": [
+        "R2.2",
+        "R3.1",
+        "C2.1",
+        "U1.D0"
+      ],
+      "divider": {
+        "r_top": "R2 220k",
+        "r_bottom": "R3 330k",
+        "ratio": 0.6,
+        "out_v": {
+          "4.40": 2.64,
+          "5.00": 3.0,
+          "5.25": 3.15
+        },
+        "worst_case_tol5pct": {
+          "low_at_4.40V": 2.533,
+          "high_at_5.25V": 3.275,
+          "vih_margin_mv": 58
+        },
+        "worst_case_tol1pct": {
+          "low_at_4.40V": 2.619,
+          "high_at_5.25V": 3.175,
+          "vih_margin_mv": 144
+        },
+        "thevenin_ohm": 132000,
+        "tau_ms": 13.2,
+        "current_ua": {
+          "at_5.00V": 9.09,
+          "at_5.25V": 9.55,
+          "source": "USB挿入中のみ。電池からは流れない。"
+        }
+      },
+      "detection_method": "primary=ADC (ADC1_CH0, 閾値2.00V = VBUS換算3.33V) / secondary=EXT1 ANY_HIGH ウェイク（±1%抵抗使用時のみ）",
+      "note": "USB非挿入時は R3 で GND に引かれ 0V。入力フロートなし。"
+    },
+    {
+      "name": "VBAT_SENSE",
+      "config": "V2_SENSE_SATELLITE",
+      "mode": "define",
+      "class": "signal_analog",
+      "connections": [
+        "R4.2",
+        "R5.1",
+        "C1.1",
+        "U1.D4"
+      ],
+      "divider": {
+        "r_top": "R4 220k",
+        "r_bottom": "R5 220k",
+        "ratio": 0.5,
+        "out_v": {
+          "3.00": 1.5,
+          "3.40": 1.7,
+          "3.70": 1.85,
+          "4.20": 2.1
+        },
+        "error_at_4.20V_mv": {
+          "tol5pct": 210,
+          "tol1pct": 42
+        },
+        "thevenin_ohm": 110000,
+        "tau_ms": 11.0,
+        "current_ua": {
+          "at_4.20V": 9.55,
+          "at_3.70V": 8.41
+        },
+        "battery_impact": {
+          "mah_per_day": 0.229,
+          "mah_per_year": 83.6,
+          "pct_of_allday_680mah_per_day": 0.034,
+          "pct_of_deep_sleep_3ma": 0.318
+        }
+      },
+      "adc": {
+        "unit": "ADC1",
+        "channel": "ADC1_CH4",
+        "atten": "12dB",
+        "suggested_range_mv": [
+          0,
+          3100
+        ],
+        "bits": 12,
+        "lsb_mv_at_battery": 1.514
+      },
+      "firmware_requirement": "ウェイク後100ms以上待って初回サンプルを捨てる。16-64回平均＋esp_adc_cal(eFuse校正)。VBUS印加中はBAT+が充電出力(〜4.2V)に引かれるため、SOC推定はVBUS_SENSEがLOWのときのみ有効。警告3.40V / 停止3.20V。",
+      "note": "±5%抵抗を使う場合はファームの1点校正（VBAT_CAL を NVS 保存）が必須。"
+    },
+    {
+      "name": "GND",
+      "config": "V2_SENSE_SATELLITE",
+      "mode": "extend",
+      "extends_net": "GND",
+      "class": "power",
+      "connections": [
+        "R3.2",
+        "R5.2",
+        "C1.2",
+        "C2.2"
+      ],
+      "note": "サテライト基板上に GNDスター点を設け、そこから XIAO GND へ1本で戻す。"
+    },
+    {
+      "name": "BATP",
+      "config": "V2_SENSE_SATELLITE",
+      "mode": "extend",
+      "extends_net": "BATP",
+      "class": "power",
+      "connections": [
+        "R4.1"
+      ],
+      "note": "J1 をサテライト基板に移設し、基板上の BATP ランドから分圧を取る。電池リードの中間被覆剥き（スプライス）は禁止。"
+    }
+  ],
+  "no_connect": [
+    {
+      "pin": "U1.3V3",
+      "reason": "使用しない（LDO出力）。"
+    },
+    {
+      "pin": "U1.D2",
+      "reason": "GPIO3 = ストラッピングピン（JTAG選択）。中間電位に引くと起動挙動が変わる恐れ。恒久的に使用禁止。"
+    },
+    {
+      "pin": "U1.D5",
+      "reason": "GPIO6 = 唯一の予備ADCピン。将来のために空けておく。"
+    },
+    {
+      "pin": "U1.D6",
+      "reason": "GPIO43 = U0TXD。ADC不可・RTC不可。"
+    },
+    {
+      "pin": "U1.D7",
+      "reason": "GPIO44 = U0RXD。ADC不可・RTC不可。"
+    },
+    {
+      "pin": "U1.D8",
+      "reason": "GPIO7 = microSD SPI SCK が使用中。スタブでも接続禁止。"
+    },
+    {
+      "pin": "U1.D9",
+      "reason": "GPIO8 = microSD SPI MISO が使用中。接続禁止。"
+    },
+    {
+      "pin": "U1.D10",
+      "reason": "GPIO9 = microSD SPI MOSI が使用中。接続禁止。"
+    },
+    {
+      "pin": "SW1.3",
+      "reason": "スライドスイッチのもう一方の端端子。未接続。切り落としてよい。"
+    }
+  ],
+  "design_rules": {
+    "esp32s3": {
+      "vdd_v": 3.3,
+      "vih_v": 2.475,
+      "vil_v": 0.825,
+      "abs_max_input_v": 3.6,
+      "design_max_input_v": 3.3,
+      "gpio_drive_max_ma": 40,
+      "rtc_gpio_range": "GPIO0-21",
+      "strapping_gpio": [
+        0,
+        3,
+        45,
+        46
+      ],
+      "adc2_policy": "WiFi使用中は使えないため一切使わない（ADC1のみ）。",
+      "ext1_polarity": "ANY_LOW / ANY_HIGH のいずれか。ピンごとの極性混在は不可（per-pin非対応ターゲットでは ESP_ERR_NOT_ALLOWED）。よって SW(LOW) と VBUS(HIGH) は EXT1 で両立しない。"
+    },
+    "wiring": {
+      "wire_awg": 28,
+      "wire_od_mm": 1.2,
+      "xiao_rear_clearance_mm": 1.4,
+      "rule": "XIAO 裏面では線を重ねない（1層で敷く）。1本でも重なると2.4mmとなり基板が浮き、USB-Cが開口とずれて充電不能になる。",
+      "lengths_mm": {
+        "BATP": 40,
+        "BATN": 40,
+        "SW_IN": 50,
+        "GND_xiao_to_sw": 50,
+        "GND_sw_to_led": {
+          "allday": 60,
+          "slim": 45
+        },
+        "LED_A": {
+          "allday": 60,
+          "slim": 45
+        }
+      },
+      "slim_rule": "左ポケットの自由体積は JST嵌合体・LEDリード帯・スイッチ端子帯を差し引いた0.1mmボクセル実測で allday 1.45cm3 / slim 1.15cm3。AWG28 は allday 300mm / slim 270mm で充填率50%換算の占有は allday 47% / slim 53%（実用上限50-60%）。slim で LED側を60mmのままにすると59%に上がるため 45mm に詰める。",
+      "wire_od_max_mm": 1.3,
+      "pigtail_rule": "市販の JST-PH2.0 コード付き品は AWG26〜22 が混在する。被覆込み外径 1.3mm 以下（AWG28=1.2mm 推奨）の品を買い、太い場合は AWG28 に載せ替える。",
+      "pigtail_cut_rule": "BATP/BATN は市販ピグテールの 100-150mm を必ず 40mm に切り詰める（経路長 実測約28mm + 曲げ代）。切らないと slim ではリッドが閉まらない。"
+    },
+    "solder": {
+      "points_total": 10,
+      "points_total_note": "v1 は11点。抵抗内蔵LED（任意置換）を使えば J08/J09 が1点に縮退して9点になる。A-1 の本質は点数ではなく、空中3端子スプライス（GNDより合わせ分岐）が0箇所になること。",
+      "air_splices_3terminal": 0,
+      "air_splices_3terminal_v1": 1,
+      "air_splices_3terminal_a2_rejected": 3,
+      "joints": [
+        {
+          "id": "J01",
+          "endpoints": [
+            "U1.BATP"
+          ],
+          "conductors": 1,
+          "difficulty": "medium",
+          "note": "JSTピグテール赤。無通電で作業できる。"
+        },
+        {
+          "id": "J02",
+          "endpoints": [
+            "U1.BATN"
+          ],
+          "conductors": 1,
+          "difficulty": "medium",
+          "note": "JSTピグテール黒。"
+        },
+        {
+          "id": "J03",
+          "endpoints": [
+            "U1.D1"
+          ],
+          "conductors": 1,
+          "difficulty": "easy"
+        },
+        {
+          "id": "J04",
+          "endpoints": [
+            "U1.D3"
+          ],
+          "conductors": 1,
+          "difficulty": "easy"
+        },
+        {
+          "id": "J05",
+          "endpoints": [
+            "U1.GND"
+          ],
+          "conductors": 1,
+          "difficulty": "easy"
+        },
+        {
+          "id": "J06",
+          "endpoints": [
+            "SW1.2"
+          ],
+          "conductors": 1,
+          "difficulty": "easy"
+        },
+        {
+          "id": "J07",
+          "endpoints": [
+            "SW1.1"
+          ],
+          "conductors": 2,
+          "difficulty": "easy",
+          "procedure": "黒2本を先に撚る→予備はんだ→端子へ一度で流す。1本ずつ後付けすると先に付けた線が溶けて外れる。"
+        },
+        {
+          "id": "J08",
+          "endpoints": [
+            "R1.1"
+          ],
+          "conductors": 1,
+          "difficulty": "easy"
+        },
+        {
+          "id": "J09",
+          "endpoints": [
+            "R1.2",
+            "D1.A"
+          ],
+          "conductors": 2,
+          "difficulty": "easy",
+          "note": "部品リード同士の継ぎ。剛性があるので線同士より易しい。"
+        },
+        {
+          "id": "J10",
+          "endpoints": [
+            "D1.K"
+          ],
+          "conductors": 1,
+          "difficulty": "easy"
+        }
+      ]
+    },
+    "mandatory_test_gate": {
+      "when": "J1ピグテールをBAT+/BAT−パッドにはんだ付けした直後、電池を嵌合する前",
+      "status": "必須（省略禁止）。README §7 手順8-B に必須手順として組み込み済み。",
+      "checks": [
+        {
+          "id": 1,
+          "measure": "J1の＋側 ↔ U1.BATP パッド",
+          "expect": "導通"
+        },
+        {
+          "id": 2,
+          "measure": "J1の−側 ↔ U1.GND ピン",
+          "expect": "導通（BATNとGNDが内部で同電位であることの確認を兼ねる）"
+        },
+        {
+          "id": 3,
+          "measure": "J1の＋側 ↔ −側",
+          "expect": "短絡していないこと（数十kΩ以上）"
+        },
+        {
+          "id": 4,
+          "measure": "電池プラグの『コンタクト位置』の極性: プラグをキー（ラッチ）面基準で固定し、DCVレンジでどちらのコンタクト位置が＋かを測る",
+          "expect": "＋を示したコンタクト位置が、嵌合時に J1 の pin1（本ファイルで BATP に割当）と向かい合うこと。リード色でも『どちらのリードが＋か』でもなく、キー基準のコンタクト位置で判定する",
+          "why": "①②③はピグテール↔XIAO側しか見ておらず、セル側ハウジング内でコンタクトが左右逆に入っている個体（§5.2）は①②③を全て通過したうえで逆給電になる",
+          "on_mismatch": "電池側のコンタクトは触らない。ピグテール側ハウジングのコンタクトを抜いて左右入れ替える（ランスを細ピンで押しながら電線を引く）か、ピグテールを根元で切って＋−を入れ替えてはんだ付けし直す。いずれの場合も①〜④を最初からやり直す",
+          "abort_if": "②が鳴らない / プラグのコンタクトにテスタ棒が届かず④が測れない / 上記の処置ができない → 嵌合しない"
+        },
+        {
+          "id": 5,
+          "when": "J07（SW1.1 に黒線2本）を作った直後",
+          "measure": "スイッチ OFF 位置で SW1.2 ↔ SW1.1",
+          "expect": "非導通（ブザーが鳴らないこと）",
+          "why": "ブリッジすると D1(GPIO2) が恒久LOW＝常時録音・deep sleepに入らない。破壊はしないが半日で電池が空になり、v1唯一の同期トリガ『スイッチOFF』も死ぬ",
+          "on_mismatch": "はんだ吸い取り線でブリッジを除去し、2本の黒線を撚り直してから一度で流す（SCHEMATIC §5.7）"
+        },
+        {
+          "id": 6,
+          "when": "同上",
+          "measure": "SW1.1 ↔ SW1.2 をルーペで目視",
+          "expect": "はんだが端子間を橋渡ししていないこと",
+          "why": "⑤の導通検査だけでは接触抵抗の高いブリッジを見落とす。SS-12D00 の端子ピッチは 2.54mm しかない"
+        }
+      ]
+    },
+    "test_points": [
+      {
+        "id": "TP_GND",
+        "physical": "U1.GND ピン",
+        "purpose": "全測定の基準"
+      },
+      {
+        "id": "TP_BATP",
+        "physical": "J1 の＋側コンタクト（嵌合前）",
+        "purpose": "極性ゲート①"
+      },
+      {
+        "id": "TP_BATN",
+        "physical": "J1 の−側コンタクト（嵌合前）",
+        "purpose": "極性ゲート②"
+      },
+      {
+        "id": "TP_SW",
+        "physical": "SW1.2（中央端子）",
+        "purpose": "ON時に GND と導通すること、かつ OFF位置で SW1.2 ↔ SW1.1 が非導通であることの確認",
+        "off_check": "OFF位置で SW1.2 ↔ SW1.1 が非導通（ブザーが鳴らない）。導通していると D1(GPIO2) が恒久LOW＝常時録音・deep sleepに入らない。破壊はしないが半日で電池が空になり、v1唯一の同期トリガ『スイッチOFF』も死ぬ。",
+        "visual_check": "SW1.1 ↔ SW1.2 のはんだブリッジをルーペで目視。SS-12D00 系の端子ピッチは 2.54mm で、J07 は黒線2本を盛るためブリッジ確率が v1 より上がる。導通検査だけだと接触抵抗の高いブリッジを見落とす。"
+      },
+      {
+        "id": "TP_LEDA",
+        "physical": "R1.2 と D1.A の継ぎ目（熱収縮前）",
+        "purpose": "LED点灯確認"
+      }
+    ],
+    "protection": {
+      "reverse_polarity_v15": "手順による保護のみ（JST極性キー＋必須テスタゲート＋無通電はんだ付け）。removes_battery_polarity_risk = false。",
+      "reverse_polarity_v2": "AO3401A ×2 の背中合わせ（ソース突合せ・両ゲートGND）。1個だけではボディダイオードが充電方向に導通し、逆挿しセルをBQ25101が50mAで充電し続けるため必ず2個。主電池経路に直列で入るため空中配線での実装は禁止。",
+      "over_discharge": "セル側 PCM（UVLO 2.4-3.0V）が担う。XIAO内蔵BQ25101は充電制御ICであり保護機能を持たない。",
+      "over_current_short": "セル側 PCM が担う。別途ヒューズは設けない。",
+      "esd": "v1.5 では TVS を追加しない。外部に露出する導体は USB-C のみで、そこは XIAO モジュール側の領域。LEDドームは樹脂パッケージで導体露出なし、かつ LED_DRV には 220Ω が直列に入る。",
+      "insulation": "全はんだ継ぎ目を個別に熱収縮チューブで絶縁。BATパッドはんだ部と電池パウチの間にポリイミド（カプトン）テープを1枚挟む。"
+    },
+    "harness_placement": {
+      "J1_mated_body_mm": [
+        5.8,
+        11.0,
+        4.5
+      ],
+      "orientation": "Y方向に長辺。断面5.8x4.5のうち4.5を高さ(z)にして寝かせる",
+      "aabb_case_mm": {
+        "x": [
+          1.6,
+          7.4
+        ],
+        "y": [
+          28.6,
+          39.6
+        ],
+        "z": [
+          1.6,
+          6.1
+        ]
+      },
+      "limits_mm": {
+        "height_allday": 8.7,
+        "height_slim": 7.0,
+        "length_y": 11.6,
+        "width_x": 5.8
+      },
+      "fixing": "左内壁(x=1.6)へホットボンド点付け＋ケーブル側も別途固定（嵌合部に引張を伝えない）",
+      "source": "cad/mindclip_case.py の harness_jst / check_layout()。MECHANICAL.md §7.1"
+    }
+  },
+  "optional_blocks": [
+    {
+      "id": "V2_REVPROT",
+      "name": "[v2 / 非実装・任意] 逆接続保護 P-ch MOSFET 背中合わせ",
+      "status": "not_implemented",
+      "implement_on": "キャリア基板（案B）。ユニバーサル基板・空中配線では実装しないこと（主電池経路に直列に入るため、はんだ不良＝間欠断というウェアラブル最悪の故障モードを2箇所増やす）。",
+      "not_on_mc_carrier_a_rev_a": "MC-CARRIER-A rev.A（pcb/LAYOUT.md / mindclip_carrier.kicad_pcb）には Q1/Q2 のフットプリントを載せていない。理由: (1) キャリア基板でも BAT 経路は『窓→ジャンパ線→XIAO裏面パッド』であり、保護FETはその空中ジャンパの途中に入る＝基板に載せる意味（シルク・キー・レジストで物理的に誤りを防ぐ）が最も薄い場所で、間欠断を2箇所増やす代償だけが残る。(2) BATN≡GND が未検証のままだと FET を＋側と−側のどちらに入れるか確定できない。したがって removes_battery_polarity_risk は v2 rev.A でも false のままであり、逆接続保護は rev.B の要件（SCHEMATIC §8.1 / §9.4）。",
+      "components": [
+        {
+          "ref": "Q1",
+          "value": "AO3401A",
+          "package": "SOT-23",
+          "lcsc": "C15127",
+          "pins": {
+            "G": {
+              "pad": 1
+            },
+            "S": {
+              "pad": 2
+            },
+            "D": {
+              "pad": 3
+            }
+          }
+        },
+        {
+          "ref": "Q2",
+          "value": "AO3401A",
+          "package": "SOT-23",
+          "lcsc": "C15127",
+          "pins": {
+            "G": {
+              "pad": 1
+            },
+            "S": {
+              "pad": 2
+            },
+            "D": {
+              "pad": 3
+            }
+          }
+        }
+      ],
+      "nets": [
+        {
+          "name": "VBAT_CELL",
+          "connections": [
+            "J1.1",
+            "Q1.D"
+          ],
+          "note": "セル正極（保護前）"
+        },
+        {
+          "name": "VBAT_MID",
+          "connections": [
+            "Q1.S",
+            "Q2.S"
+          ],
+          "note": "背中合わせFETの共通ソース"
+        },
+        {
+          "name": "VBAT_SYS",
+          "connections": [
+            "Q2.D",
+            "U1.BATP",
+            "R4.1"
+          ],
+          "note": "保護後。BATP を置き換える"
+        },
+        {
+          "name": "GND",
+          "connections": [
+            "Q1.G",
+            "Q2.G"
+          ],
+          "mode": "extend",
+          "extends_net": "GND"
+        }
+      ],
+      "replaces_net": "BATP",
+      "electrical": {
+        "rds_on_total_ohm": 0.1,
+        "drop_at_300ma_mv": 30,
+        "verify": "放電終止3.0V時の Vgs=-3.0V における Rds(on) をデータシートで確認すること。組立ガイドに300mA通電時の電圧降下チェックと導通確認を入れること。"
+      }
+    }
+  ],
+  "assumptions": [
+    {
+      "item": "D0=GPIO1 / D1=GPIO2 / D3=GPIO4 / D4=GPIO5、ADC1チャネル対応",
+      "status": "verified",
+      "source": "espressif/arduino-esp32 variants/XIAO_ESP32S3/pins_arduino.h ／ ESP-IDF ADC1_GPIOn_CHANNEL"
+    },
+    {
+      "item": "PDM=GPIO42/41、microSD SPI=GPIO7/8/9、CS=GPIO21（内蔵LED共用）",
+      "status": "verified",
+      "source": "Seeed-Studio/wiki-documents XIAO_ESP32S3_Sense_mic.md (I2S.setPinsPdmRx(42,41) / SD.begin(21))、pins_arduino.h の LED_BUILTIN=21"
+    },
+    {
+      "item": "XIAO の BAT− が内部で GND と同電位",
+      "status": "unverified",
+      "impact": "成立しなければ BATN は独立ネット。§5.4② で確認。"
+    },
+    {
+      "item": "XIAO 裏面 BATパッドの正確な位置",
+      "status": "unverified",
+      "impact": "ピグテールの取り回し。基板化する場合は致命的（窓位置を外すと基板ごと再スピン）。"
+    },
+    {
+      "item": "XIAO の 5V ピン = USB VBUS 直結（直列ダイオードなし）",
+      "status": "forum_verified",
+      "impact": "[v2] VBUS検出の前提。5.25V が分圧にそのまま乗る前提で設計済み。回路図原典は未取得。"
+    },
+    {
+      "item": "XIAOスタック総厚 7.5mm",
+      "status": "unverified",
+      "impact": "slim の成立可否そのもの。基板化の判断前にノギスで実測すること。"
+    },
+    {
+      "item": "ESP32-S3 の VIH = 0.75 x VDD、絶対最大 VDD+0.3",
+      "status": "datasheet_verified",
+      "source": "ESP32-S3 データシート DC Characteristics: V_IH = 0.75xVDD1 〜 VDD1+0.3V",
+      "impact": "[v2] 分圧比の判定基準。assumption から格上げ（過剰な assumption 表示は、本当に危ない未検証項目=BATN≡GND / BATパッド座標 / スタック厚7.5mm / ピグテールpin1極性 を埋もれさせる）。"
+    },
+    {
+      "item": "EXT1 の per-pin 極性混在不可（ESP32-S3）",
+      "status": "doc_verified_hw_untested",
+      "impact": "[v2] VBUSは30秒タイマポーリングで回避済み。EXT0+EXT1同時有効化の可否は未検証。"
+    },
+    {
+      "item": "内部プルアップ 45kΩ",
+      "status": "datasheet_verified",
+      "source": "ESP32-S3 データシート DC Characteristics: R_PU = 45kΩ",
+      "impact": "73µA の見積り。桁が変わっても無視可。"
+    },
+    {
+      "item": "抵抗内蔵LED（秋月116692）の内蔵抵抗値",
+      "status": "unverified_vendor_undisclosed",
+      "impact": "1台目のデフォルトから外して回避済み。"
+    },
+    {
+      "item": "JST-PH2.0 ピグテールの型番・相手側の性別・pin1極性",
+      "status": "unverified",
+      "impact": "発注前に商品ページで確認（秋月サイトは本作業環境の egress 制限で直接閲覧不可）。"
+    },
+    {
+      "item": "秋月 116334（1/6W 330kΩ）",
+      "status": "unverified",
+      "impact": "[v2] のみ。確実な代替は 1/4W 330kΩ = 114281。A-1 に留める限り発注不要。"
+    },
+    {
+      "item": "802530 の実寸・PCM位置・リード出射方向",
+      "status": "unverified",
+      "impact": "J1 の配置（§5.5）に影響。"
+    },
+    {
+      "item": "XIAO のパッド番号 1-14 の割り当て順",
+      "status": "assumption",
+      "impact": "v1.5 では基板を作らないため実害なし。基板化時は公式フットプリントで確認。"
+    }
+  ]
+}

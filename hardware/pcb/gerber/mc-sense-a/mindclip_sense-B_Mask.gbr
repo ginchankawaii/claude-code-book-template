@@ -1,0 +1,16 @@
+%FSLAX46Y46*%
+%MOMM*%
+%TF.GenerationSoftware,MindClip,gen_pcb.py,2.0*%
+%TF.FileFunction,SolderMask,Bot*%
+%TF.FilePolarity,Negative*%
+G04 MC-SENSE-A B.Mask (vias tented)*
+%TF.SameCoordinates,Original*%
+G01*
+%LPD*%
+%ADD10R,1.300000X1.850000*%
+%ADD11O,1.300000X1.850000*%
+D10*
+X6000000Y31700000D03*
+D11*
+X8000000Y31700000D03*
+M02*

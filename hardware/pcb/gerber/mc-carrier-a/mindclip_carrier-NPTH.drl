@@ -1,0 +1,15 @@
+M48
+; MindClip gen_pcb.py Excellon
+; FORMAT={-:-/ absolute / metric / decimal}
+; TYPE=NPTH
+FMAT,2
+METRIC,TZ
+T1C2.200
+%
+G90
+G05
+T1
+X3.800Y31.200
+X3.800Y47.600
+T0
+M30
