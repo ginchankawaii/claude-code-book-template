@@ -2,6 +2,7 @@
 
   voice-logger process <ファイル/ディレクトリ...>   指定音声を処理
   voice-logger watch                                inbox を監視して自動処理
+  voice-logger serve                                デバイス受信API (Phase 1) を起動
 """
 
 from __future__ import annotations
@@ -81,6 +82,28 @@ def cmd_watch(args) -> int:
             return 0
 
 
+def cmd_serve(args) -> int:
+    from . import ingest  # 受信APIを使わない運用では読み込まない
+
+    if args.gen_key:
+        import secrets
+        # サーバ側で鍵を作り、デバイスへは PROVISION の `set hmac.key <hex>` で入れる。
+        # （デバイスの `gen hmac` は無線オフ状態の esp_random() を使うので、鍵の生成元は
+        #   こちら＝OSのCSPRNG を正とする。SPEC §10.2）
+        print(secrets.token_hex(32))
+        return 0
+    cfg = _load(args)
+    if args.allow_plaintext:
+        cfg.ingest.allow_plaintext = True
+        cfg.ingest.tls_cert = ""
+        cfg.ingest.tls_key = ""
+    try:
+        return ingest.serve(cfg, host=args.host, port=args.port)
+    except RuntimeError as exc:
+        logger.error("%s", exc)
+        return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="voice-logger",
@@ -101,6 +124,21 @@ def main(argv: list[str] | None = None) -> int:
     p_watch = sub.add_parser("watch", help="inbox を監視して自動処理")
     p_watch.add_argument("--interval", type=int, default=30, help="スキャン間隔（秒）")
     p_watch.set_defaults(func=cmd_watch)
+
+    p_serve = sub.add_parser("serve", help="デバイス受信API (Phase 1) を起動")
+    p_serve.add_argument("--host", help="待ち受けアドレス（既定は config の [ingest] host）")
+    p_serve.add_argument("--port", type=int, help="待ち受けポート（既定は config の [ingest] port）")
+    p_serve.add_argument(
+        "--allow-plaintext", action="store_true",
+        help="TLSなしの平文HTTPで起動（試験用。デバイスは http:// を受け付けない）",
+    )
+    p_serve.add_argument(
+        "--gen-key", action="store_true",
+        help="共有秘密(HMAC)用の32バイト鍵をhexで出力して終了"
+             "（config.toml の [ingest] hmac_key_hex と、デバイス側 PROVISION の"
+             " `set hmac.key <hex>` に同じ値を入れる）",
+    )
+    p_serve.set_defaults(func=cmd_serve)
 
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)

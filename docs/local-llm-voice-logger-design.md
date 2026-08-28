@@ -209,7 +209,7 @@ BLE-Opusストリーミング実装を含むので、Phase 3 のリアルタイ�
 | Phase | 内容 | ポイント |
 |---|---|---|
 | **0. パイプライン検証（最優先）** | 古いスマホやICレコーダーで録音した音声を、サーバ側パイプライン（VAD→whisper→pyannote→Ollama→Obsidian）に流す | **ハードより先にソフトを完成させる**。既存のObsidian音声日記システムと出口を統合。**→ 実装済み: [`../voice-logger/`](../voice-logger/README.md)** |
-| **1. デバイス試作** | XIAO ESP32S3 Sense + LiPo + 3Dプリント筐体。SD録音 + 帰宅時WiFi同期 | 本家と同じ「バッチ同期」UXをローカルで再現 |
+| **1. デバイス試作** | XIAO ESP32S3 Sense + LiPo + 3Dプリント筐体。SD録音 + 帰宅時WiFi同期 | 本家と同じ「バッチ同期」UXをローカルで再現。**→ 実装済み**: ファーム [`../firmware/`](../firmware/README.md) （仕様 [`SPEC.md`](../firmware/SPEC.md)）／ハード [`../hardware/README.md`](../hardware/README.md)／受信API [`../voice-logger/`](../voice-logger/README.md)。ただし**実機での消費電流ゲート（平均 ≤28mA）は未通過** |
 | **2. 分析の深化** | 話者分離・声紋登録、RAG（Ask AI）、週次/月次の振り返り自動生成 | ライフログとしての価値を作る段階 |
 | **3. リアルタイム化（任意）** | BLE→スマホ→Tailscale/WireGuardで外出先からも同期 | 必要性を Phase 1-2 の運用で見極めてから |
 

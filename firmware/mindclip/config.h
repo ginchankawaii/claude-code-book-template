@@ -27,9 +27,15 @@ static const uint32_t SD_SPI_HZ_LOW = 10000000;
 static const uint32_t AUDIO_RATE      = 16000;   // Hz
 static const uint32_t AUDIO_BYTES_SEC = 32000;   // 16bit mono
 static const size_t   FRAME_SAMPLES   = 320;     // VAD 20ms フレーム
-static const size_t   CHUNK_SAMPLES   = 1024;    // I2S 1回読み = 64ms
+// I2S 1回読み。**必ず FRAME_SAMPLES の整数倍**にすること。倍数でないと
+// recorderPump の frames = got/(FRAME_SAMPLES*2) が端数を取りこぼす。
+// 960 = 3フレーム = 60ms（DMA 90ms より短く、書込32KB=約32msと合わせても余裕がある）
+static const size_t   CHUNK_SAMPLES   = 960;
 static const size_t   CHUNK_BYTES     = CHUNK_SAMPLES * 2;
+static_assert(CHUNK_SAMPLES % FRAME_SAMPLES == 0, "CHUNK_SAMPLES must be a multiple of FRAME_SAMPLES");
 static const uint32_t PREROLL_MS      = 500;     // SPEC §3.1 語頭欠け防止
+// E15: readBytes() が 0 を返し続けたら I2S を死んだとみなすまでの時間（SPEC §7 = 5秒）
+static const uint32_t I2S_STALL_MS    = 5000;
 static const uint32_t MIN_FILE_MS     = 2000;    // SPEC §3.2 最小長
 static const uint64_t SD_FREE_MIN     = 50ULL * 1024 * 1024;  // E2 閾値 50MB
 
@@ -37,13 +43,25 @@ static const uint64_t SD_FREE_MIN     = 50ULL * 1024 * 1024;  // E2 閾値 50MB
 static const char REC_DIR[]      = "/rec";
 static const char EXT_DONE[]     = ".wav";
 static const char EXT_RECORDING[] = ".wav.rec";  // 録音中。Phase0 は拾わない
+// E16（SPEC §6.3）: 「3セッション連続400」のカウントはSD上のファイル名で持つ。
+// .b1/.b2 は送信対象（次セッションで再挑戦）、.bad は列挙から外す。いずれも削除しない。
+static const char EXT_BAD1[]     = ".wav.b1";
+static const char EXT_BAD2[]     = ".wav.b2";
+static const char EXT_BAD[]      = ".wav.bad";
+
+// 送信対象のファイル名か（.wav / .wav.b1 / .wav.b2。.wav.bad と .wav.rec は除く）
+static inline bool isSendableName(const String &n) {
+  return n.endsWith(EXT_DONE) || n.endsWith(EXT_BAD1) || n.endsWith(EXT_BAD2);
+}
 
 // ---- 通信（SPEC §6）--------------------------------------------------------
 static const uint32_t HTTP_CONNECT_MS = 10000;
 static const uint32_t HTTP_IO_MS      = 60000;
 static const uint32_t SESSION_MAX_MS  = 15UL * 60UL * 1000UL;  // 15分
+// SPEC §6.3 / §7 E5: ファイル単位で3回試し、試行間の待ちは 0 / 1s / 3s（合計4秒）。
+// 添字は attempt そのもの（[attempt-1] にすると末尾の値が一度も使われない）。
 static const int      FILE_RETRY_MAX  = 3;
-static const uint32_t RETRY_BACKOFF_MS[FILE_RETRY_MAX] = {1000, 3000, 9000};
+static const uint32_t RETRY_BACKOFF_MS[FILE_RETRY_MAX] = {0, 1000, 3000};
 
 // ---- スイッチのデバウンス（SPEC §2.2）--------------------------------------
 static const uint32_t DEBOUNCE_STEP_MS = 20;
@@ -92,7 +110,9 @@ enum AppState {
 enum FaultCause {
   FAULT_NONE = 0,
   FAULT_SD,      // E1/E2/E3
-  FAULT_I2S      // E13
+  FAULT_I2S,     // E13
+  FAULT_MEM      // E12: 書込バッファが1バイトも確保できない（録音不能）
 };
 
-void logf(const char *fmt, ...);   // mindclip.ino が提供する簡易ログ
+// 簡易ログ（実体は app.cpp）。標準の logf(float) と名前衝突させないため mcLogf。
+void mcLogf(const char *fmt, ...);

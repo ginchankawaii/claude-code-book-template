@@ -31,3 +31,41 @@ chunk_chars = 12000
 # Daily Note のファイル名の日付フォーマット（"YYYY-MM-DD.md" なら %Y-%m-%d）
 date_format = "%Y-%m-%d"
 section_heading = "## 🎙️ 会話ログ（自動生成）"
+
+# ---------------------------------------------------------------------------
+# デバイス受信API (Phase 1: `voice-logger serve`)
+# 自作ウェアラブル MindClip DIY からの音声を inbox に受け取る。
+# 使わない場合はこのセクションごと省略してよい（既定値は「起動しない方向に安全」）。
+# ---------------------------------------------------------------------------
+[ingest]
+# 待ち受けアドレス。既定は 127.0.0.1（外に晒さない）。
+# デバイスから届かせるには自機のLAN IPを明示的に書く。0.0.0.0 は警告が出る
+host = "192.168.1.10"
+port = 8443
+
+# TLS（デバイスは http:// を受け付けない）。プライベートCAで発行した証明書を指定
+tls_cert = "~/voice-logger/pki/server.crt"
+tls_key = "~/voice-logger/pki/server.key"
+# mTLS: デバイスのクライアント証明書を検証するCA（未設定 + require_mtls=true なら起動しない）
+client_ca = "~/voice-logger/pki/ca.crt"
+require_mtls = true
+# 証明書のCNが X-MindClip-Device と一致することまで要求するか
+cert_cn_must_match_device = false
+
+# 共有秘密 HMAC-SHA256（デバイスの `gen hmac` と同じ値）。
+# `voice-logger serve --gen-key` で生成できる。設定ファイルに直書きしたくない場合は
+# hmac_key_file = "~/voice-logger/pki/hmac.key" か 環境変数 MINDCLIP_HMAC_KEY を使う
+hmac_key_hex = ""
+hmac_key_file = "~/voice-logger/pki/hmac.key"
+# デバイスごとに鍵を分ける場合（この表があれば hmac_key_* は不要）
+# [ingest.devices]
+# mindclip-01 = "<64桁のhex>"
+# mindclip-02 = "@/home/me/voice-logger/pki/mindclip-02.key"
+
+# 接続元IPの許可範囲。空リスト [] にすると制限しない（非推奨）
+allowed_networks = ["127.0.0.0/8", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"]
+# 1ファイルの上限（超過は 413）
+max_bytes = 134217728
+# この空き容量を切ったら受けない（507 を返し、デバイスは次回に持ち越す）
+min_free_bytes = 536870912
+socket_timeout_sec = 120

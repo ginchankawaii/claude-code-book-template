@@ -17,3 +17,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/voice_logger"]
+
+[tool.pytest.ini_options]
+# `cd voice-logger && python -m pytest` を PYTHONPATH 無しで通すため（src レイアウト）
+pythonpath = ["src"]
+testpaths = ["tests"]
