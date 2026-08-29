@@ -323,6 +323,20 @@ void setup() {
   gpio_hold_dis((gpio_num_t)PIN_SD_CS);
   gpio_hold_dis((gpio_num_t)PIN_LED);
 
+  // SPI 3本も明示的に解除する。sleep 前の rtc_gpio_isolate() は driver/rtc_io.h に
+  // 「input/output/pullup/pulldown を無効化し **hold を有効化する**」と明記された関数で、
+  // GPIO7/8/9 は ESP32-S3 の RTC IO(0〜21) なのでこの hold は deep sleep をまたいで残る。
+  // gpio_deep_sleep_hold_dis() はデジタルパッド全体のフラグで、RTC パッド個別の hold は
+  // 解除しない。SPI.begin()/SD.begin() も hold を触らない（コアHALに解除処理は無い）。
+  // ここで解除しないと **2回目以降の起動で SD が二度とマウントできず**、
+  // 電源を物理的に切るまで復帰しない（＝その日の録音が丸ごと失われる）。
+  const int kHeldSpiPins[] = {PIN_SD_SCK, PIN_SD_MISO, PIN_SD_MOSI};
+  for (int pin : kHeldSpiPins) {
+    gpio_hold_dis((gpio_num_t)pin);
+    rtc_gpio_hold_dis((gpio_num_t)pin);
+    rtc_gpio_deinit((gpio_num_t)pin);     // RTC マトリクスから外し通常GPIOへ戻す
+  }
+
   setCpuFrequencyMhz(CPU_MHZ_RUN);        // SPEC §1: 常時 80MHz。以降上げない
   btStop();                               // BLE を明示的に落とす
   WiFi.mode(WIFI_OFF);                    // 日中は無線完全オフ

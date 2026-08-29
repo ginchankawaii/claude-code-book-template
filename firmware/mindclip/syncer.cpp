@@ -171,7 +171,7 @@ static int fetchTime() {
   HTTPClient &http = s_http;
   http.setReuse(true);
   http.setConnectTimeout(HTTP_CONNECT_MS);
-  http.setTimeout(10000);
+  http.setTimeout(HTTP_IO_MS);
   if (!http.begin(s_tls, g_cfg.srvUrl + path)) return -1;
   http.addHeader("Authorization", buildAuthHeader("GET", path, emptySha));
   http.addHeader("X-MindClip-Device", g_cfg.devId);
@@ -297,7 +297,16 @@ SyncResult syncRun(bool (*abortCb)()) {
   tlsSetup();
 
   uint32_t sess0 = millis();
-  int tcode = fetchTime();
+  // /time もファイル送信と同じ 0/1s/3s の3回リトライを掛ける。
+  // WiFi接続直後の最初のTLSリクエストは、APのDHCP/ARP収束やサーバのコールドスタートで
+  // 一過性に落ちやすい。ここを1発勝負にすると、その一度の失敗で**その夜の同期が
+  // まるごと持ち越し**になり、日記が丸1日遅れる（データは失われないが価値が落ちる）。
+  int tcode = 0;
+  for (int attempt = 0; attempt < FILE_RETRY_MAX; attempt++) {
+    delay(RETRY_BACKOFF_MS[attempt]);
+    tcode = fetchTime();
+    if (tcode == 200 || tcode == 401 || tcode == 403) break;  // 成功／認証不正は再試行しない
+  }
   if (tcode == 401 || tcode == 403) { wifiOff(); return SYNC_AUTH_FAIL; }   // E6
   if (tcode != 200)                 { wifiOff(); return SYNC_SERVER_FAIL; } // E5
 
@@ -328,7 +337,15 @@ SyncResult syncRun(bool (*abortCb)()) {
         File f = SD.open(full.c_str(), FILE_READ);
         time_t mt = f ? f.getLastWrite() : 0;
         if (f) f.close();
-        if (!clockUnsyncAgeMs(mt, &ageMs)) ageMs = 0;   // 不明ならヘッダを付けない
+        if (!clockUnsyncAgeMs(mt, &ageMs)) {
+          ageMs = 0;                                    // 不明ならヘッダを付けない
+        } else {
+          // FAT の mtime は最後の f_sync/close の時刻＝**録音の終了時刻**。
+          // SPEC §6.3 の Age-Ms は「**録音開始**から今までの経過ms」なので、
+          // 録音長を足して開始時刻基準に直す。これを忘れるとサーバが復元する
+          // start がファイル長ぶん（最大 split_sec = 600秒）未来にずれる。
+          ageMs += durMs;
+        }
       }
 
       bool done = false;

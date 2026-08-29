@@ -825,7 +825,19 @@ esp_deep_sleep_start();
 - **ウェイク後**: `gpio_hold_dis(GPIO_NUM_21)` / `gpio_hold_dis(GPIO_NUM_4)` と
   `gpio_deep_sleep_hold_dis()` を BOOT の最初に呼ぶこと
   （呼ばないと SD の CS が制御できずマウントに失敗し、LED も光らない）。
-  `rtc_gpio_isolate()` したピンは `SPI.begin()` / `SD.begin()` が再設定するので個別の解除は不要。
+  **`rtc_gpio_isolate()` した GPIO7/8/9 も、1本ずつ明示的に解除すること**
+  （`gpio_hold_dis()` + `rtc_gpio_hold_dis()` + `rtc_gpio_deinit()`）。
+
+  > **訂正 (独立レビュー C-1)**: 旧版はここに「`SPI.begin()` / `SD.begin()` が再設定するので
+  > 個別の解除は不要」と書いていたが、**これは誤り**。`driver/rtc_io.h` の
+  > `rtc_gpio_isolate()` は「input/output/pullup/pulldown を無効化し **hold を有効化する**」
+  > 関数で、GPIO7/8/9 は RTC IO(0〜21) なのでこの hold は deep sleep をまたいで残る。
+  > `gpio_deep_sleep_hold_dis()` はデジタルパッド全体のフラグにすぎず RTC パッド個別の
+  > hold を解除せず、Arduino コアの HAL にも解除処理は無い（`esp32-hal-gpio.c` /
+  > `esp32-hal-spi.c` を grep して確認済み）。`CONFIG_ESP_SLEEP_GPIO_RESET_WORKAROUND`
+  > も無効なので起動時の自動リセットも効かない。
+  > 解除しないと**初回は正常に動くが、2回目のウェイク以降 `SD.begin()` が必ず失敗**し、
+  > 電源を物理的に切るまで復帰しない（E1 FAULT に落ち、その日の録音が丸ごと失われる）。
 - **CS(21) だけをホールドしても足りない**。`pinMode(7/8/9, INPUT_PULLDOWN)` は
   **deep sleep 中に失われる**（`driver/gpio.h` の `gpio_hold_en` 注記3: ESP32/S2/C3/S3/C2 では
   digital GPIO の状態を deep sleep 中に保持できず、保持したいなら `gpio_deep_sleep_hold_en()` を呼ぶ）。
