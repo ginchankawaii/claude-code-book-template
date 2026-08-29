@@ -94,9 +94,14 @@ def cmd_serve(args) -> int:
         return 0
     cfg = _load(args)
     if args.allow_plaintext:
+        # --allow-plaintext は「試験のため転送路の保護を全部切る」という明示的な意思表示。
+        # 平文では mTLS もCN照合も成立しないので、ここで揃えて落とす（設定ファイルに
+        # 矛盾した組み合わせが書かれている場合は ingest 側が起動を拒否する）。
         cfg.ingest.allow_plaintext = True
         cfg.ingest.tls_cert = ""
         cfg.ingest.tls_key = ""
+        cfg.ingest.require_mtls = False
+        cfg.ingest.cert_cn_must_match_device = False
     try:
         return ingest.serve(cfg, host=args.host, port=args.port)
     except RuntimeError as exc:

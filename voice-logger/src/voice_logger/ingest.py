@@ -73,6 +73,7 @@ HEALTH_PATH = "/healthz"
 STORED_STEM_RE = re.compile(r"^(\d{8})_(\d{6})(?:_\d+)*$")
 PART_GLOB = ".ingest-*.wav.part"      # 受信中の一時ファイル（iter_audio_files() は拾わない）
 DRAIN_MARGIN = 1 << 20                # ボディを読み捨ててでも応答を返す上限の上乗せ分
+UNAUTH_DRAIN_CAP = 1 << 20            # 認証を通る前に読み捨ててよい上限（帯域増幅の防止）
 MAX_AGE_MS = 7 * 24 * 3600 * 1000
 NONCE_RE = re.compile(r"^[0-9a-fA-F]{16,64}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -331,6 +332,9 @@ class IngestService:
                 " config.toml の [ingest] hmac_key_hex / hmac_key_file / devices か、"
                 " 環境変数 MINDCLIP_HMAC_KEY (hex) を設定してください"
             )
+        # 未知デバイスIDでも既知と同じHMAC計算を通すためのダミー鍵（起動ごとにランダム）。
+        # これで「未知ID」と「署名不一致」の応答が区別できなくなる
+        self._decoy_key = secrets.token_bytes(32)
         self.nonces = NonceCache()
         self.ledger = ReceiptLedger(self.state)
         self._name_lock = threading.Lock()
@@ -411,13 +415,17 @@ class IngestService:
         device_id, nonce, sig = parsed
         key = self.key_for(device_id)
         if key is None:
-            raise AuthError(401, "未知のデバイスID")
+            # 未知IDと署名不一致で応答を変えると、デバイスIDを列挙できてしまう。
+            # ダミー鍵で同じ計算量を通し、外向きの文言・処理時間を揃える
+            # （どちらだったかはサーバログにだけ残す）。
+            logger.warning("未知のデバイスID: %s", device_id)
+            key = self._decoy_key
         expected = hmac.new(
             key, signing_string(method, path, device_id, body_sha256, nonce).encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
         if not hmac.compare_digest(expected, sig):
-            raise AuthError(401, "署名不一致")
+            raise AuthError(401, "認証失敗")
         if self.ic.cert_cn_must_match_device and peer_cn is not None and peer_cn != device_id:
             raise AuthError(403, f"証明書CN({peer_cn})とデバイスID({device_id})が不一致")
         if not self.nonces.use(device_id, nonce):
@@ -620,10 +628,11 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         self._responded = False   # keep-alive: 1インスタンスが複数リクエストを捌く
         path = self.path.split("?", 1)[0]
+        # healthz も接続元フィルタの内側に置く（許可範囲外からの生存確認を返さない）
+        if not self._guard_client():
+            return
         if path == HEALTH_PATH:
             self._send_json(200, {"ok": True})
-            return
-        if not self._guard_client():
             return
         if not self._route(TIME_PATH):
             return
@@ -693,19 +702,25 @@ class _Handler(BaseHTTPRequestHandler):
             return
         # 読み捨ての上限。ここを超える申告は読まずに切る（帯域を守る）
         drain_cap = svc.ic.max_bytes + DRAIN_MARGIN
+        # 認証を通る前は読み捨て量を小さく抑える。ここを max_bytes にすると、鍵を持たない
+        # 相手が「巨大な Content-Length + でたらめな署名」を送るだけで、サーバに最大128MBを
+        # 読ませられる（応答を読める形にするための読み捨てが増幅に使われる）。
+        # 正規のデバイスがここに来るのはヘッダ形式異常のときだけで、その場合は接続が切れても
+        # ファイルは持ち越されるので安全側。
+        unauth_cap = min(drain_cap, UNAUTH_DRAIN_CAP)
         if length > svc.ic.max_bytes:
             self._fail_before_body(413, f"サイズ超過です（上限 {svc.ic.max_bytes} バイト）",
-                                   length, drain_cap)
+                                   length, unauth_cap)
             return
         declared = headers.get("x-mindclip-bytes")
         if declared is not None and declared.strip().isdigit() and int(declared) != length:
             self._fail_before_body(
                 400, f"X-MindClip-Bytes({declared}) と Content-Length({length}) が不一致",
-                length, drain_cap)
+                length, unauth_cap)
             return
         expected_sha = (headers.get("x-mindclip-sha256") or "").strip().lower()
         if not SHA256_RE.match(expected_sha):
-            self._fail_before_body(400, "X-MindClip-Sha256 が無い/形式不正", length, drain_cap)
+            self._fail_before_body(400, "X-MindClip-Sha256 が無い/形式不正", length, unauth_cap)
             return
 
         # 3) 認証（署名は「デバイスが宣言した sha256」に対して検証する）
@@ -716,7 +731,7 @@ class _Handler(BaseHTTPRequestHandler):
             svc.authenticate("POST", path, self.headers.get("Authorization"), expected_sha,
                              self._peer_cn())
         except AuthError as exc:
-            self._fail_before_body(exc.status, exc.reason, length, drain_cap)
+            self._fail_before_body(exc.status, exc.reason, length, unauth_cap)
             return
         if svc.free_bytes() - length < svc.ic.min_free_bytes:
             self._fail_before_body(507, "サーバのディスク空き容量が不足しています",
@@ -805,12 +820,45 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 class IngestHTTPServer(ThreadingHTTPServer):
+    """同時接続数に上限を設けた ThreadingHTTPServer。
+
+    素の ThreadingHTTPServer は接続ごとに無制限にスレッドを作るため、LAN内の1台が
+    多数の低速接続（slowloris）を張るだけでスレッド・FD を枯渇させ、受信APIを停止
+    させられる。デバイスは 200 を受けるまで SD からファイルを消さないので、受信が
+    止まり続けると最終的に SD が埋まって録音自体が止まる（SPEC E2）。
+    上限に達した接続は待たせず即座に閉じ、デバイス側は次回同期へ持ち越す。
+    """
+
     daemon_threads = True
     allow_reuse_address = True
+    request_queue_size = 32
 
-    def __init__(self, addr, handler, service: IngestService) -> None:
+    def __init__(self, addr, handler, service: IngestService,
+                 max_connections: int = 16) -> None:
         self.service = service
+        self._slots = threading.BoundedSemaphore(max_connections)
+        self._max_connections = max_connections
         super().__init__(addr, handler)
+
+    def process_request(self, request, client_address) -> None:
+        if not self._slots.acquire(blocking=False):
+            logger.warning("同時接続数の上限(%d)に達したため接続を拒否: %s",
+                           self._max_connections, client_address[0])
+            # 枠を取れなかった接続は close_request を通さずここで閉じる。
+            # （通してしまうと、取っていない枠を release して上限が壊れる）
+            try:
+                request.close()
+            except OSError:
+                pass
+            return
+        super().process_request(request, client_address)
+
+    def close_request(self, request) -> None:
+        # 受理した接続は必ずここを1回通るので、枠の返却漏れが起きない
+        try:
+            super().close_request(request)
+        finally:
+            self._slots.release()
 
 
 def build_ssl_context(ic: IngestConfig) -> ssl.SSLContext | None:
@@ -822,8 +870,28 @@ def build_ssl_context(ic: IngestConfig) -> ssl.SSLContext | None:
                 " デバイスは http:// を受け付けません。試験目的で平文にする場合のみ"
                 " allow_plaintext = true を明示してください"
             )
-        logger.warning("平文HTTPで待ち受けます（allow_plaintext=true）。実運用では使わないこと")
+        # 平文では mTLS が成立しない。require_mtls=true のまま起動すると
+        # 「クライアント証明書で守られている」と誤認したまま無防備に待ち受けることになる
+        # ため、矛盾した設定は黙って通さず起動を拒否する。
+        if ic.require_mtls:
+            raise RuntimeError(
+                "allow_plaintext = true と require_mtls = true が同時に指定されています。"
+                " 平文HTTPではクライアント証明書の検証ができないため、この組み合わせでは"
+                " mTLS は一切効きません。試験目的であることを承知のうえで平文にする場合は"
+                " require_mtls = false も明示してください"
+            )
+        logger.warning(
+            "平文HTTPで待ち受けます（allow_plaintext=true）。TLSもクライアント証明書検証も"
+            "無効で、認証は共有秘密HMACのみです。実運用では使わないこと"
+        )
         return None
+    if ic.cert_cn_must_match_device and not ic.client_ca:
+        # CN一致要求は mTLS があって初めて意味を持つ。無言で無効化しない。
+        raise RuntimeError(
+            "cert_cn_must_match_device = true ですが [ingest] client_ca が未設定です。"
+            " クライアント証明書を検証しない構成では CN の照合ができません。"
+            " client_ca を指定するか cert_cn_must_match_device = false にしてください"
+        )
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.load_cert_chain(certfile=os.path.expanduser(ic.tls_cert),

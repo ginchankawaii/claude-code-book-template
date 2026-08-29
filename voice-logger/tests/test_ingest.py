@@ -299,7 +299,20 @@ class TestPerDeviceKeys(IngestTestBase):
     def test_unknown_device_rejected(self):
         status, resp = self.srv.request("GET", "/api/v1/time", device="someone-else")
         self.assertEqual(status, 401)
-        self.assertIn("デバイス", resp["error"])
+        self.assertEqual(resp["error"], "認証失敗")
+
+    def test_unknown_device_indistinguishable_from_bad_signature(self):
+        """未知デバイスIDと署名不一致で応答が変わらないこと（デバイスID列挙の防止）。
+
+        応答文言が違うと、攻撃者は総当たりで「実在するデバイスID」だけを選り分けられる。
+        """
+        unknown_status, unknown = self.srv.request(
+            "GET", "/api/v1/time", device="someone-else")
+        # 既知のデバイスIDに、鍵違いの署名を付ける
+        bad_sig_status, bad_sig = self.srv.request(
+            "GET", "/api/v1/time", device=DEVICE, key=b"\x00" * 32)
+        self.assertEqual(unknown_status, bad_sig_status)
+        self.assertEqual(unknown["error"], bad_sig["error"])
 
     def test_unknown_device_rejected_before_reading_body(self):
         body = wav_bytes()
