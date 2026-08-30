@@ -97,8 +97,8 @@ Wh/L = Wh ÷ (厚さ × 幅 × 長さ [mm³] ÷ 1,000,000)
 | BOM# | 品名 | 第一候補 | リンク切れ時の探し方 |
 |---|---|---|---|
 | 2 | LiPo 802530 680mAh (HXJNLDC) | https://www.amazon.co.jp/dp/B0D4V9NZSH | ストア: https://www.amazon.co.jp/stores/XHJNLDC/page/B13A2BD1-2BA3-4EE5-90ED-E553A8AA2491 ／ 検索: https://www.amazon.co.jp/s?k=802530+680mAh+3.7V — 選定基準は上の「電池の容量表記」節（680mAh級・セル刻印 2.5Wh 前後・保護回路・コネクタ記載あり・31×25×8mm） |
-| A1 | JST 1.25mm 2P ピグテール オスメス組（本命） | Letool 30ペア 80mm: https://www.amazon.co.jp/dp/B013JRWCBU | https://www.amazon.co.jp/s?k=JST+1.25mm+2%E3%83%94%E3%83%B3+%E3%82%B3%E3%83%8D%E3%82%AF%E3%82%BF%E4%BB%98%E3%81%8D%E3%82%B1%E3%83%BC%E3%83%96%E3%83%AB — 被覆外径 1.3mm 以下要実測 |
-| A1' | JST PH 2.0mm 2P ピグテール（任意の保険） | GTIWUNG 20ペア 80mm: https://www.amazon.co.jp/dp/B07P18TZ8H | https://www.amazon.co.jp/s?k=JST+PH2.0+2%E3%83%94%E3%83%B3+%E3%82%B1%E3%83%BC%E3%83%96%E3%83%AB |
+| A1 | JST 1.25mm 2P ピグテール オスメス組（本命） | SONONIA 5ペア（最小単位）: https://www.amazon.co.jp/dp/B076SSLHHL | https://www.amazon.co.jp/s?k=JST+1.25mm+2%E3%83%94%E3%83%B3+%E3%82%B3%E3%83%8D%E3%82%AF%E3%82%BF%E4%BB%98%E3%81%8D%E3%82%B1%E3%83%BC%E3%83%96%E3%83%AB — 被覆外径 1.3mm 以下要実測。必要数は1組だが、切り詰め・はんだの失敗代として最低2〜3組は確保すること（1組売りは事実上流通していない） |
+| A1' | ~~JST PH 2.0mm 2P（保険）~~ | **購入不要に格下げ**（電池のコネクタが仕様表で 1.25-2P と確定したため）。届いた電池が万一 2.0mm だった場合のみ後追いで買う | — |
 | 3 | microSD 32GB (SanDisk Ultra 正規品) | https://www.amazon.co.jp/dp/B08K4214KB | https://www.amazon.co.jp/s?k=SanDisk+microSD+32GB+Ultra |
 | 9 | カプトンテープ 10mm×33m | https://www.amazon.co.jp/dp/B08ZKH1HR8 | https://www.amazon.co.jp/s?k=%E3%82%AB%E3%83%97%E3%83%88%E3%83%B3%E3%83%86%E3%83%BC%E3%83%97+10mm |
 | 10 | ネオジム磁石 φ6×2mm ×4（穴なし丸形・**厚2.0mm厳守**） | TRUSCO TN6-2R-1P（1個入×4。Amazon 掲載は要確認）: https://www.amazon.co.jp/s?k=TRUSCO+TN6-2R-1P | https://www.amazon.co.jp/s?k=%E3%83%8D%E3%82%AA%E3%82%B8%E3%83%A0%E7%A3%81%E7%9F%B3+6mm+2mm （2.5/3mm 厚や軸穴付きは不可）。確実なのはモノタロウ/コメリの TN6-2R-1P |
