@@ -112,7 +112,7 @@
 <text x="96" y="554" font-family="'Noto Sans JP','Noto Sans CJK JP','Source Han Sans JP','Hiragino Sans','Yu Gothic',Meiryo,IPAPGothic,IPAGothic,sans-serif" font-size="10.5" fill="#5f6b73" text-anchor="start" font-weight="normal">GND はデイジーチェーン（空中3端子スプライスを廃止）</text>
 <rect x="46" y="596" width="168" height="88" rx="4" fill="#ffffff" stroke="#37474f" stroke-width="1.8"/>
 <text x="130" y="616" font-family="'DejaVu Sans Mono',Menlo,Consolas,monospace" font-size="12.5" fill="#1a1a1a" text-anchor="middle" font-weight="bold">BT1  LiPo</text>
-<text x="130" y="632" font-family="'Noto Sans JP','Noto Sans CJK JP','Source Han Sans JP','Hiragino Sans','Yu Gothic',Meiryo,IPAPGothic,IPAGothic,sans-serif" font-size="10.5" fill="#5f6b73" text-anchor="middle" font-weight="normal">802530 800mAh (allday)</text>
+<text x="130" y="632" font-family="'Noto Sans JP','Noto Sans CJK JP','Source Han Sans JP','Hiragino Sans','Yu Gothic',Meiryo,IPAPGothic,IPAGothic,sans-serif" font-size="10.5" fill="#5f6b73" text-anchor="middle" font-weight="normal">802530 680mAh (allday)</text>
 <text x="130" y="646" font-family="'Noto Sans JP','Noto Sans CJK JP','Source Han Sans JP','Hiragino Sans','Yu Gothic',Meiryo,IPAPGothic,IPAGothic,sans-serif" font-size="10.5" fill="#5f6b73" text-anchor="middle" font-weight="normal">502530 500mAh (slim)</text>
 <text x="130" y="666" font-family="'Noto Sans JP','Noto Sans CJK JP','Source Han Sans JP','Hiragino Sans','Yu Gothic',Meiryo,IPAPGothic,IPAGothic,sans-serif" font-size="10.5" fill="#d62828" text-anchor="middle" font-weight="bold">PCM内蔵 必須（連続500mA/瞬時1A）</text>
 <polyline points="236,609 236,643" fill="none" stroke="#1a1a1a" stroke-width="3.0" stroke-linejoin="round" stroke-linecap="round"/>

@@ -4,7 +4,7 @@
 <rect x="34.0" y="34.0" width="342.0" height="459.9" fill="#f7f7f7" stroke="#999" stroke-width="1.2"/>
 <rect x="48.4" y="48.4" width="313.2" height="431.1" fill="#fff" stroke="#bbb" stroke-width="1.0" stroke-dasharray="4 3"/>
 <rect x="70.0" y="240.1" width="270.0" height="225.0" fill="#fdf0d5" stroke="#e0a800" stroke-width="1.0"/>
-<text x="205.0" y="357.1" class="t" text-anchor="middle">LiPo 30x25x8 (allday)</text>
+<text x="205.0" y="357.1" class="t" text-anchor="middle">LiPo 31x25x8 (allday)</text>
 <text x="205.0" y="384.1" class="s" text-anchor="middle">キャリア基板はここには重ねられない (電池上面 z11.0)</text>
 <rect x="51.1" y="51.1" width="307.8" height="185.4" fill="#e8f4e8" stroke="#2a7" stroke-width="1.6"/>
 <rect x="169.0" y="99.7" width="108.0" height="90.0" fill="#fff" stroke="#2a7" stroke-width="1.2" stroke-dasharray="3 2"/>

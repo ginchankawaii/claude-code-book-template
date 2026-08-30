@@ -246,7 +246,7 @@ text(96, 554, "GND はデイジーチェーン（空中3端子スプライスを
 BY = 626
 rect(46, BY - 30, 168, 88, "#ffffff", C_BOX, 1.8, 4)
 text(130, BY - 10, "BT1  LiPo", 12.5, C_INK, "middle", "bold", MONO)
-text(130, BY + 6, "802530 800mAh (allday)", 10.5, C_SUB, "middle")
+text(130, BY + 6, "802530 680mAh (allday)", 10.5, C_SUB, "middle")
 text(130, BY + 20, "502530 500mAh (slim)", 10.5, C_SUB, "middle")
 text(130, BY + 40, "PCM内蔵 必須（連続500mA/瞬時1A）", 10.5, C_RED, "middle", "bold")
 for dx, hh, sw in ((0, 17, 3.0), (10, 9, 3.0)):

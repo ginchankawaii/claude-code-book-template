@@ -4,17 +4,17 @@
 MindClip DIY — クリップ型音声ロガー筐体 パラメトリックCADモデル (CadQuery 2.8)
 
 バリアント (環境変数 MINDCLIP_VARIANT):
-  - allday (既定) : LiPo 802530 (800mAh)。外形 38.0 x 49.4 x 14.6 mm
-  - slim          : LiPo 502530 (500mAh)。外形 38.0 x 49.4 x 12.9 mm
+  - allday (既定) : LiPo 802530 (680mAh, 実寸31x25x8)。外形 39.0 x 49.4 x 14.6 mm
+  - slim          : LiPo 502530 (500mAh)。外形 39.0 x 49.4 x 12.9 mm
 
 基板オプション (環境変数 MINDCLIP_PCB, v1.5 で追加):
   - none (既定) : 基板なし = 採用案 A-1 (ハーネス v1.5)。**v1.4 と完全に同一形状**
                   (STL がバイト一致することを回帰確認済み)。SCHEMATIC.md §5.5 が
                   確定した JST 嵌合体の置き場所を harness_jst として毎回検算する。
   - sense       : MC-SENSE-A (10.0 x 15.6 x 0.8t) を左ポケット床に置く。
-                  allday は外形不変 (38.0 x 49.4 x 14.6)。slim は J1 の天井余裕が
+                  allday は外形不変 (39.0 x 49.4 x 14.6)。slim は J1 の天井余裕が
                   足りず 14.2mm に膨らむ = 非推奨。
-  - carrier     : MC-CARRIER-A (34.2 x 21.0 x 0.8t)。外形 38.0 x 51.2 x 14.9 mm。
+  - carrier     : MC-CARRIER-A (34.2 x 21.0 x 0.8t)。外形 39.0 x 51.2 x 14.9 mm。
                   XIAO 位置決めリブ一式を基板シェルフ + 取付ボス2本に置換する。
 
   出力は ../stl/<tag>/ と ../renders/<tag>/ (tag = variant または variant_pcb)。
@@ -60,6 +60,7 @@ MindClip DIY — クリップ型音声ロガー筐体 パラメトリックCAD�
   - Sense拡張ボード込みスタック総厚 7.5 mm (カメラ除く) : **assumption** (Web未検証)
   - PDMマイク位置 : 拡張ボード上、正面向き : **assumption** → 上面開口+前面キャビティで導音
   - LiPo 502530 : 30 x 25 x 5.0 mm (公称)
+  - LiPo 802530 : 31 x 25 x 8.0 mm (採用品 HXJNLDC のメーカー仕様表。商品画像で確認済み)
   - SS-12D00 : 本体 8.7 x 3.7 mm (Web検証済み)、高さ3.5 mm・レバー突出2 mm : **assumption**
   - ネオジム磁石 φ6 x 2 mm x 4個
 """
@@ -80,9 +81,9 @@ LIP_D = 2.2         # lip (スカート) の挿入深さ。内寸奥行きの計
 # --- バリアント選択 ---------------------------------------------------------
 # Seeed 公式スペックの実測値 (録音+SD書込 3.8V/54.4mA平均) を電力予算の基準にすると、
 # 500mAh では約8時間しか持たず「起床〜就寝」を走り切れない (ELECTRICAL.md §2.2)。
-# そのため既定は 800mAh の allday。電池は同フットプリント(30x25)で厚みだけ違うため、
-# 筐体奥行きの増加は +0.8mm に留まる (奥行きを支配するのは XIAO スタックのため)。
-#   allday (既定): LiPo 802530 800mAh — 最悪ケース54.4mAでも約12.5時間、省電力込みで18h+
+# そのため既定は 802530 の allday。採用品 (HXJNLDC B0D4V9NZSH) の実容量は 680mAh
+# (802530 に 800mAh は物理的に入らない。bom.md のエネルギー密度検算参照)。
+#   allday (既定): LiPo 802530 680mAh — 最悪ケース54.4mAで約10.6時間、28mAゲート達成で20.6h
 #   slim         : LiPo 502530 500mAh — 約8時間。薄さ優先・短時間運用向け
 # 切替: MINDCLIP_VARIANT=slim python3 mindclip_case.py
 VARIANT = os.environ.get("MINDCLIP_VARIANT", "allday").strip().lower()
@@ -94,9 +95,10 @@ if VARIANT == "slim":
     BAT_W, BAT_H, BAT_T = 30.0, 25.0, 5.0      # LiPo 502530 (500mAh)
     BAT_LABEL, BAT_MAH = "LiPo 502530 (500mAh)", 500
 else:
-    # v1.6: 採用品 HXJNLDC 802530 (Amazon B0D4V9NZSH) の商品仕様は 30.5×25×8mm。
-    # 公称型番の 30.0 でなく実仕様の 30.5 を正とする (BAT_TOL の安全代を食わないため)。
-    BAT_W, BAT_H, BAT_T = 30.5, 25.0, 8.0      # LiPo 802530 (680mAh, 実仕様30.5mm)
+    # v1.6: 採用品 HXJNLDC 802530 (Amazon B0D4V9NZSH)。メーカー仕様表 (商品画像) は
+    # long 31 × width 25 × high 8 mm。公称型番の 30.0 でなく実仕様 31.0 を正とする
+    # (BAT_TOL の安全代を食わないため)。
+    BAT_W, BAT_H, BAT_T = 31.0, 25.0, 8.0      # LiPo 802530 (680mAh, 実仕様31mm)
     BAT_LABEL, BAT_MAH = "LiPo 802530 (680mAh)", 680
 XIAO_W, XIAO_H = 21.0, 17.8                     # XIAO ESP32S3 基板
 XIAO_STACK_T = 7.5                              # Sense拡張ボード込み総厚 (assumption)
@@ -141,7 +143,7 @@ PCB_LEDGE_OVH = 0.6    # 抜け止め爪の張り出し量
 # v1.4: 34.0 では電池右端と右lip内面の隙間が 0.45mm しかなく、LiPo の寸法公差
 # (±0.5mm) と保護回路(PCM)端の膨らみで干渉し得た。左側と同じ 1.25mm を確保する
 # 34.8 に拡大 (下の BAT_TOL assert で恒久的に担保する)。
-IW = 35.3   # v1.6: 電池実仕様 30.5mm に合わせ 34.8→35.3 (電池両脇の隙間は従来と同一)
+IW = 35.8   # v1.6: 電池実仕様 31.0mm に合わせ 34.8→35.8 (電池両脇の隙間は従来と同一)
 BAT_TOL = 1.0                                   # 電池の寸法公差+PCM膨らみの許容代
 # XIAO基板下面リフト。none/sense は裏面はんだ+AWG28+カプトンの突出 (1.0-1.5mm) の
 # 逃げ空間、carrier では「シェルフ0.8 + キャリア基板0.8」がそのままリフトになる。
@@ -645,11 +647,14 @@ def check_layout():
         _rot = (harness_jst[0], harness_jst[1],
                 harness_jst[0] + HARNESS_JST_XYZ[1], harness_jst[1] + HARNESS_JST_XYZ[0],
                 harness_jst[4], harness_jst[5])
-        # v1.6: 内寸幅 +0.5 により X置きは「衝突」から「隙間0.1mm」になったが、
-        # 組立公差 0.3mm 未満であり依然として不成立。判定を実クリアランス基準に更新。
-        assert clearance(_rot, xiao_stops[0]) < 0.3, (
-            'regression: X-laid JST now fits (clearance >= 0.3mm). '
-            'SCHEMATIC.md §5.5 の Y置き決定を再評価してから外すこと')
+        # v1.6: 内寸幅 34.8→35.8 の拡大で X置きも幾何的には成立するようになった
+        # (クリアランス約0.6mm)。Y置きは「唯一の可能解」ではなく「採用した慣例」に
+        # 変わったため、不成立を主張する旧 assert は撤去し、状況をログに残すだけにする。
+        # 組立ガイド・SCHEMATIC §5.5・本CADのガイド形状はすべて Y置き前提のままであり、
+        # X置きへ変更する場合はそれら一式を更新すること。
+        _xg = clearance(_rot, xiao_stops[0])
+        print(f"[harness] X-laid JST clearance to xiao stop: {_xg:.2f}mm "
+              f"({'geometrically viable but NOT the documented placement' if _xg >= 0.3 else 'not viable'})")
         # 旧配置 (y31.0..42.0) に戻すと必ずスイッチ端子と当たること = 回帰テスト
         _old_y = (harness_jst[0], 31.0, harness_jst[2], 42.0,
                   harness_jst[4], harness_jst[5])
@@ -775,12 +780,12 @@ def check_layout():
     #   公開値と食い違ったら必ず落ちるようにし、落ちたら MECHANICAL.md §1 / §11.1 と
     #   README §6 の寸法を更新してからでないと STL を出せないようにする。
     GOLDEN_OUTER = {
-        ("allday", "none"): (38.5, 49.4, 14.6),
-        ("slim", "none"): (38.5, 49.4, 12.9),
-        ("allday", "sense"): (38.5, 49.4, 14.6),
-        ("slim", "sense"): (38.5, 49.4, 14.2),
-        ("allday", "carrier"): (38.5, 51.2, 14.9),
-        ("slim", "carrier"): (38.5, 51.2, 14.9),
+        ("allday", "none"): (39.0, 49.4, 14.6),
+        ("slim", "none"): (39.0, 49.4, 12.9),
+        ("allday", "sense"): (39.0, 49.4, 14.6),
+        ("slim", "sense"): (39.0, 49.4, 14.2),
+        ("allday", "carrier"): (39.0, 51.2, 14.9),
+        ("slim", "carrier"): (39.0, 51.2, 14.9),
     }
     _g = GOLDEN_OUTER[(VARIANT, PCB)]
     assert (abs(W - _g[0]) < 1e-6 and abs(H - _g[1]) < 1e-6
