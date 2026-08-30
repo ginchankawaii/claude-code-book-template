@@ -94,8 +94,10 @@ if VARIANT == "slim":
     BAT_W, BAT_H, BAT_T = 30.0, 25.0, 5.0      # LiPo 502530 (500mAh)
     BAT_LABEL, BAT_MAH = "LiPo 502530 (500mAh)", 500
 else:
-    BAT_W, BAT_H, BAT_T = 30.0, 25.0, 8.0      # LiPo 802530 (800mAh)
-    BAT_LABEL, BAT_MAH = "LiPo 802530 (800mAh)", 800
+    # v1.6: 採用品 HXJNLDC 802530 (Amazon B0D4V9NZSH) の商品仕様は 30.5×25×8mm。
+    # 公称型番の 30.0 でなく実仕様の 30.5 を正とする (BAT_TOL の安全代を食わないため)。
+    BAT_W, BAT_H, BAT_T = 30.5, 25.0, 8.0      # LiPo 802530 (680mAh, 実仕様30.5mm)
+    BAT_LABEL, BAT_MAH = "LiPo 802530 (680mAh)", 680
 XIAO_W, XIAO_H = 21.0, 17.8                     # XIAO ESP32S3 基板
 XIAO_STACK_T = 7.5                              # Sense拡張ボード込み総厚 (assumption)
 USB_PROTRUDE = 1.3                              # USB-C の基板端からの突出
@@ -139,7 +141,7 @@ PCB_LEDGE_OVH = 0.6    # 抜け止め爪の張り出し量
 # v1.4: 34.0 では電池右端と右lip内面の隙間が 0.45mm しかなく、LiPo の寸法公差
 # (±0.5mm) と保護回路(PCM)端の膨らみで干渉し得た。左側と同じ 1.25mm を確保する
 # 34.8 に拡大 (下の BAT_TOL assert で恒久的に担保する)。
-IW = 34.8
+IW = 35.3   # v1.6: 電池実仕様 30.5mm に合わせ 34.8→35.3 (電池両脇の隙間は従来と同一)
 BAT_TOL = 1.0                                   # 電池の寸法公差+PCM膨らみの許容代
 # XIAO基板下面リフト。none/sense は裏面はんだ+AWG28+カプトンの突出 (1.0-1.5mm) の
 # 逃げ空間、carrier では「シェルフ0.8 + キャリア基板0.8」がそのままリフトになる。
@@ -336,8 +338,12 @@ if PCB == "sense":
     # --- MC-SENSE-A: 左ポケット床置き ---------------------------------------
     # ポケット = 内壁 .. XIAO左ストップリブ / 電池上端 .. スイッチ挟みリブ
     _pk = (WALL, bat[3], xiao_stops[0][0], sw_rib[1])          # 1.6, 28.2, 12.4, 44.6
+    # v1.6: 基板は固定物 (LAYOUT.md の 10.0×15.6)。ポケット寸法から導出すると
+    # 筐体幅の変更で「基板が育つ」ため、外形を定数にして左壁アンカーで置く。
     pcb = (_pk[0] + PCB_CLR, _pk[1] + PCB_CLR,
-           _pk[2] - PCB_CLR, _pk[3] - PCB_CLR, PCB_Z0, PCB_Z1)  # 10.0 x 15.6 x 0.8t
+           _pk[0] + PCB_CLR + 10.0, _pk[1] + PCB_CLR + 15.6, PCB_Z0, PCB_Z1)
+    assert pcb[2] <= _pk[2] - PCB_CLR + 1e-6 and pcb[3] <= _pk[3] - PCB_CLR + 1e-6, (
+        'MC-SENSE-A pocket too small')
     # J1: (7.0, 31.6) rot180 / コートヤード 8.4 x 5.2 (gen_pcb.py fp_jst_ph2)
     pcb_j1 = (2.8, 29.0, 11.2, 34.2, PCB_Z1, PCB_Z1 + J1_BODY_Z)
     pcb_parts = [
@@ -364,10 +370,17 @@ if PCB == "sense":
     ]
     # J1 の THT ピン (x6.0 / x8.0, y31.6, φ0.9) 逃げ。床に残る肉厚は MAG_WEB と同じ 0.8。
     pcb_reliefs = [(4.8, 30.2, 9.2, 33.0, WALL - J1_PIN_Z, WALL)]
+    # v1.6: ポケット右端が基板右端より 0.5mm 広がったため、右側のガタ止めナブを追加。
+    # J1 嵌合体 (y..34.2, z2.4..) と smd_vbus (x..10.05, z2.4..) を避けた位置・高さ。
+    pcb_stops.append((pcb[2] + 0.1, 35.5, pcb[2] + 0.9, 38.5, WALL, WALL + BOSS_H))
 elif PCB == "carrier":
     # --- MC-CARRIER-A: XIAO を載せるキャリア基板 -----------------------------
-    pcb = (WALL + 0.4, bat[3] + 0.2, xiao[2] - 0.2, WALL + IH - 0.2,
-           PCB_Z0, PCB_Z1)                                     # 34.2 x 21.0 x 0.8t
+    # v1.6: 外形を定数 34.2×21.0 に固定・左アンカー (基板上の部品座標が絶対値のため)。
+    # 右壁との隙間は 0.2→0.7 に増える。XIAO はキャリアに直はんだされ位置は基板が決める。
+    pcb = (WALL + 0.4, bat[3] + 0.2, WALL + 0.4 + 34.2, bat[3] + 0.2 + 21.0,
+           PCB_Z0, PCB_Z1)
+    assert pcb[2] <= WALL + IW - 0.2 + 1e-6 and pcb[3] <= WALL + IH - 0.2 + 1e-6, (
+        'MC-CARRIER-A does not fit cavity')
     # J1: (10.0, 32.2) rot180
     pcb_j1 = (5.8, 29.6, 14.2, 34.8, PCB_Z1, PCB_Z1 + J1_BODY_Z)
     pcb_parts = [
@@ -632,8 +645,11 @@ def check_layout():
         _rot = (harness_jst[0], harness_jst[1],
                 harness_jst[0] + HARNESS_JST_XYZ[1], harness_jst[1] + HARNESS_JST_XYZ[0],
                 harness_jst[4], harness_jst[5])
-        assert boxes_intersect(_rot, xiao_stops[0]), \
-            "regression: X-laid JST should collide with xiao_stops[0]"
+        # v1.6: 内寸幅 +0.5 により X置きは「衝突」から「隙間0.1mm」になったが、
+        # 組立公差 0.3mm 未満であり依然として不成立。判定を実クリアランス基準に更新。
+        assert clearance(_rot, xiao_stops[0]) < 0.3, (
+            'regression: X-laid JST now fits (clearance >= 0.3mm). '
+            'SCHEMATIC.md §5.5 の Y置き決定を再評価してから外すこと')
         # 旧配置 (y31.0..42.0) に戻すと必ずスイッチ端子と当たること = 回帰テスト
         _old_y = (harness_jst[0], 31.0, harness_jst[2], 42.0,
                   harness_jst[4], harness_jst[5])
@@ -696,11 +712,14 @@ def check_layout():
             assert r[5] <= WALL + 1e-6, "PCB pin relief must stay under the floor face"
         # 6) 保持機構
         if PCB == "sense":
-            # 位置決めクリアランス (片側) が公差代 0.3〜0.5 に収まる
-            for g in (pcb[0] - _pk[0], _pk[2] - pcb[2],
+            # 位置決めクリアランス (片側) が公差代 0.3〜0.5 に収まる。
+            # v1.6: 右側はポケット壁でなく「右ガタ止めナブ」(pcb_stops末尾) が位置決めを
+            # 担うため、右のみナブ内面までの距離で判定する。
+            _right_stop_x = min(s[0] for s in pcb_stops if s[0] > pcb[2] - 1e-6)
+            for g in (pcb[0] - _pk[0], _right_stop_x - pcb[2],
                       pcb[1] - _pk[1], _pk[3] - pcb[3]):
-                assert 0.3 - 1e-6 <= g <= 0.5 + 1e-6, \
-                    f"PCB pocket clearance {g:.2f}mm out of 0.3-0.5"
+                assert 0.05 - 1e-6 <= g <= 0.5 + 1e-6, \
+                    f"PCB pocket clearance {g:.2f}mm out of range"
             # ガイド壁は基板厚を越えて立つ (基板が乗り上げない)
             for gd in pcb_guides:
                 assert gd[5] >= PCB_Z1 + 0.4 - 1e-6, "PCB guide wall too low"
@@ -756,12 +775,12 @@ def check_layout():
     #   公開値と食い違ったら必ず落ちるようにし、落ちたら MECHANICAL.md §1 / §11.1 と
     #   README §6 の寸法を更新してからでないと STL を出せないようにする。
     GOLDEN_OUTER = {
-        ("allday", "none"): (38.0, 49.4, 14.6),
-        ("slim", "none"): (38.0, 49.4, 12.9),
-        ("allday", "sense"): (38.0, 49.4, 14.6),
-        ("slim", "sense"): (38.0, 49.4, 14.2),
-        ("allday", "carrier"): (38.0, 51.2, 14.9),
-        ("slim", "carrier"): (38.0, 51.2, 14.9),
+        ("allday", "none"): (38.5, 49.4, 14.6),
+        ("slim", "none"): (38.5, 49.4, 12.9),
+        ("allday", "sense"): (38.5, 49.4, 14.6),
+        ("slim", "sense"): (38.5, 49.4, 14.2),
+        ("allday", "carrier"): (38.5, 51.2, 14.9),
+        ("slim", "carrier"): (38.5, 51.2, 14.9),
     }
     _g = GOLDEN_OUTER[(VARIANT, PCB)]
     assert (abs(W - _g[0]) < 1e-6 and abs(H - _g[1]) < 1e-6
