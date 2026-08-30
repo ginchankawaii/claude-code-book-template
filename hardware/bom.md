@@ -88,6 +88,24 @@ Wh/L = Wh ÷ (厚さ × 幅 × 長さ [mm³] ÷ 1,000,000)
 | 14 | **USB電流計（USBテスター）** | **省略不可**。README §8 の**消費電流ゲート（平均 ≤28mA）**は筐体を印刷する前に通す必須手順で、積算(mAh)表示があるものを選ぶこと。無いと「バリアントを slim にしてよいか」が判定できない | ¥1,000〜2,500 |
 | 13 | **テスター（デジタルマルチメータ）** | **省略不可**。DCV レンジと導通ブザーの両方が要る。**電池を嵌合する前のテスタゲート4項目**（README §7 手順8-B / SCHEMATIC.md §5.4）は A-1 の極性事故対策の全てであり、この工具が無いと成立しない | ¥1,500〜3,000（手持ち流用可） |
 
+## Amazon 購入リンク集（2026-08-30 検索時点）
+
+秋月分は発注済みのため、残りの Amazon 購入分をまとめる。**本環境から Amazon の商品ページは
+直接開けない（ネットワーク制限）ため、ASIN/URL は Web 検索インデックス由来**。マーケットプレイス
+商品は出品消滅が頻繁にあるので、リンク切れの場合は併記の検索リンクから同等品を選ぶこと。
+
+| BOM# | 品名 | 第一候補 | リンク切れ時の探し方 |
+|---|---|---|---|
+| 2 | LiPo 802530 680mAh (HXJNLDC) | https://www.amazon.co.jp/dp/B0D4V9NZSH | ストア: https://www.amazon.co.jp/stores/XHJNLDC/page/B13A2BD1-2BA3-4EE5-90ED-E553A8AA2491 ／ 検索: https://www.amazon.co.jp/s?k=802530+680mAh+3.7V — 選定基準は上の「電池の容量表記」節（680mAh級・セル刻印 2.5Wh 前後・保護回路・コネクタ記載あり・31×25×8mm） |
+| A1 | JST 1.25mm 2P ピグテール オスメス組（本命） | Letool 30ペア 80mm: https://www.amazon.co.jp/dp/B013JRWCBU | https://www.amazon.co.jp/s?k=JST+1.25mm+2%E3%83%94%E3%83%B3+%E3%82%B3%E3%83%8D%E3%82%AF%E3%82%BF%E4%BB%98%E3%81%8D%E3%82%B1%E3%83%BC%E3%83%96%E3%83%AB — 被覆外径 1.3mm 以下要実測 |
+| A1' | JST PH 2.0mm 2P ピグテール（任意の保険） | GTIWUNG 20ペア 80mm: https://www.amazon.co.jp/dp/B07P18TZ8H | https://www.amazon.co.jp/s?k=JST+PH2.0+2%E3%83%94%E3%83%B3+%E3%82%B1%E3%83%BC%E3%83%96%E3%83%AB |
+| 3 | microSD 32GB (SanDisk Ultra 正規品) | https://www.amazon.co.jp/dp/B08K4214KB | https://www.amazon.co.jp/s?k=SanDisk+microSD+32GB+Ultra |
+| 9 | カプトンテープ 10mm×33m | https://www.amazon.co.jp/dp/B08ZKH1HR8 | https://www.amazon.co.jp/s?k=%E3%82%AB%E3%83%97%E3%83%88%E3%83%B3%E3%83%86%E3%83%BC%E3%83%97+10mm |
+| 10 | ネオジム磁石 φ6×2mm ×4（穴なし丸形・**厚2.0mm厳守**） | TRUSCO TN6-2R-1P（1個入×4。Amazon 掲載は要確認）: https://www.amazon.co.jp/s?k=TRUSCO+TN6-2R-1P | https://www.amazon.co.jp/s?k=%E3%83%8D%E3%82%AA%E3%82%B8%E3%83%A0%E7%A3%81%E7%9F%B3+6mm+2mm （2.5/3mm 厚や軸穴付きは不可）。確実なのはモノタロウ/コメリの TN6-2R-1P |
+| 14 | USB電流計（mAh積算つき） | ルートアール RT-USBVATM2QC: https://www.amazon.co.jp/dp/B019VD9NQ8 | https://www.amazon.co.jp/s?k=USB%E9%9B%BB%E6%B5%81%E9%9B%BB%E5%9C%A7%E3%83%81%E3%82%A7%E3%83%83%E3%82%AB%E3%83%BC+%E7%A9%8D%E7%AE%97 — 積算(mAh)表示が必須条件 |
+| 8 | 熱収縮チューブ詰め合わせ | 秋月注文に含めていれば不要 | https://www.amazon.co.jp/s?k=%E7%86%B1%E5%8F%8E%E7%B8%AE%E3%83%81%E3%83%A5%E3%83%BC%E3%83%96+%E3%82%BB%E3%83%83%E3%83%88 |
+| 9a〜9e | 両面テープ+スポンジ／エポキシ／グルーガン／マスキングテープ／つまようじ | 100円ショップ・ホームセンターで可 | — |
+
 ## 合計（デバイス本体のみ・工具除く）
 
 **約 ¥6,800〜8,100**（v1 の ¥6,500〜7,500 + #A1 の JST ピグテール ¥300〜600）
