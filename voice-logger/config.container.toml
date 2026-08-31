@@ -1,0 +1,42 @@
+# voice-logger 設定 — コンテナ用 (docker-compose.yml とペアで使う)
+# ホスト側パスは compose のバインドマウントが吸収するので、ここは常にコンテナ内パス。
+# 使い方: cp config.container.toml config.toml して [ingest] の鍵まわりを確認。
+
+[paths]
+inbox = "/data/inbox"
+archive = "/data/archive"
+state = "/data/state"
+obsidian_vault = "/vault"          # compose で自分の vault をここにマウントする
+daily_notes_dir = "Daily Notes"
+
+[whisper]
+model = "large-v3-turbo"           # 遅すぎる場合は "medium" → "small" に落とす
+device = "cpu"                     # iGPU 機ではCPU固定 (auto でも同じだが明示)
+compute_type = "int8"
+language = "ja"
+
+[ollama]
+url = "http://ollama:11434"        # compose のサービス名で解決 (ホストには公開しない)
+model = "qwen3:4b"                 # 16GB RAM / GPU なしの現実解。余裕があれば qwen3:8b
+chunk_chars = 12000
+
+[diary]
+date_format = "%Y-%m-%d"
+section_heading = "## 🎙️ 会話ログ（自動生成）"
+
+[ingest]
+# コンテナ内は 0.0.0.0 で待つ (起動時に警告が出るが、コンテナでは正しい設定。
+# 外への公開範囲は compose 側の ports 指定と Windows ファイアウォールで絞る)
+host = "0.0.0.0"
+port = 8443
+tls_cert = "/data/pki/server.crt"
+tls_key = "/data/pki/server.key"
+client_ca = "/data/pki/ca.crt"
+require_mtls = true
+cert_cn_must_match_device = false
+hmac_key_file = "/data/pki/hmac.key"
+# Docker の NAT を通ると接続元がブリッジGW (172.x) に見えるため 172.16.0.0/12 が必須
+allowed_networks = ["127.0.0.0/8", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"]
+max_bytes = 134217728
+min_free_bytes = 536870912
+socket_timeout_sec = 120

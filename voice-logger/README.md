@@ -31,6 +31,44 @@ cp config.example.toml config.toml
 $EDITOR config.toml   # Obsidian vault のパス等を自分の環境に合わせる
 ```
 
+## Docker で動かす（他システムと同居するマシン向け・Windows/Surface 推奨）
+
+ホストに Python / Ollama を直接入れたくない場合はコンテナで動かす。
+`Dockerfile` / `docker-compose.yml` / `config.container.toml` が同梱されている。
+
+前提: [Docker Desktop](https://www.docker.com/products/docker-desktop/)（Windows は WSL2 バックエンド）。
+
+```bash
+cd voice-logger
+
+# 1. コンテナ用設定を config.toml に（パスは全てコンテナ内パスなので編集は最小限）
+cp config.container.toml config.toml
+
+# 2. docker-compose.yml の vault マウント1行だけ自分の環境に書き換える
+#      - C:/Users/you/Documents/Obsidian/MyVault:/vault
+
+# 3. データ用フォルダと鍵 (Phase 1 で使う場合) を用意
+mkdir -p data/inbox data/archive data/state data/pki
+
+# 4. 起動 + LLM モデル取得（初回のみ）
+docker compose up -d
+docker compose exec ollama ollama pull qwen3:4b
+
+# 5. 動作確認（音声を data/inbox に置いてから）
+docker compose run --rm voice-logger process --dry-run /data/inbox/test.m4a
+```
+
+- `watch`（inbox 監視）と `serve`（デバイス受信API :8443）が常駐する。ログは `docker compose logs -f`
+- **ホストに公開されるのは 8443 のみ**。Ollama はコンテナ間ネットワークに閉じる
+- whisper モデルは初回実行時に named volume にダウンロードされ、以後再利用される
+- ホスト保護: compose の `cpus` / `mem_limit` で使用量に上限を設定済み。Windows では
+  さらに `%UserProfile%\.wslconfig` に `[wsl2]` `memory=10GB` を書いて WSL2 全体を制限できる
+  （書き換え後は `wsl --shutdown` で反映）
+- `[ingest] host = "0.0.0.0"` の起動時警告はコンテナ運用では想定内（公開範囲は compose の
+  ports と OS のファイアウォールで絞る）
+- Docker の NAT を通ると接続元 IP がブリッジ GW（172.x）に見えるため、
+  `allowed_networks` に `172.16.0.0/12` が必要（config.container.toml には設定済み）
+
 ## 使い方
 
 ```bash
