@@ -104,6 +104,11 @@ N=10・滑り0.5% では粗エッジ 0.6% でも赤字。単一の閾値で判�
 | **fins details（財務諸表）は Premium 限定** | 本件は `fins summary` で足りる |
 | 認証 | V2 は APIキー方式（`x-api-key` ヘッダ）。V1 のリフレッシュトークンは廃止 |
 | CSV一括 | 2026-01 から Light 以上。CLI: `jquants bulk get --endpoint ... --download` |
+| ベースURL | `https://api.jquants.com/v2`（公式サンプルコードで確認） |
+| 日足エンドポイント | `/equities/bars/daily`（同上） |
+| 日付パラメータ | 区切りなしの **YYYYMMDD**（例 `20230324`）。銘柄コードは5桁（例 `86970`） |
+| 料金 | Free ¥0 / Light ¥1,650 / Standard ¥3,300 / Premium ¥16,500 |
+| 収録期間 | Free 2年（12週遅延）/ Light 5年 / Standard 10年 / Premium 20年 |
 | 公式CLI | `jquants schema <endpoint>` で項目名を確認できる |
 
 ### 2.2 使用項目（V2 名称。V1 とは別名）
@@ -128,6 +133,8 @@ idx topix    : Date, O, H, L, C
 [ ] bulk の日付粒度と出力形式
 [ ] 寄らずの日の O が null か前日終値か
 [ ] AdjFactor の適用方向（過去を割るのか掛けるのか）
+[ ] daily 以外のエンドポイントのパス（summary / master / calendar / topix）
+    公式サンプルで確定しているのは /equities/bars/daily のみ
 ```
 
 `erb probe` サブコマンドで上記を一括確認し、結果を `results/probe.md` に出す。

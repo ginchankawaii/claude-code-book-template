@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import date
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -120,6 +121,15 @@ def probe(cfg: Config, out_path: Path) -> str:
                          "（入っていなければ (発行済株式数-自己株)x終値 で代替する）\n")
         time.sleep(client.sleep)
 
+    lines.append("## 公式資料で確定済み\n")
+    lines.append(
+        "- ベースURL: https://api.jquants.com/v2\n"
+        "- 認証: リクエストヘッダ x-api-key\n"
+        "- 日足エンドポイント: /equities/bars/daily\n"
+        "- 日付パラメータ: 区切りなしの YYYYMMDD（例 20230324）\n"
+        "- 銘柄コード: 5桁（例 86970）\n"
+    )
+
     lines.append("## 残りの確認項目（このプローブでは判定できない）\n")
     lines.append(
         "- 上場廃止銘柄の過去データが残るか: 7518（ネットワンシステムズ、2025-03-18 上場廃止）を\n"
@@ -134,16 +144,27 @@ def probe(cfg: Config, out_path: Path) -> str:
     return text
 
 
+#: 日付パラメータの書式。J-Quants 公式のサンプルコードは
+#: params={"code": "86970", "date": "20230324"} と、区切りなしの YYYYMMDD。
+#: 銘柄コードも5桁（"86970"）で渡す。
+DATE_FORMAT = "%Y%m%d"
+
+
+def fmt_date(d: date | str) -> str:
+    """API に渡す日付文字列。"""
+    if isinstance(d, str):
+        return d.replace("-", "")
+    return d.strftime(DATE_FORMAT)
+
+
 def _probe_params(table: str) -> dict[str, Any]:
     """1ページだけ取るための最小パラメータ。"""
-    if table in {"daily", "topix"}:
-        return {"date": "2025-06-02"}
+    if table in {"daily", "topix", "master"}:
+        return {"date": fmt_date("2025-06-02")}
     if table == "summary":
-        return {"date": "2025-05-15"}
-    if table == "master":
-        return {"date": "2025-06-02"}
+        return {"date": fmt_date("2025-05-15")}
     if table == "calendar":
-        return {"from": "2025-06-01", "to": "2025-06-30"}
+        return {"from": fmt_date("2025-06-01"), "to": fmt_date("2025-06-30")}
     return {}
 
 
