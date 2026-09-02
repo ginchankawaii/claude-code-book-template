@@ -1,5 +1,11 @@
-data/
+# J-Quants のデータは再配布不可。中身は一切コミットしない。
+data/*
+!data/.gitkeep
+results/*
+!results/.gitkeep
+
 .env
+probe_result.txt
 __pycache__/
 *.pyc
 .pytest_cache/
