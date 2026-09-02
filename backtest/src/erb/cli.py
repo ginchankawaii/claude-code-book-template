@@ -19,6 +19,7 @@ from . import download as download_mod
 from . import events as events_mod
 from . import fetch as fetch_mod
 from . import filters, grid, report
+from . import verify as verify_mod
 from .calendar import CloseTimeSchedule, TradingCalendar
 from .config import Config
 from .simulate import PriceIndex, apply_costs, simulate_trades
@@ -45,6 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     fetch_p.add_argument("--tables", nargs="*", default=None,
                          choices=["daily", "summary", "master", "topix"],
                          help="取る表を限定する（既定: 全部）")
+    sub.add_parser("verify", help="落としたデータの検品（グリッドの前にこれ）")
     sub.add_parser("histogram", help="修正率の分布を出す")
     run_p = sub.add_parser("run", help="グリッドを回す")
     run_p.add_argument("--holding-days", type=int, nargs="*", default=None,
@@ -72,6 +74,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if prog.errors else 0
 
     bundle = _load_bundle(cfg, data_dir)
+
+    if args.command == "verify":
+        built = _build_events(cfg, bundle)
+        text = verify_mod.verify(cfg, bundle, built.events, built.diagnostics)
+        results_dir.mkdir(parents=True, exist_ok=True)
+        (results_dir / "verify.md").write_text(text, encoding="utf-8")
+        print(text)
+        print(f"書き出し: {results_dir / 'verify.md'}")
+        return 0
 
     if args.command == "histogram":
         built = _build_events(cfg, bundle)
