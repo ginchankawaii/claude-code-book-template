@@ -201,6 +201,12 @@ def simulate_trades(
         out["exit_date"] = pd.NaT
     if "exit_kind" not in out.columns:
         out["exit_kind"] = None
+    # 週の割り当てはクラスタ・ブートストラップで毎セル使う。
+    # ここで1回だけ作っておかないと、4,000超のセルで同じ計算を繰り返すことになる。
+    out["_cluster_key"] = (
+        pd.to_datetime(pd.Series(list(out["entry_date"])), errors="coerce")
+        .dt.strftime("%G-W%V").to_numpy()
+    )
     return out
 
 

@@ -14,7 +14,8 @@ import pandas as pd
 def summarize(trades: pd.DataFrame, *, return_col: str = "gross_return",
               excess_col: str = "excess_return", net_col: str = "net_excess_return",
               bootstrap_iterations: int = 5000, cluster_by: str = "week",
-              target_t: float = 2.0, seed: int = 20260902) -> dict:
+              target_t: float = 2.0, seed: int = 20260902,
+              cluster_col: str = "_cluster_key") -> dict:
     """1セル分の集計。"""
     n = len(trades)
     if n == 0:
@@ -38,8 +39,11 @@ def summarize(trades: pd.DataFrame, *, return_col: str = "gross_return",
     base = net if not net.empty else (excess if not excess.empty else gross)
     out["t_stat"] = _t_stat(base)
 
+    # トレード表を作った時点で週を割り当ててあれば、ここで作り直さない
+    precomputed = trades[cluster_col] if cluster_col in trades.columns else None
     lo, hi = _cluster_bootstrap_ci(trades, base.name or net_col, cluster_by,
-                                   bootstrap_iterations, seed)
+                                   bootstrap_iterations, seed,
+                                   cluster_key=precomputed)
     out["cluster_ci_low_pct"] = lo
     out["cluster_ci_high_pct"] = hi
 
@@ -69,6 +73,10 @@ def split_halves(trades: pd.DataFrame, cutoff) -> tuple[pd.DataFrame, pd.DataFra
     return trades[mask], trades[~mask]
 
 
+#: ブートストラップの添字行列の上限要素数。メモリと速度の折り合い。
+_BOOTSTRAP_CELLS = 4_000_000
+
+
 def _mean_pct(s: pd.Series) -> float:
     return float(s.mean() * 100) if s is not None and len(s) else np.nan
 
@@ -94,31 +102,45 @@ def _cluster_key(trades: pd.DataFrame, cluster_by: str) -> pd.Series:
 
 
 def _cluster_bootstrap_ci(trades: pd.DataFrame, col: str, cluster_by: str,
-                          iterations: int, seed: int) -> tuple[float, float]:
+                          iterations: int, seed: int,
+                          cluster_key: pd.Series | None = None) -> tuple[float, float]:
     """同じ週のトレードをまとめて再抽出する。
 
     トレード単位で再抽出すると、決算集中期の相関を無視して
     信頼区間が不当に狭くなる。
+
+    再抽出した標本の平均は「選ばれたクラスタの合計 / 選ばれたクラスタの件数」
+    なので、クラスタごとの合計と件数さえ持っておけば、実際に値を連結しなくても
+    求まる。反復ごとに np.concatenate していたのをやめ、添字行列で一度に計算する。
+
+    cluster_key を渡せば、週の割り当てを毎回作り直さずに済む。
     """
     if col not in trades.columns:
         return (np.nan, np.nan)
-    df = trades[[col]].copy()
-    df["_cluster"] = _cluster_key(trades, cluster_by).to_numpy()
-    df = df.dropna(subset=[col])
+    key = _cluster_key(trades, cluster_by) if cluster_key is None else cluster_key
+    df = pd.DataFrame({"v": trades[col].to_numpy(), "_cluster": np.asarray(key)})
+    df = df.dropna(subset=["v"])
     if df.empty:
         return (np.nan, np.nan)
 
-    groups = [g[col].to_numpy() for _, g in df.groupby("_cluster", observed=True, sort=False)]
-    k = len(groups)
+    grouped = df.groupby("_cluster", observed=True, sort=False)["v"]
+    sums = grouped.sum().to_numpy(dtype=float)
+    sizes = grouped.size().to_numpy(dtype=float)
+    k = len(sums)
     if k < 2:
         return (np.nan, np.nan)
 
     rng = np.random.default_rng(seed)
     means = np.empty(iterations, dtype=float)
-    for it in range(iterations):
-        idx = rng.integers(0, k, size=k)
-        sample = np.concatenate([groups[i] for i in idx])
-        means[it] = sample.mean()
+    # 反復数 x クラスタ数の添字行列は大きくなりうるので刻む
+    chunk = max(1, min(iterations, _BOOTSTRAP_CELLS // max(k, 1)))
+    done = 0
+    while done < iterations:
+        take = min(chunk, iterations - done)
+        idx = rng.integers(0, k, size=(take, k), dtype=np.int32)
+        means[done:done + take] = sums[idx].sum(axis=1) / sizes[idx].sum(axis=1)
+        done += take
+
     lo, hi = np.percentile(means, [2.5, 97.5])
     return (float(lo * 100), float(hi * 100))
 
