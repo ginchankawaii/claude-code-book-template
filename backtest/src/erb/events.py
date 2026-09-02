@@ -168,6 +168,39 @@ def add_habitual_flag(tl: pd.DataFrame, lookback_days: int, min_revisions: int,
     return out.drop(columns=["_is_change"])
 
 
+#: 東証の取引時間延伸日。この日から 15:00〜15:29 の開示が「引け後」から「場中」に変わった。
+#: 延伸前は上場会社の約半数が 15:00〜15:30 に開示していたため、場中の母集団は
+#: 延伸の前後で別物になりうる。場中セルの結果を読むときは必ずこの内訳を見る。
+TSE_EXTENSION_DATE = date(2024, 11, 5)
+
+
+def disclosure_regime(disc_date, disc_time, after_close: bool) -> str:
+    """開示のレジーム。場中セルが延伸で汚染されていないかの切り分けに使う。
+
+      after_close            引け後（レジームに依らず同じ扱い）
+      intraday_pre_ext       延伸前の場中（〜2024-11-01）
+      intraday_post_early    延伸後の場中で 15:00 より前（延伸前も場中だった時間帯）
+      intraday_post_1500     延伸後の場中で 15:00〜15:29（延伸で新たに場中になった群）
+    """
+    if after_close or disc_date is None or pd.isna(disc_date):
+        return "after_close"
+    if disc_date < TSE_EXTENSION_DATE:
+        return "intraday_pre_ext"
+    try:
+        t = _parse_hhmm(disc_time)
+    except ValueError:
+        return "intraday_post_early"
+    return "intraday_post_1500" if t >= (15, 0) else "intraday_post_early"
+
+
+def _parse_hhmm(value) -> tuple[int, int]:
+    s = str(value).strip()
+    if not s or s.lower() in {"nan", "none", "<na>"}:
+        raise ValueError(s)
+    parts = s.split(":")
+    return int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+
+
 def attach_timing(tl: pd.DataFrame, close_schedule: CloseTimeSchedule,
                   calendar: TradingCalendar) -> pd.DataFrame:
     """引け後/場中の分類と、エントリー営業日 t0 を付ける。
@@ -189,6 +222,10 @@ def attach_timing(tl: pd.DataFrame, close_schedule: CloseTimeSchedule,
         except ValueError:
             after.append(True)  # 時刻不明は保守的に引け後
     out["after_close"] = after
+    out["regime"] = [
+        disclosure_regime(d, t, ac)
+        for d, t, ac in zip(out["disc_date"], out["disc_time"], out["after_close"])
+    ]
     out["entry_date"] = [
         calendar.next_business_day(d) if d is not None and not pd.isna(d) else None
         for d in out["disc_date"]

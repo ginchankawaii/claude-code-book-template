@@ -113,6 +113,7 @@ def simulate_trades(
             "habitual": ev.get("habitual"),
             "habitual_window_complete": ev.get("habitual_window_complete"),
             "after_close": ev.get("after_close"),
+            "regime": ev.get("regime"),
             "excluded_by_spec": ev.get("excluded_by_spec"),
             "doc_class": ev.get("doc_class"),
             "is_initial_forecast": ev.get("is_initial_forecast"),

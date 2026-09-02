@@ -196,20 +196,27 @@ def day0_decomposition(trades_by_n: dict, thresholds: list, position_size: int,
     base = filters.apply_turnover(base, True, position_size,
                                   float(filt["max_position_share_of_turnover"]))
     rows = []
+    regimes = ("after_close", "intraday_pre_ext", "intraday_post_early", "intraday_post_1500")
     for thr in thresholds:
         sub = filters.apply_revision(base, thr)
-        for timing in ("all", "after_close", "intraday"):
-            t = filters.apply_timing(sub, timing)
+        groups = [(timing, filters.apply_timing(sub, timing))
+                  for timing in ("all", "after_close", "intraday")]
+        # 場中セルが 2024-11-05 の延伸で汚染されていないかを見るため、レジーム別にも出す
+        if "regime" in sub.columns:
+            groups += [(f"regime:{r}", sub[sub["regime"] == r]) for r in regimes]
+        for timing, t in groups:
             if t.empty:
                 continue
             oc = t["d0_open_to_close"]
             cn = t["d0_close_to_next_open"]
             oc_x = oc - t["d0_topix_open_to_close"]
             cn_x = cn - t["d0_topix_close_to_next_open"]
+            n1 = t["gross_return"] - t["topix_return"]
             rows.append({
                 "revision_threshold": thr,
                 "timing": timing,
                 "trades": int(oc.notna().sum()),
+                "next_open_excess_pct": float(n1.mean() * 100),
                 "open_to_close_pct": float(oc.mean() * 100),
                 "open_to_close_excess_pct": float(oc_x.mean() * 100),
                 "close_to_next_open_pct": float(cn.mean() * 100),

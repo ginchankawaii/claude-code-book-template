@@ -149,3 +149,30 @@ def test_excluded_codes_are_flagged(cfg, daily, calendar, close_schedule):
     d = normalize(cfg, "daily", daily)
     built = build_events(summary, d, calendar, close_schedule, 1095, 4)
     assert built.events["excluded_by_spec"].all()
+
+
+
+def test_disclosure_regime_splits_intraday_by_extension():
+    """場中を延伸前 / 延伸後15:00前 / 延伸後15:00〜 に分ける。
+
+    延伸前は 15:00〜15:29 の開示が引け後だったので、延伸後にだけ現れる
+    15:00〜15:29 の群が場中セルに混ざる。ここを分けないと、場中の超過が
+    構造なのか母集団の入れ替わりなのか判別できない。
+    """
+    from erb.events import disclosure_regime
+
+    assert disclosure_regime(date(2024, 6, 3), "12:00:00", False) == "intraday_pre_ext"
+    assert disclosure_regime(date(2025, 6, 2), "12:00:00", False) == "intraday_post_early"
+    assert disclosure_regime(date(2025, 6, 2), "15:10:00", False) == "intraday_post_1500"
+    assert disclosure_regime(date(2025, 6, 2), "15:40:00", True) == "after_close"
+    assert disclosure_regime(date(2024, 6, 3), "15:10:00", True) == "after_close"
+
+
+def test_regime_is_attached_to_events(cfg, daily, calendar, close_schedule):
+    summary = normalize(cfg, "summary", pd.DataFrame(_summary_rows()))
+    d = normalize(cfg, "daily", daily)
+    built = build_events(summary, d, calendar, close_schedule, 1095, 4)
+    assert "regime" in built.events.columns
+    ev = built.events.set_index("disc_no")
+    assert ev.loc["3", "regime"] == "intraday_post_early"     # 2024-11-18 12:00
+    assert ev.loc["2", "regime"] == "after_close"             # 2024-11-11 15:30
