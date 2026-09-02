@@ -12,15 +12,18 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
+import requests
 
+from .calendar import BUSINESS_DAY_DIVISIONS
 from .config import Config
-from .fetch import JQuantsClient, _extract_records, fmt_date
+from .fetch import JQuantsClient, JQuantsHTTPError, _extract_records, fmt_date
 
 #: TOPIX 日足。公式クライアント(IdxBarsDailyTopixApiV2)と公式ドキュメントで確認済み。
 #: 銘柄指定が無い1本の系列なので、date ではなく from/to を取る。
@@ -28,6 +31,27 @@ TOPIX_PATH = "/indices/bars/daily/topix"
 
 #: 日付ごとに取る表。銘柄マスタは月次スナップショットで足りる。
 BY_DATE_TABLES = ("daily", "summary")
+
+#: 保存形式の版。上げると既存の月ファイルを取り直す。
+#: v1 は HolDiv を取り違えて非営業日を取りに行っていたため、中身が空だった。
+MANIFEST_VERSION = 2
+
+#: 429 が返ったときの待機。Retry-After が無ければこの秒数から倍々にする。
+RATE_LIMIT_BASE_WAIT = 5.0
+RATE_LIMIT_MAX_WAIT = 300.0
+
+#: 429 を食らうたびにリクエスト間隔を伸ばす倍率と上限。
+THROTTLE_GROWTH = 1.5
+THROTTLE_MAX_SLEEP = 10.0
+
+#: 再試行してよい通信起因の例外。
+#: ここを Exception にすると、こちらのバグ（属性名の間違いなど）まで
+#: 何分も待って再試行してしまい、原因が見えなくなる。
+RETRIABLE_NETWORK_ERRORS = (
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    requests.exceptions.ChunkedEncodingError,
+)
 
 
 @dataclass
@@ -49,34 +73,118 @@ class Downloader:
         self.client = JQuantsClient(cfg)
         self.raw = data_dir / "raw"
         self.data_dir = data_dir
-        self.sleep = self.client.sleep if sleep is None else sleep
+        self.base_sleep = self.client.sleep if sleep is None else sleep
+        self.sleep = self.base_sleep
+        self.rate_limit_hits = 0
+        self.consecutive_ok = 0
         self.progress = Progress()
 
     # ------------------------------------------------------------------ 取得
 
-    def get_with_retry(self, path: str, params: dict, attempts: int = 5) -> list[dict]:
-        """1リクエスト。ページ送りを最後まで辿る。429/5xx は待って再試行。"""
+    def get_with_retry(self, path: str, params: dict, attempts: int = 8) -> list[dict]:
+        """1リクエスト。ページ送りを最後まで辿る。
+
+        429 は Retry-After に従い、無ければ 5 秒から倍々で待つ。
+        429 を食らうたびに以後のリクエスト間隔そのものを伸ばして、
+        同じ壁に繰り返しぶつからないようにする。
+        """
         out: list[dict] = []
         page_params = dict(params)
         while True:
-            delay = 1.0
+            body = None
+            wait = RATE_LIMIT_BASE_WAIT
             for attempt in range(attempts):
                 try:
                     body = self.client.get(path, page_params)
+                    self._on_success()
                     break
-                except Exception as exc:  # noqa: BLE001
-                    msg = str(exc)
-                    retriable = any(s in msg for s in ("429", "500", "502", "503", "504", "Timeout", "timed out"))
-                    if not retriable or attempt == attempts - 1:
+                except JQuantsHTTPError as exc:
+                    if not exc.is_retriable or attempt == attempts - 1:
                         raise
-                    time.sleep(delay)
-                    delay *= 2
+                    if exc.is_rate_limited:
+                        self._on_rate_limited()
+                        pause = exc.retry_after if exc.retry_after else wait
+                    else:
+                        pause = wait
+                    pause = min(pause, RATE_LIMIT_MAX_WAIT)
+                    print(f"    待機 {pause:.0f}秒 (HTTP {exc.status}, {attempt + 1}/{attempts})")
+                    time.sleep(pause)
+                    wait = min(wait * 2, RATE_LIMIT_MAX_WAIT)
+                except RETRIABLE_NETWORK_ERRORS as exc:
+                    if attempt == attempts - 1:
+                        raise
+                    print(f"    待機 {wait:.0f}秒 ({type(exc).__name__}, "
+                          f"{attempt + 1}/{attempts})")
+                    time.sleep(wait)
+                    wait = min(wait * 2, RATE_LIMIT_MAX_WAIT)
+            if body is None:
+                raise RuntimeError(f"再試行を使い切りました: {path} {params}")
+
             out.extend(_extract_records(body))
             key = body.get("pagination_key") if isinstance(body, dict) else None
             if not key:
                 return out
             page_params["pagination_key"] = key
             time.sleep(self.sleep)
+
+    def _on_rate_limited(self) -> None:
+        self.rate_limit_hits += 1
+        before = self.sleep
+        self.sleep = min(max(self.sleep, 0.2) * THROTTLE_GROWTH, THROTTLE_MAX_SLEEP)
+        if self.sleep != before:
+            print(f"    リクエスト間隔を {before:.2f}秒 -> {self.sleep:.2f}秒 に広げます")
+
+    def _on_success(self) -> None:
+        self.consecutive_ok += 1
+        # 十分に成功が続いたら少しだけ間隔を戻す（戻しすぎない）
+        if self.consecutive_ok >= 200 and self.sleep > self.base_sleep:
+            self.sleep = max(self.base_sleep, self.sleep / 1.2)
+            self.consecutive_ok = 0
+
+    # ------------------------------------------------------- 月ファイルの検証
+
+    def _manifest_path(self, table: str, month: str) -> Path:
+        return self.raw / table / f"{month}.meta.json"
+
+    def month_is_complete(self, table: str, month: str, expected_days: int) -> bool:
+        """その月を取り直す必要があるか。
+
+        版が古い、日数が合わない、日足なのに0行、のいずれかなら取り直す。
+        前回の実行は非営業日を取りに行って全月0行のファイルを作ってしまったので、
+        版を上げてそれらを自動的に無効化する。
+        """
+        target = self.raw / table / f"{month}.parquet"
+        if not target.exists():
+            return False
+        meta_path = self._manifest_path(table, month)
+        if not meta_path.exists():
+            return False
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        if meta.get("version") != MANIFEST_VERSION:
+            return False
+        if meta.get("expected_days") != expected_days:
+            return False
+        if meta.get("failed_days"):
+            return False
+        # 日足は全銘柄が返るはずなので、0行は異常
+        if table == "daily" and meta.get("rows", 0) == 0:
+            return False
+        return True
+
+    def _write_manifest(self, table: str, month: str, expected_days: int,
+                        rows: int, failed_days: list[str]) -> None:
+        self._manifest_path(table, month).write_text(
+            json.dumps({
+                "version": MANIFEST_VERSION,
+                "expected_days": expected_days,
+                "rows": rows,
+                "failed_days": failed_days,
+            }, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
     # -------------------------------------------------------------- カレンダー
 
@@ -101,14 +209,28 @@ class Downloader:
         return df
 
     def business_days(self, calendar_df: pd.DataFrame, start: date, end: date) -> list[date]:
+        """営業日だけを返す。
+
+        HolDiv は 0=非営業日 / 1=営業日 / 2=東証半日立会日 /
+        3=祝日取引のある非営業日（デリバティブのみ）。
+        """
         div = calendar_df["HolDiv"].astype(str).str.strip()
-        days = pd.to_datetime(calendar_df.loc[div == "0", "Date"]).dt.date
-        return sorted(d for d in days if start <= d <= end)
+        days = pd.to_datetime(
+            calendar_df.loc[div.isin(BUSINESS_DAY_DIVISIONS), "Date"]).dt.date
+        out = sorted(d for d in days if start <= d <= end)
+        if not out:
+            raise RuntimeError(
+                f"営業日が0日です。HolDiv の値を確認してください: {sorted(div.unique())}")
+        return out
 
     # ------------------------------------------------------------ 日付ループ
 
     def fetch_by_date(self, table: str, days: list[date]) -> None:
-        """1営業日ずつ取り、月単位の parquet に落とす。既にある月は飛ばす。"""
+        """1営業日ずつ取り、月単位の parquet に落とす。
+
+        マニフェストで「その月を取り切れたか」を記録し、取り切れた月だけ飛ばす。
+        1日でも落ちた月は次回に取り直す。
+        """
         path = self.cfg["api"]["endpoints"][table]
         outdir = self.raw / table
         outdir.mkdir(parents=True, exist_ok=True)
@@ -118,16 +240,18 @@ class Downloader:
             by_month.setdefault(f"{d.year:04d}-{d.month:02d}", []).append(d)
 
         for month in sorted(by_month):
-            target = outdir / f"{month}.parquet"
-            if target.exists():
+            span = by_month[month]
+            if self.month_is_complete(table, month, len(span)):
                 self.progress.skipped_months += 1
                 continue
 
             rows: list[dict] = []
-            for d in by_month[month]:
+            failed: list[str] = []
+            for d in span:
                 try:
                     recs = self.get_with_retry(path, {"date": fmt_date(d)})
                 except Exception as exc:  # noqa: BLE001
+                    failed.append(d.isoformat())
                     self.progress.errors.append(f"{table} {d}: {exc}")
                     print(f"    ! {table} {d} 取得失敗: {exc}")
                     continue
@@ -136,20 +260,20 @@ class Downloader:
                 rows.extend(recs)
                 time.sleep(self.sleep)
 
-            df = pd.DataFrame(rows)
-            # 空の月でもファイルを作る。作らないと毎回取りに行ってしまう。
-            df.to_parquet(target, index=False)
+            pd.DataFrame(rows).to_parquet(outdir / f"{month}.parquet", index=False)
+            self._write_manifest(table, month, len(span), len(rows), failed)
             self.progress.fetched_months += 1
-            self.progress.rows += len(df)
-            print(f"  {table} {month}: {len(df):>7,}行 ({len(by_month[month])}営業日)")
+            self.progress.rows += len(rows)
+            note = f"  ※{len(failed)}日が未取得（次回取り直します）" if failed else ""
+            print(f"  {table} {month}: {len(rows):>7,}行 ({len(span)}営業日){note}")
 
     # ---------------------------------------------------------- 銘柄マスタ
 
     def fetch_master(self, days: list[date]) -> None:
         """月初の営業日でスナップショットを取る。
 
-        信用区分や市場区分は時期によって変わるため、1枚で済ませず
-        月次で持つ。イベント時点の区分で判定できるようにするため。
+        信用区分や市場区分は時期によって変わるため、1枚で済ませず月次で持つ。
+        イベント時点の区分で判定できるようにするため。
         """
         path = self.cfg["api"]["endpoints"]["master"]
         outdir = self.raw / "master"
@@ -160,8 +284,7 @@ class Downloader:
             firsts.setdefault(f"{d.year:04d}-{d.month:02d}", d)
 
         for month, d in sorted(firsts.items()):
-            target = outdir / f"{month}.parquet"
-            if target.exists():
+            if self.month_is_complete("master", month, 1):
                 self.progress.skipped_months += 1
                 continue
             try:
@@ -170,7 +293,8 @@ class Downloader:
                 self.progress.errors.append(f"master {d}: {exc}")
                 print(f"    ! master {d} 取得失敗: {exc}")
                 continue
-            pd.DataFrame(recs).to_parquet(target, index=False)
+            pd.DataFrame(recs).to_parquet(outdir / f"{month}.parquet", index=False)
+            self._write_manifest("master", month, 1, len(recs), [])
             self.progress.fetched_months += 1
             self.progress.rows += len(recs)
             print(f"  master {month}: {len(recs):>7,}行")
@@ -193,11 +317,10 @@ class Downloader:
             by_month.setdefault(f"{d.year:04d}-{d.month:02d}", []).append(d)
 
         for month in sorted(by_month):
-            target = outdir / f"{month}.parquet"
-            if target.exists():
+            span = by_month[month]
+            if self.month_is_complete("topix", month, len(span)):
                 self.progress.skipped_months += 1
                 continue
-            span = by_month[month]
             try:
                 rows = self.get_with_retry(
                     path, {"from": fmt_date(span[0]), "to": fmt_date(span[-1])})
@@ -205,7 +328,8 @@ class Downloader:
                 self.progress.errors.append(f"topix {month}: {exc}")
                 print(f"    ! topix {month} 取得失敗: {exc}")
                 continue
-            pd.DataFrame(rows).to_parquet(target, index=False)
+            pd.DataFrame(rows).to_parquet(outdir / f"{month}.parquet", index=False)
+            self._write_manifest("topix", month, len(span), len(rows), [])
             self.progress.fetched_months += 1
             self.progress.rows += len(rows)
             print(f"  topix {month}: {len(rows):>5,}行")
@@ -273,6 +397,8 @@ def run(cfg: Config, data_dir: Path, start: date, end: date,
 
     p = dl.progress
     print(f"\n取得した月: {p.fetched_months} / 既存で飛ばした月: {p.skipped_months}")
+    if dl.rate_limit_hits:
+        print(f"レート制限(429): {dl.rate_limit_hits}回  最終的な間隔: {dl.sleep:.2f}秒")
     print(f"行数: {p.rows:,}  開示のなかった日: {p.empty_days}")
     if p.errors:
         print(f"\nエラー {len(p.errors)}件（先頭10件）:")

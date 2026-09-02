@@ -13,6 +13,10 @@ from typing import Iterable, Sequence
 
 import pandas as pd
 
+#: 株式が取引される休日区分。2（東証半日立会日）も立会日なので含める。
+#: 3（祝日取引のある非営業日）はデリバティブのみなので含めない。
+BUSINESS_DAY_DIVISIONS = frozenset({"1", "2"})
+
 
 class TradingCalendar:
     """営業日のみを昇順で保持する。"""
@@ -39,15 +43,24 @@ class TradingCalendar:
 
     @classmethod
     def from_frame(cls, df: pd.DataFrame) -> "TradingCalendar":
-        """mkt calendar の DataFrame から作る。HolDiv=0 が営業日。"""
+        """mkt calendar の DataFrame から作る。
+
+        HolDiv（休日区分）の意味:
+            0 非営業日
+            1 営業日
+            2 東証半日立会日           <- 営業日として扱う
+            3 祝日取引のある非営業日   <- デリバティブのみ。株式は取引されない
+        """
         col = "holiday_div"
         if col not in df.columns:
             raise KeyError(f"取引カレンダーに {col} 列がありません: {list(df.columns)}")
-        # HolDiv は文字列で来ることがある
         div = df[col].astype(str).str.strip()
-        business = df.loc[div == "0", "date"]
+        business = df.loc[div.isin(BUSINESS_DAY_DIVISIONS), "date"]
         if business.empty:
-            raise ValueError("営業日が1日も見つかりません。HolDiv の値を確認してください。")
+            raise ValueError(
+                "営業日が1日も見つかりません。HolDiv の値を確認してください: "
+                f"{sorted(div.unique())}"
+            )
         return cls(business.tolist())
 
     @property

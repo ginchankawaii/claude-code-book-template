@@ -19,6 +19,25 @@ import requests
 from .config import Config
 
 
+class JQuantsHTTPError(RuntimeError):
+    """HTTP エラー。再試行の判断に必要な情報を持たせる。"""
+
+    def __init__(self, status: int, path: str, body: str = "",
+                 retry_after: float | None = None) -> None:
+        super().__init__(f"HTTP {status} {path}: {body[:200]}")
+        self.status = status
+        self.path = path
+        self.retry_after = retry_after
+
+    @property
+    def is_rate_limited(self) -> bool:
+        return self.status == 429
+
+    @property
+    def is_retriable(self) -> bool:
+        return self.status == 429 or 500 <= self.status < 600
+
+
 class JQuantsClient:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
@@ -36,10 +55,15 @@ class JQuantsClient:
         if resp.status_code == 401:
             raise RuntimeError("認証に失敗しました。JQUANTS_API_KEY を確認してください。")
         if resp.status_code == 403:
+            # このAPIは存在しないパスにも 403 を返すため、権限とパス違いを区別できない
             raise RuntimeError(
-                f"アクセスが拒否されました({path})。契約プランでこのデータが使えるか確認してください。"
+                f"403 ({path})。契約プランで使えないか、パスが違います。"
             )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            raise JQuantsHTTPError(
+                resp.status_code, path, resp.text or "",
+                _parse_retry_after(resp.headers.get("Retry-After")),
+            )
         return resp.json()
 
     def paginate(self, path: str, params: dict[str, Any] | None = None) -> Iterator[dict]:
@@ -199,6 +223,16 @@ def _delisting_check(client: "JQuantsClient") -> str:
         lines.append("   別の日付でも再確認し、それでも空なら方針を見直すこと。")
     lines.append("```\n")
     return "\n".join(lines)
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    """Retry-After ヘッダ。秒数で返ってくる場合だけ拾う。"""
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        return None
 
 
 def _probe_params(table: str) -> dict[str, Any]:

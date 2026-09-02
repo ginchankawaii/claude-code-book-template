@@ -10,7 +10,8 @@ api:
     summary:  "/fins/summary"          # 確認済 200
     calendar: "/markets/calendar"      # 確認済 200
     topix:    "/indices/bars/daily/topix"  # 確認済。date ではなく from/to を取る
-  rate_limit_sleep_sec: 0.2
+  # 429 が出たら自動で広げる。ここは開始値。
+  rate_limit_sleep_sec: 1.0
 
 # V2 の列名 -> 内部の正準名
 columns:
