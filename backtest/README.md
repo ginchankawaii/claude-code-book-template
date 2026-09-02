@@ -31,6 +31,23 @@ cp .env.example .env
 docker compose build
 ```
 
+### 3-0. Docker を組む前の最短確認（推奨・Free プランで可）
+
+`requests` すら不要（標準ライブラリのみ）。Python さえ入っていれば動きます。
+
+```bash
+# Windows (PowerShell)
+$env:JQUANTS_API_KEY="<ダッシュボードの API Keys で発行したキー>"
+python probe_standalone.py
+
+# macOS / Linux
+export JQUANTS_API_KEY=<キー>
+python3 probe_standalone.py
+```
+
+エンドポイントのパスは候補を順に試して当たりを探します。
+結果は `probe_result.txt` に出るので、そのまま共有してください。
+
 ### 3. probe（最初に必ずこれ）
 
 実データの列名と `config.yaml` の対応表を突き合わせる。
