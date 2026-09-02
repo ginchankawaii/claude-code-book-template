@@ -139,6 +139,8 @@ def run_grid(events: pd.DataFrame, prices: PriceIndex, calendar: TradingCalendar
                     row[f"{tag}_return_after_fees_pct"] = round(net_of_fees / equity * 100, 2)
                     row[f"{tag}_max_dd_pct"] = round(pf["max_drawdown_pct"], 2)
                     row[f"{tag}_margin_call_days"] = pf["margin_call_days"]
+                    row[f"{tag}_bankrupt_on"] = (
+                        pf["bankrupt_on"].isoformat() if pf["bankrupt_on"] else "")
                     row["taken"] = pf["taken"]
                     row["skipped_no_slot"] = pf["skipped_no_slot"]
 

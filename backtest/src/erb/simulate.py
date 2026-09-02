@@ -255,12 +255,14 @@ def simulate_portfolio(trades: pd.DataFrame, *, position_size_jpy: int, max_conc
             "equity_curve": pd.DataFrame(columns=["date", "equity", "maintenance_ratio"]),
             "taken": 0, "skipped_no_slot": 0, "margin_call_days": 0,
             "max_drawdown_pct": 0.0, "realized_pnl_jpy": 0.0, "by_year": {},
+            "bankrupt_on": None,
         }
 
     ok = ok.sort_values(["entry_date", "revision_rate", "mkt_cap"],
                         ascending=[True, False, True]).reset_index(drop=True)
 
     open_positions: list[dict] = []
+    bankrupt_on: date | None = None
     taken = 0
     skipped_no_slot = 0
     realized = 0.0
@@ -321,6 +323,13 @@ def simulate_portfolio(trades: pd.DataFrame, *, position_size_jpy: int, max_conc
         daily_rows.append({"date": d, "equity": equity, "maintenance_ratio": ratio,
                            "open_positions": len(open_positions)})
 
+        # 元金を食い潰したら退場。ここで止めないと、入れていない金で
+        # 建て続ける前提の損益になり、最大DDが -2,889% のような
+        # 意味のない値になる。
+        if equity <= 0:
+            bankrupt_on = d
+            break
+
     # 残った建玉を最終日に決済
     for p in open_positions:
         realized += p["net_return"] * position_size_jpy
@@ -341,6 +350,7 @@ def simulate_portfolio(trades: pd.DataFrame, *, position_size_jpy: int, max_conc
         "max_drawdown_pct": max_dd * 100.0,
         "realized_pnl_jpy": realized,
         "by_year": by_year,
+        "bankrupt_on": bankrupt_on,
     }
 
 
@@ -398,8 +408,16 @@ def _positive(x) -> bool:
 
 
 def _max_drawdown(equity: pd.Series) -> float:
+    """最大ドローダウン。
+
+    元金を失った時点で -100% とし、それより下は返さない。
+    資金がマイナスの状態を割り算に通すと -2,889% のような
+    意味のない値が出てしまう。
+    """
     if equity.empty:
         return 0.0
     peak = equity.cummax()
     dd = (equity - peak) / peak.replace(0, np.nan)
-    return float(dd.min()) if dd.notna().any() else 0.0
+    if not dd.notna().any():
+        return 0.0
+    return float(max(dd.min(), -1.0))

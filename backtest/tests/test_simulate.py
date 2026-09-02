@@ -215,3 +215,36 @@ def test_margin_call_needs_full_calendar_scan(prices, calendar, cfg, daily):
                                      prices=px)
     assert with_cal["margin_call_days"] > 0
     assert without_cal["margin_call_days"] == 0
+
+
+def test_bankruptcy_stops_the_simulation(prices, calendar, cfg, daily):
+    """元金を失ったら退場する。
+
+    止めないと、入れていない金で建て続ける前提の損益になり、
+    最大DDが -2,889% のような意味のない値になる。
+    """
+    d = daily.copy()
+    mask = d["Code"] == "A0001"
+    later = mask & (d["Date"] > date(2024, 11, 12))
+    for col in ("C", "AdjC"):
+        d[col] = d[col].astype(float)
+        d.loc[later, col] = d.loc[later, col] * 0.3      # 70% 下落
+    dn = daily_with_turnover_average(normalize(cfg, "daily", d), 20)
+    px = PriceIndex.build(dn)
+    evs = pd.concat([_event("A0001", date(2024, 11, 12))] * 3, ignore_index=True)
+    t = simulate_trades(evs, px, calendar, 10, position_size_jpy=500_000)
+    priced = apply_costs(t, 0.4, 2.80, 0, 500_000)
+
+    pf = simulate_portfolio(priced, position_size_jpy=500_000, max_concurrent=3,
+                            equity_jpy=500_000, maintenance_margin_ratio=0.20,
+                            prices=px, calendar=calendar)
+    assert pf["bankrupt_on"] is not None
+    assert pf["max_drawdown_pct"] >= -100.0
+
+
+def test_drawdown_never_exceeds_minus_100_percent():
+    from erb.simulate import _max_drawdown
+
+    assert _max_drawdown(pd.Series([1_000_000, 500_000, -3_000_000])) == -1.0
+    assert _max_drawdown(pd.Series([1_000_000, 900_000])) == pytest.approx(-0.1)
+    assert _max_drawdown(pd.Series([], dtype=float)) == 0.0
