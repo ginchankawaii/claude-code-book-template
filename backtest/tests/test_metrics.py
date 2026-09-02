@@ -80,3 +80,19 @@ def test_empty_cell_is_unjudgeable():
                                         "net_excess_return", "entry_date", "exit_date"]))
     assert s["trades"] == 0
     assert "判定不能" in s["verdict"]
+
+
+def test_split_halves_at_midpoint_of_the_period():
+    """事前登録した採用条件のひとつ。片方の期間だけで成立する効果を落とす。"""
+    t = _trades([0.01] * 40, start=date(2021, 9, 1), step_days=45)
+    lo, hi = min(t["entry_date"]), max(t["entry_date"])
+    mid = lo + (hi - lo) / 2
+    a, b = split_halves(t, mid)
+    assert len(a) + len(b) == len(t)
+    assert max(a["entry_date"]) < mid <= min(b["entry_date"])
+
+
+def test_split_halves_handles_all_on_one_side():
+    t = _trades([0.01] * 5, start=date(2025, 1, 1), step_days=1)
+    a, b = split_halves(t, date(2021, 1, 1))
+    assert len(a) == 0 and len(b) == 5

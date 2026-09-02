@@ -51,6 +51,9 @@ def run_grid(events: pd.DataFrame, prices: PriceIndex, calendar: TradingCalendar
         trades_by_n[int(n)] = t
         skip_summary[int(n)] = filters.skip_counts(t)
 
+    # 前半・後半の境目。検証期間のちょうど真ん中で切る。
+    split_at = min(dates) + (max(dates) - min(dates)) / 2 if dates else None
+
     # 修正率の閾値。config が null なら実データの分位点から決める。
     thresholds = grid.get("revision_thresholds")
     if not thresholds:
@@ -96,6 +99,26 @@ def run_grid(events: pd.DataFrame, prices: PriceIndex, calendar: TradingCalendar
                 bootstrap_iterations=int(stat["bootstrap_iterations"]),
                 cluster_by=str(stat["cluster_by"]),
                 target_t=float(stat["target_t_stat"]),
+            )
+
+            # 事前登録した採用条件のひとつ:
+            # 前半・後半の両方でプラスでなければ採用しない。
+            # 相場つきが変わっても残る効果かどうかを見る。
+            first, second = metrics.split_halves(priced, split_at)
+            for tag, part in (("h1", first), ("h2", second)):
+                if len(part) == 0:
+                    summary[f"{tag}_trades"] = 0
+                    summary[f"{tag}_net_edge_pct"] = float("nan")
+                    summary[f"{tag}_excess_pct"] = float("nan")
+                    continue
+                summary[f"{tag}_trades"] = len(part)
+                summary[f"{tag}_net_edge_pct"] = float(
+                    part["net_excess_return"].mean() * 100)
+                summary[f"{tag}_excess_pct"] = float(
+                    part["excess_return"].mean() * 100)
+            summary["both_halves_positive"] = bool(
+                (summary.get("h1_net_edge_pct", float("nan")) > 0)
+                and (summary.get("h2_net_edge_pct", float("nan")) > 0)
             )
             row = {
                 "holding_days": n,
@@ -181,10 +204,13 @@ def stability_check(cells: pd.DataFrame) -> dict:
         return {"all_positive": False, "reason": "対象セルなし"}
     positive = (real["net_edge_pct"] > 0).all()
     judged = real[real["verdict"] == "判定可"]
-    return {
+    out = {
         "all_positive": bool(positive),
         "cells": int(len(real)),
         "judgeable_cells": int(len(judged)),
         "negative_cells": int((real["net_edge_pct"] <= 0).sum()),
         "min_net_edge_pct": float(real["net_edge_pct"].min()),
     }
+    if "both_halves_positive" in real.columns:
+        out["both_halves_positive_cells"] = int(real["both_halves_positive"].sum())
+    return out

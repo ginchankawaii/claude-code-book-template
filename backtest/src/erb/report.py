@@ -34,6 +34,13 @@ def write_results(result: grid_mod.GridResult, cfg: Config, out_dir: Path,
             "required_n", "verdict", "decision",
         ]]))
         md.append("")
+        md.append("前半 / 後半（両方プラスでなければ採用しない）\n")
+        half_cols = [c for c in ("h1_trades", "h1_excess_pct", "h1_net_edge_pct",
+                                 "h2_trades", "h2_excess_pct", "h2_net_edge_pct",
+                                 "both_halves_positive") if c in primary.columns]
+        if half_cols:
+            md.append(_table(primary[half_cols]))
+        md.append("")
         md.append("判定基準: 純エッジ = TOPIX超過の粗エッジ − スリッページ − 金利\n")
         md.append("```\n< 0.05%        打ち切り\n0.05 〜 0.35%  ペーパートレード3か月\n> 0.35%        少額実弾\n```\n")
 
@@ -64,6 +71,23 @@ def write_results(result: grid_mod.GridResult, cfg: Config, out_dir: Path,
         md.append(_table(sub.head(40)))
         md.append("")
         md.append("margin_call_days は維持率20%を割った日数。0 でなければその元金は使えない。\n")
+
+    md.append("## 4b. 前半 / 後半で符号が変わらないか\n")
+    md.append(
+        "相場つきが変わっても残る効果かを見る。片方だけプラスなら、"
+        "その期間のたまたまを拾っている。\n"
+    )
+    hcols = [c for c in ("holding_days", "revision_threshold", "timing", "slippage_pct",
+                         "trades", "net_edge_pct", "h1_trades", "h1_net_edge_pct",
+                         "h2_trades", "h2_net_edge_pct", "both_halves_positive",
+                         "verdict") if c in cells.columns]
+    surv = cells[(~cells["is_control"]) & (cells.get("both_halves_positive", False))]
+    if not surv.empty:
+        md.append(f"両方の期間でプラスだったセル: {len(surv)} / {len(cells[~cells['is_control']])}\n")
+        md.append(_table(surv[hcols].head(30)))
+    else:
+        md.append("両方の期間でプラスだったセルはありません。\n")
+    md.append("")
 
     md.append("## 5. タイミング内訳（引け後 / 場中）\n")
     tm = cells[(cells["timing"] != "all") & (~cells["is_control"])]
