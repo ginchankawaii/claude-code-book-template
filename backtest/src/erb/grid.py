@@ -34,6 +34,10 @@ def run_grid(events: pd.DataFrame, prices: PriceIndex, calendar: TradingCalendar
 
     position_size = int(port["position_size_jpy"])
 
+    # 購読料を按分するための検証期間（年）
+    dates = [d for d in events["entry_date"] if d is not None and not pd.isna(d)]
+    years = max((max(dates) - min(dates)).days / 365.25, 1e-9) if dates else 0.0
+
     # N ごとのトレード表（コスト控除前）
     trades_by_n: dict[int, pd.DataFrame] = {}
     skip_summary: dict[int, dict] = {}
@@ -123,8 +127,16 @@ def run_grid(events: pd.DataFrame, prices: PriceIndex, calendar: TradingCalendar
                         calendar=calendar,
                     )
                     tag = f"eq{int(equity) // 10000}"
+                    # 購読料は年間の固定費。検証期間の年数ぶんを引く。
+                    subscription = (
+                        float(costs.get("data_subscription_jpy_per_month", 0)) * 12 * years
+                    )
+                    net_of_fees = pf["realized_pnl_jpy"] - subscription
+                    row["subscription_jpy"] = round(subscription)
                     row[f"{tag}_pnl_jpy"] = round(pf["realized_pnl_jpy"])
+                    row[f"{tag}_pnl_after_fees_jpy"] = round(net_of_fees)
                     row[f"{tag}_return_pct"] = round(pf["realized_pnl_jpy"] / equity * 100, 2)
+                    row[f"{tag}_return_after_fees_pct"] = round(net_of_fees / equity * 100, 2)
                     row[f"{tag}_max_dd_pct"] = round(pf["max_drawdown_pct"], 2)
                     row[f"{tag}_margin_call_days"] = pf["margin_call_days"]
                     row["taken"] = pf["taken"]

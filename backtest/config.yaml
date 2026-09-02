@@ -78,6 +78,9 @@ costs:
   margin_interest_annual_pct: 2.80   # 制度信用 買方金利（SBI/楽天の実勢）
   commission_jpy_per_trade: 0
   slippage_round_trip_pct: [0.3, 0.4, 0.5]
+  # データ購読料は年間の固定費。1トレードあたりではなく年間損益から引く。
+  # Light 1,650 / Standard 3,300 / Premium 16,500（税込・月額）
+  data_subscription_jpy_per_month: 1650
 
 portfolio:
   position_size_jpy: 500000          # 1本の建玉
