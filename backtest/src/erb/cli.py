@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
 
 from . import data as data_mod
+from . import download as download_mod
 from . import events as events_mod
 from . import fetch as fetch_mod
 from . import filters, grid, report
@@ -35,6 +36,15 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("probe", help="実データと設定の列名を突き合わせる")
+
+    fetch_p = sub.add_parser("fetch", help="J-Quants から5年分を落とす（中断しても再開できる）")
+    fetch_p.add_argument("--from", dest="date_from", default=None,
+                         help="開始日 YYYY-MM-DD（既定: 今日から5年前）")
+    fetch_p.add_argument("--to", dest="date_to", default=None,
+                         help="終了日 YYYY-MM-DD（既定: 昨日）")
+    fetch_p.add_argument("--tables", nargs="*", default=None,
+                         choices=["daily", "summary", "master", "topix"],
+                         help="取る表を限定する（既定: 全部）")
     sub.add_parser("histogram", help="修正率の分布を出す")
     run_p = sub.add_parser("run", help="グリッドを回す")
     run_p.add_argument("--holding-days", type=int, nargs="*", default=None,
@@ -49,6 +59,17 @@ def main(argv: list[str] | None = None) -> int:
         text = fetch_mod.probe(cfg, results_dir / "probe.md")
         print(text)
         return 0
+
+    if args.command == "fetch":
+        today = datetime.now(timezone.utc).date()
+        start = (date.fromisoformat(args.date_from) if args.date_from
+                 else today.replace(year=today.year - 5))
+        end = date.fromisoformat(args.date_to) if args.date_to else today - timedelta(days=1)
+        if start >= end:
+            parser.error(f"期間が不正です: {start} 〜 {end}")
+        prog = download_mod.run(cfg, data_dir, start, end,
+                                tuple(args.tables) if args.tables else None)
+        return 1 if prog.errors else 0
 
     bundle = _load_bundle(cfg, data_dir)
 
