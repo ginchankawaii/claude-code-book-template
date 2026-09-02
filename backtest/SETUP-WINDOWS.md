@@ -1,167 +1,128 @@
 # Surface（Windows）セットアップ手順
 
-2段階に分かれています。**ステップ1だけで、いま一番知りたいことは分かります。**
+**ホストに入れるのは Docker Desktop と Git だけ。Python はホストに入れません。**
+Python もライブラリも全てコンテナの中に閉じ込めるので、
+このPCの他の Python 環境とは一切干渉しません。
 
 ---
 
-## ステップ1: probe だけ動かす（10分・Docker不要）
-
-`probe_standalone.py` は Python の標準ライブラリだけで動きます。
-pip install も不要です。
-
-### 1-1. Python を入れる
-
-すでに入っているか確認：
-
-```powershell
-python --version
-```
-
-`Python 3.11.x` などと出れば入っています。出ない場合：
-
-- Microsoft Store で「Python 3.12」を検索してインストール（一番簡単）
-- または https://www.python.org/downloads/ から入れる
-  → インストーラの最初の画面で **「Add python.exe to PATH」に必ずチェック**
-
-入れたら PowerShell を開き直して `python --version` を再確認。
-
-### 1-2. ファイルを取ってくる
-
-Git を使わない場合（一番簡単）：
-
-1. ブラウザで下記を開く
-   `https://github.com/ginchankawaii/claude-code-book-template/blob/claude/earnings-revision-backtest-xsamsb/backtest/probe_standalone.py`
-2. 右上の **Raw** ボタン → 右クリック → 名前を付けて保存
-3. 保存先はどこでもよい（例：`C:\Users\<ユーザー名>\Documents\jq\`）
-
-Git を使う場合：
-
-```powershell
-winget install --id Git.Git -e
-# PowerShell を開き直してから
-cd $HOME\Documents
-git clone https://github.com/ginchankawaii/claude-code-book-template.git jq
-cd jq
-git checkout claude/earnings-revision-backtest-xsamsb
-cd backtest
-```
-
-### 1-3. APIキーを環境変数に入れて実行
-
-```powershell
-cd C:\Users\<ユーザー名>\Documents\jq        # 保存したフォルダへ
-$env:JQUANTS_API_KEY="ダッシュボードで発行したキー"
-python probe_standalone.py
-```
-
-- `$env:` で入れた値は、その PowerShell ウィンドウを閉じると消えます。
-  それで構いません（毎回入れ直す方が安全）。
-- キーをファイルに書いたり、チャットに貼ったりしないこと。
-
-### 1-4. 結果を渡す
-
-同じフォルダに `probe_result.txt` ができます。
-
-```powershell
-notepad probe_result.txt
-```
-
-中身をコピーして共有してください。**APIキーは含まれません。**
-
----
-
-## ステップ2: 本番環境（Docker）
-
-probe の結果で `config.yaml` を直してから組めば十分です。
-
-### 2-1. Docker Desktop を入れる
+## 0. ホストに入れるもの（この2つだけ）
 
 ```powershell
 winget install --id Docker.DockerDesktop -e
+winget install --id Git.Git -e
 ```
 
-- WSL2 が必要です。求められたら指示に従って有効化し、**PC を再起動**。
-- 初回起動時に「Use WSL 2 based engine」を有効のままにする。
-- ダウンロードは数GBあります。
+- Docker Desktop は WSL2 を要求します。求められたら有効化して **PC を再起動**。
+  初回起動時の「Use WSL 2 based engine」は有効のままにする。
+  ダウンロードは数GBあります。
+- Git は Python とは無関係のツールなので、既存環境に影響しません。
+  どうしても入れたくなければ、GitHub の Code → Download ZIP でも代用できます。
 
-確認：
+入れたら PowerShell を開き直して確認：
 
 ```powershell
 docker --version
 docker compose version
+git --version
 ```
 
-### 2-2. リポジトリを用意
+`docker` が見つからない場合は Docker Desktop が起動していません。
+タスクトレイのクジラのアイコンが動いているか確認してください。
+
+---
+
+## 1. C直下に置く
+
+Documents 配下は OneDrive 同期になっていることが多く、`.git` や
+中間ファイルが同期対象になって面倒が起きます。C直下が無難です。
 
 ```powershell
-cd $HOME\Documents
-git clone https://github.com/ginchankawaii/claude-code-book-template.git jq
-cd jq
+cd C:\
+git clone https://github.com/ginchankawaii/claude-code-book-template.git jquants
+cd C:\jquants
 git checkout claude/earnings-revision-backtest-xsamsb
 cd backtest
 ```
 
-### 2-3. APIキーを .env に置く
+ブランチが見つからないと言われたら：
+
+```powershell
+git fetch origin
+git checkout -b claude/earnings-revision-backtest-xsamsb origin/claude/earnings-revision-backtest-xsamsb
+```
+
+`C:\` に書き込めない場合は PowerShell を「管理者として実行」でやり直し、
+作成後に自分のユーザーへ権限を付けておくと以後が楽です：
+
+```powershell
+icacls C:\jquants /grant "$($env:USERNAME):(OI)(CI)F"
+```
+
+---
+
+## 2. APIキーを .env に置く
 
 ```powershell
 Copy-Item .env.example .env
 notepad .env
 ```
 
-`JQUANTS_API_KEY=` の右に発行したキーを書いて保存。
-`.env` は `.gitignore` 済みなので、GitHub には上がりません。
+`JQUANTS_API_KEY=` の右に、ダッシュボードの [API Keys] で発行したキーを
+貼って保存します。`.env` は `.gitignore` 済みなので GitHub には上がりません。
 
-### 2-4. イメージを作る
+---
+
+## 3. probe を回す（ビルド不要・1コマンド）
+
+```powershell
+docker compose run --rm probe
+```
+
+`python:3.12-slim` の使い捨てコンテナで `probe_standalone.py` を実行します。
+イメージのビルドは不要です（初回のみ 50MB 程度のダウンロード）。
+
+確認するのは4点：
+
+```
+[ ] エンドポイントのパス（推定のものは候補を順に試して当たりを探す）
+[ ] 実際の列名（config.yaml と突き合わせる）
+[ ] DocType の実際の値（業績予想修正 / 配当予想修正 / 決算短信の区別）
+[ ] 上場廃止銘柄が過去データに残っているか   ← 最重要
+```
+
+結果は `C:\jquants\backtest\probe_result.txt` に出ます。
+
+```powershell
+notepad probe_result.txt
+```
+
+中身をそのまま共有してください。**APIキーは含まれません。**
+
+TOPIX が 403 になるのは Free プランでは正常です（TOPIX は Light 以上）。
+
+---
+
+## 4. 本番環境を作る（probe の結果を反映してから）
 
 ```powershell
 docker compose build
-```
-
-初回は数分かかります。
-
-### 2-5. 動作確認
-
-```powershell
 docker compose run --rm --entrypoint python erb -m pytest -q
 ```
 
 `61 passed` と出れば正常です（合成データによるテスト）。
 
-### 2-6. 使う
+### 使い方
 
 ```powershell
-docker compose run --rm erb probe        # 列名の突き合わせ
+docker compose run --rm erb probe        # 列名の突き合わせ（パッケージ版）
 docker compose run --rm erb histogram    # 修正率の分布
 docker compose run --rm erb run          # グリッド実行
 ```
 
-データは `backtest\data\` に置きます。結果は `backtest\results\` に出ます。
-どちらもホスト側のフォルダなので、エクスプローラからそのまま開けます。
-
----
-
-## Docker を使わない場合（venv・軽い）
-
-正直なところ、この処理はローカルのCSVを pandas で読むだけなので
-Docker がなくても困りません。環境を汚したくないだけなら venv で十分です。
-
-```powershell
-cd $HOME\Documents\jq\backtest
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-$env:JQUANTS_API_KEY="キー"
-erb probe
-```
-
-`Activate.ps1` が実行ポリシーで弾かれる場合：
-
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-```
-
-Docker との違いは、Python 本体とパッケージがホストに入るかどうかだけです。
-分離を重視するなら Docker、手軽さなら venv。
+データは `C:\jquants\backtest\data\` に置き、結果は
+`C:\jquants\backtest\results\` に出ます。どちらもホスト側のフォルダなので
+エクスプローラからそのまま開けます。
 
 ---
 
@@ -169,9 +130,30 @@ Docker との違いは、Python 本体とパッケージがホストに入るか
 
 | 症状 | 原因と対処 |
 |---|---|
-| `python` が見つからない | PATH に入っていない。Python を入れ直して「Add to PATH」にチェック |
-| `docker` が見つからない | Docker Desktop を起動していない。タスクトレイのクジラが動いているか確認 |
-| `Activate.ps1 ... 実行できません` | 実行ポリシー。上記の `Set-ExecutionPolicy` を実行 |
-| probe で全部 403 | APIキーが違う、または環境変数が入っていない。`echo $env:JQUANTS_API_KEY` で確認 |
+| `docker` が見つからない | Docker Desktop が未起動。タスクトレイのクジラを確認 |
+| `env file .env not found` | 手順2をやっていない。`Copy-Item .env.example .env` |
+| probe で全部 403 | `.env` のキーが違う。ダッシュボードで再発行して貼り直す |
 | probe で TOPIX だけ 403 | 正常。TOPIX は Light 以上のデータ |
 | probe で 404 が並ぶ | エンドポイントのパスが違う。結果を共有してもらえば直します |
+| ビルドが遅い / 落ちる | Docker Desktop の設定でメモリを 4GB 以上に |
+| `git checkout` でブランチが無い | 上記の `git fetch origin` 版を使う |
+
+---
+
+## ホストを汚さないことについて
+
+このセットアップで **ホストに入る Python 関連のものはゼロ** です。
+
+```
+ホスト        : Docker Desktop / Git のみ
+コンテナの中  : Python 3.12 / pandas / numpy / pyarrow / pytest / requests
+```
+
+コンテナを消せば全部消えます：
+
+```powershell
+docker compose down
+docker rmi erb:latest python:3.12-slim
+```
+
+`C:\jquants` のファイル（コード・データ・結果）はホスト側に残ります。
