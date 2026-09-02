@@ -37,8 +37,13 @@ CANDIDATES = {
     "master":   ["/equities/master", "/equities/list", "/listed/info"],
     "summary":  ["/fins/summary", "/fins/statements"],
     "calendar": ["/markets/calendar", "/markets/trading_calendar"],
-    "topix":    ["/indices/daily-topix", "/indices/topix", "/indices/daily_topix"],
+    "topix":    ["/indices/daily-topix", "/indices/topix", "/indices/daily_topix",
+                 "/indices/bars/daily", "/indices/bars/topix", "/indices/topix/daily",
+                 "/idx/daily-topix", "/indices"],
 }
+
+#: 403 が返っても候補を試し続ける表。パスが違うのか権限が無いのかを切り分けるため。
+KEEP_TRYING_ON_403 = {"topix"}
 
 # 日付は区切りなしの YYYYMMDD、銘柄コードは5桁（公式サンプルに準拠）
 PARAMS = {
@@ -116,9 +121,13 @@ for table, paths in CANDIDATES.items():
             say(f"  OK   {path}")
             break
         if code == 403:
-            say(f"  403  {path}  （契約プランでは使えません）")
+            say(f"  403  {path}  （権限が無い、またはパスが違う）")
+            if table not in KEEP_TRYING_ON_403:
+                hit = "PLAN"
+                break
             hit = "PLAN"
-            break
+            time.sleep(0.3)
+            continue
         if code == 404:
             say(f"  404  {path}  （このパスは存在しない）")
         else:
@@ -148,6 +157,31 @@ for table, paths in CANDIDATES.items():
         mc = recs[0].get("MktCap")
         say(f"  MktCap の値: {mc!r}  （空なら発行済株式数x終値で代替する）")
     time.sleep(0.3)
+
+say()
+say("=" * 60)
+say("### 契約プランの反映確認")
+say("=" * 60)
+say("Free は直近12週を除く2年分、Light は過去5年分。")
+say("古い日付が取れるかどうかで、契約が反映されているか分かる。")
+say()
+if "daily" in found:
+    for label, day in (("3か月前  ", "20260601"),
+                       ("1年前    ", "20250901"),
+                       ("2年半前  ", "20240301"),
+                       ("4年前    ", "20220901"),
+                       ("5年ほど前", "20211001")):
+        code, body = get(found["daily"], {"date": day})
+        n = len(records(body)) if code == 200 else 0
+        mark = "OK  " if n > 0 else "なし"
+        say(f"  {label} {day}: HTTP {code}  {n:>5}件  {mark}")
+        time.sleep(0.3)
+    say()
+    say("  4年前・5年前が0件なら、Light がまだ反映されていません。")
+    say("  ダッシュボードの [Subscription] で Light になっているか確認してください。")
+    say("  プラン変更後は [API Keys] でキーを再発行すると通ることがあります。")
+else:
+    say("  daily のパスが特定できず確認できませんでした。")
 
 say()
 say("=" * 60)
