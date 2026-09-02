@@ -248,3 +248,37 @@ def test_drawdown_never_exceeds_minus_100_percent():
     assert _max_drawdown(pd.Series([1_000_000, 500_000, -3_000_000])) == -1.0
     assert _max_drawdown(pd.Series([1_000_000, 900_000])) == pytest.approx(-0.1)
     assert _max_drawdown(pd.Series([], dtype=float)) == 0.0
+
+
+
+def test_same_day_close_exit_uses_close_and_zero_day_trade_interest(prices, calendar, cfg, topix):
+    """N=0 は当日引けで返済。日計り信用なら金利0。"""
+    from erb.data import normalize
+
+    ev = _event("A0001", date(2024, 11, 12))
+    t = simulate_trades(ev, prices, calendar, 0, position_size_jpy=500_000,
+                        topix=normalize(cfg, "topix", topix))
+    row = t.iloc[0]
+    assert row["status"] == "ok"
+    assert row["exit_kind"] == "same_day_close"
+    assert row["exit_date"] == date(2024, 11, 12)
+    i = prices.position("A0001", date(2024, 11, 12))
+    o, c = prices.field("A0001", i, "adj_open"), prices.field("A0001", i, "adj_close")
+    assert row["gross_return"] == pytest.approx(c / o - 1)
+    assert row["holding_calendar_days"] == 1
+
+    priced = apply_costs(t, 0.4, 2.80, 0, 500_000, day_trade_interest_annual_pct=0.0)
+    assert priced["interest_cost"].iloc[0] == 0.0
+    # 持ち越しなら金利がかかる
+    t5 = simulate_trades(ev, prices, calendar, 5, position_size_jpy=500_000)
+    priced5 = apply_costs(t5, 0.4, 2.80, 0, 500_000, day_trade_interest_annual_pct=0.0)
+    assert priced5["interest_cost"].iloc[0] > 0
+
+
+def test_day0_decomposition_sums_to_next_open_return(prices, calendar):
+    """始値→引け と 引け→翌始値 を合成すると N=1 の粗リターンになること。"""
+    ev = _event("A0001", date(2024, 11, 12))
+    t = simulate_trades(ev, prices, calendar, 1, position_size_jpy=500_000)
+    row = t.iloc[0]
+    composed = (1 + row["d0_open_to_close"]) * (1 + row["d0_close_to_next_open"]) - 1
+    assert composed == pytest.approx(row["gross_return"], rel=1e-9)

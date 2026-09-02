@@ -11,7 +11,8 @@ from .config import Config
 
 
 def write_results(result: grid_mod.GridResult, cfg: Config, out_dir: Path,
-                  diagnostics: dict, generated_at: str) -> list[Path]:
+                  diagnostics: dict, generated_at: str,
+                  decomposition: pd.DataFrame | None = None) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
 
@@ -71,6 +72,18 @@ def write_results(result: grid_mod.GridResult, cfg: Config, out_dir: Path,
         md.append(_table(sub.head(40)))
         md.append("")
         md.append("margin_call_days は維持率20%を割った日数。0 でなければその元金は使えない。\n")
+
+    md.append("## 4a. 初日の分解（超過リターンはどこに乗っているか）\n")
+    md.append(
+        "フェーズ1で超過リターンは初日で出尽くすと分かった。初日を"
+        "「始値→引け」と「引け→翌始値」に分けて、どちらに乗っているかを見る。"
+        "始値→引けに乗っているなら、当日引けで返済する日計り（金利0・手数料0）が候補になる。\n"
+    )
+    if decomposition is not None and not decomposition.empty:
+        md.append(_table(decomposition))
+    else:
+        md.append("（分解の集計なし）")
+    md.append("")
 
     md.append("## 4b. 前半 / 後半で符号が変わらないか\n")
     md.append(

@@ -90,6 +90,9 @@ costs:
   # データ購読料は年間の固定費。1トレードあたりではなく年間損益から引く。
   # Light 1,650 / Standard 3,300 / Premium 16,500（税込・月額）
   data_subscription_jpy_per_month: 1650
+  # 当日引け返済（N=0）に適用する金利。SBI 証券の日計り信用は
+  # 2022-03-01 から金利0%・手数料0（当日中に返済した場合）。
+  day_trade_interest_annual_pct: 0.0
 
 portfolio:
   position_size_jpy: 500000          # 1本の建玉
@@ -99,7 +102,8 @@ portfolio:
   initial_margin_ratio: 0.30         # 委託保証金率
 
 grid:
-  holding_days: [1, 3, 5, 10]
+  # 0 = 当日の引けで返済（日計り）。フェーズ2の仮説 H1。
+  holding_days: [0, 1, 3, 5, 10]
   mktcap_caps_jpy: [null, 50000000000, 30000000000]   # 全体 / 500億 / 300億
   habitual_excluded: [true, false]
   turnover_filter: [true, false]

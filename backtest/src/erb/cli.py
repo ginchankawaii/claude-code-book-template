@@ -98,7 +98,8 @@ def main(argv: list[str] | None = None) -> int:
         result = grid.run_grid(built.events, bundle["prices"], bundle["calendar"],
                                bundle.get("topix"), cfg)
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        written = report.write_results(result, cfg, results_dir, built.diagnostics, stamp)
+        written = report.write_results(result, cfg, results_dir, built.diagnostics, stamp,
+                                       decomposition=result.decomposition)
         for p in written:
             print(f"書き出し: {p}")
         primary = grid.primary_cell(result.cells, cfg)

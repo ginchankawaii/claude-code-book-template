@@ -87,10 +87,18 @@ def simulate_trades(
 ) -> pd.DataFrame:
     """イベント1件を1トレードに変換する。
 
+    holding_days:
+      0   当日の引けで返済（日計り）。翌日に持ち越さないので夜間リスクと
+          翌日以降の金利が無い。SBI 等の日計り信用は金利0・手数料0。
+      N>0 N 営業日後の始値で返済。
+
     スリッページと金利はここでは引かない（Nと滑りの組み合わせで後から引くため）。
     返すのは粗リターンと、コスト計算に必要な保有暦日数。
+    あわせて初日を「始値→引け」「引け→翌始値」に分解した値も返す。
+    超過リターンが初日で出尽くすと分かったので、初日のどこに乗っているかを見るため。
     """
     topix_lookup = _topix_lookup(topix)
+    topix_oc = _topix_oc_lookup(topix)
     rows = []
 
     for ev in events.to_dict("records"):
@@ -115,6 +123,11 @@ def simulate_trades(
             "entry_limit_up": False,
             "turnover_avg": np.nan,
             "raw_entry_price": np.nan,
+            # 初日の分解
+            "d0_open_to_close": np.nan,
+            "d0_close_to_next_open": np.nan,
+            "d0_topix_open_to_close": np.nan,
+            "d0_topix_close_to_next_open": np.nan,
         }
 
         if entry_date is None or pd.isna(entry_date):
@@ -157,6 +170,39 @@ def simulate_trades(
             continue
 
         actual_entry_date = prices.date_at(code, i)
+
+        # 初日の分解（N に関係なく全トレードで計算）
+        adj_close_d0 = prices.field(code, i, "adj_close")
+        if _positive(adj_close_d0):
+            row["d0_open_to_close"] = float(adj_close_d0) / float(adj_entry) - 1.0
+            next_i = i + 1
+            adj_open_d1 = prices.field(code, next_i, "adj_open") if next_i <= prices.last_position(code) else np.nan
+            if _positive(adj_open_d1):
+                row["d0_close_to_next_open"] = float(adj_open_d1) / float(adj_close_d0) - 1.0
+        t_oc = topix_oc.get(actual_entry_date) if topix_oc else None
+        if t_oc and _positive(t_oc[0]) and _positive(t_oc[1]):
+            row["d0_topix_open_to_close"] = float(t_oc[1]) / float(t_oc[0]) - 1.0
+            nd = calendar.shift(actual_entry_date, 1)
+            t_next = topix_oc.get(nd) if (topix_oc and nd) else None
+            if t_next and _positive(t_next[0]):
+                row["d0_topix_close_to_next_open"] = float(t_next[0]) / float(t_oc[1]) - 1.0
+
+        if holding_days == 0:
+            # 当日引けで返済（日計り）
+            if not _positive(adj_close_d0):
+                row["status"] = "no_exit"
+                rows.append(row)
+                continue
+            row["status"] = "ok"
+            row["exit_kind"] = "same_day_close"
+            row["exit_date"] = actual_entry_date
+            row["entry_date"] = actual_entry_date
+            row["gross_return"] = float(adj_close_d0) / float(adj_entry) - 1.0
+            row["holding_calendar_days"] = 1
+            row["topix_return"] = row["d0_topix_open_to_close"]
+            rows.append(row)
+            continue
+
         exit_date = calendar.shift(actual_entry_date, holding_days)
         if exit_date is None:
             row["status"] = "exit_beyond_data"
@@ -213,15 +259,20 @@ def simulate_trades(
 def apply_costs(trades: pd.DataFrame, slippage_round_trip_pct: float,
                 margin_interest_annual_pct: float,
                 commission_jpy_per_trade: int = 0,
-                position_size_jpy: int = 500_000) -> pd.DataFrame:
+                position_size_jpy: int = 500_000,
+                day_trade_interest_annual_pct: float = 0.0) -> pd.DataFrame:
     """スリッページ・金利・手数料を引いて純リターンを出す。
 
     金利は建玉に対して 年率 x 暦日/365。建日・返済日は両端入れ。
+    当日引け返済（exit_kind == same_day_close）は日計り信用の金利を使う。
+    SBI 証券の日計り信用は 2022-03-01 から金利0%・手数料0（当日返済が条件）。
     """
     out = trades.copy()
     slip = slippage_round_trip_pct / 100.0
+    is_day_trade = out.get("exit_kind", pd.Series(index=out.index, dtype=object)) == "same_day_close"
+    rate = np.where(is_day_trade, day_trade_interest_annual_pct, margin_interest_annual_pct)
     interest = (
-        margin_interest_annual_pct / 100.0
+        rate / 100.0
         * out["holding_calendar_days"].astype(float)
         / 365.0
     )
@@ -382,6 +433,14 @@ def _resolve_entry(prices: PriceIndex, code: str, entry_date: date, i: int | Non
             return None
         i += 1
     return None
+
+
+def _topix_oc_lookup(topix: pd.DataFrame | None):
+    """日付 -> (始値, 終値)。初日の分解に使う。"""
+    if topix is None or topix.empty or "close" not in topix.columns:
+        return None
+    t = topix.sort_values("date")
+    return {d: (o, c) for d, o, c in zip(t["date"], t["open"], t["close"])}
 
 
 def _topix_lookup(topix: pd.DataFrame | None):

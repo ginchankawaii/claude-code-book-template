@@ -22,6 +22,7 @@ class GridResult:
     cells: pd.DataFrame
     skip_summary: dict
     thresholds_used: list[float | None] = field(default_factory=list)
+    decomposition: pd.DataFrame | None = None
 
 
 def run_grid(events: pd.DataFrame, prices: PriceIndex, calendar: TradingCalendar,
@@ -93,6 +94,8 @@ def run_grid(events: pd.DataFrame, prices: PriceIndex, calendar: TradingCalendar
                 float(costs["margin_interest_annual_pct"]),
                 int(costs["commission_jpy_per_trade"]),
                 position_size,
+                day_trade_interest_annual_pct=float(
+                    costs.get("day_trade_interest_annual_pct", 0.0)),
             )
             summary = metrics.summarize(
                 priced,
@@ -169,8 +172,47 @@ def run_grid(events: pd.DataFrame, prices: PriceIndex, calendar: TradingCalendar
 
             rows.append(row)
 
+    decomposition = day0_decomposition(trades_by_n, cells_thresholds, position_size, filt)
     return GridResult(cells=pd.DataFrame(rows), skip_summary=skip_summary,
-                      thresholds_used=cells_thresholds)
+                      thresholds_used=cells_thresholds, decomposition=decomposition)
+
+
+def day0_decomposition(trades_by_n: dict, thresholds: list, position_size: int,
+                       filt: dict) -> pd.DataFrame:
+    """初日の「始値→引け」「引け→翌始値」を、閾値 x タイミング別に集計する。
+
+    どの N のトレード表でも初日の分解は同じなので、最小の N の表を使う。
+    フィルタは主条件に合わせる（常習除外・売買代金あり・除外あり・時価総額なし）。
+    """
+    n0 = min(trades_by_n)
+    base = filters.executable(trades_by_n[n0])
+    base = filters.apply_exclusion_list(base, True)
+    base = filters.apply_habitual(base, True)
+    base = filters.apply_turnover(base, True, position_size,
+                                  float(filt["max_position_share_of_turnover"]))
+    rows = []
+    for thr in thresholds:
+        sub = filters.apply_revision(base, thr)
+        for timing in ("all", "after_close", "intraday"):
+            t = filters.apply_timing(sub, timing)
+            if t.empty:
+                continue
+            oc = t["d0_open_to_close"]
+            cn = t["d0_close_to_next_open"]
+            oc_x = oc - t["d0_topix_open_to_close"]
+            cn_x = cn - t["d0_topix_close_to_next_open"]
+            rows.append({
+                "revision_threshold": thr,
+                "timing": timing,
+                "trades": int(oc.notna().sum()),
+                "open_to_close_pct": float(oc.mean() * 100),
+                "open_to_close_excess_pct": float(oc_x.mean() * 100),
+                "close_to_next_open_pct": float(cn.mean() * 100),
+                "close_to_next_open_excess_pct": float(cn_x.mean() * 100),
+                "open_to_close_win_rate": float((oc > 0).mean()),
+                "open_to_close_stdev_pct": float(oc.std(ddof=1) * 100) if oc.notna().sum() > 1 else float("nan"),
+            })
+    return pd.DataFrame(rows)
 
 
 def primary_cell(cells: pd.DataFrame, cfg: Config) -> pd.DataFrame:
