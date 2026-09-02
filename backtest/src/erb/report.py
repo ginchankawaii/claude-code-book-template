@@ -110,9 +110,11 @@ def write_histogram(trades: pd.DataFrame, out_dir: Path) -> Path:
     r = trades["revision_rate"].dropna()
     lines = ["# 修正率の分布\n"]
     lines.append(
-        "東証の適時開示基準では、営業利益の業績予想修正は原則 ±30% を超えないと"
-        "開示義務が生じない（売上高は ±10%）。固定の 5%/10%/20% では母集団が"
-        "ほぼ同じになりうるため、実データの分位点から閾値を決める。\n"
+        "東証の適時開示基準では、業績予想修正（EarnForecastRevision）は営業利益で "
+        "±30% を超えないと開示義務が生じない。ただし決算短信の中での予想変更には "
+        "この基準がかからないため、実データの分布は小さい修正率まで連続している。\n"
+        "開示の種別ごとに分布が違うなら、閾値の上下は「修正の大きさ」ではなく "
+        "「開示の種別」を選んでいることになる。下の内訳で確認する。\n"
     )
     if r.empty:
         lines.append("修正率が計算できたイベントがありません。\n")
@@ -126,12 +128,38 @@ def write_histogram(trades: pd.DataFrame, out_dir: Path) -> Path:
             lines.append(f"上方修正のうち +30% 超: {int((up > 0.30).sum())} 件 "
                          f"({(up > 0.30).mean():.1%})")
         lines.append("```\n")
+        if "doc_class" in trades.columns:
+            lines.append("### 開示の種別ごとの分布（上方修正のみ）\n")
+            lines.append("```")
+            lines.append(f"{'種別':<26}{'件数':>8}{'中央値':>9}{'25%点':>9}{'75%点':>9}{'30%超':>9}")
+            for label, grp in trades[trades["revision_rate"] > 0].groupby(
+                    "doc_class", observed=True):
+                v = grp["revision_rate"]
+                lines.append(
+                    f"{str(label):<26}{len(v):>8,}{v.median():>8.1%}"
+                    f"{v.quantile(0.25):>9.1%}{v.quantile(0.75):>9.1%}"
+                    f"{(v > 0.30).mean():>9.1%}"
+                )
+            lines.append("```\n")
+
         bins = [-10, -1.0, -0.5, -0.3, -0.1, 0, 0.1, 0.3, 0.5, 1.0, 2.0, 10]
         cut = pd.cut(r, bins=bins)
         lines.append("```")
         for interval, count in cut.value_counts().sort_index().items():
             lines.append(f"{str(interval):>18}: {count}")
         lines.append("```\n")
+        lines.append("### 閾値ごとに残る件数\n")
+        lines.append("```")
+        lines.append(f"{'閾値':>8}{'件数':>9}   判定（σ=8%・平均0.5%なら1,024件必要）")
+        for thr in (0.05, 0.10, 0.18, 0.30, 0.36, 0.50, 0.73):
+            n = int((up >= thr).sum())
+            lines.append(f"{thr:>7.0%}{n:>9,}   {'足りる' if n >= 1024 else '不足'}"
+                         f"（フィルタ前）")
+        lines.append("")
+        lines.append("フィルタ（常習除外・売買代金・単元）を通すと 2〜3割まで減る。")
+        lines.append("上の件数が 4,000 を切る閾値は、主条件には使えない見込み。")
+        lines.append("```\n")
+
     p = out_dir / "histogram.md"
     p.write_text("\n".join(lines), encoding="utf-8")
     return p

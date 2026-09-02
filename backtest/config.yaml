@@ -104,9 +104,14 @@ grid:
   habitual_excluded: [true, false]
   turnover_filter: [true, false]
   exclusion_list_applied: [true, false]
-  # 修正率の閾値は results/histogram.md を見てから決める。
-  # 決めたら下に固定値を書き、以後動かさない。
-  revision_thresholds: null
+  # 修正率の閾値。2026-09-02 の実データ分布（上方修正 8,673件）を見て確定した。
+  # 上方修正の分位点: 25%=+8.9% / 50%=+18.4% / 75%=+35.8% / 90%=+73.1%
+  #   0.10 … 当初仕様の「10%以上」。上方修正の約27%点にあたる。主条件はこれ。
+  #   0.18 … 中央値
+  #   0.36 … 75%点
+  # 90%点(+73%)は残り約870件で、フィルタを通すと判定不能になるため入れない。
+  # 決めたので以後動かさない。
+  revision_thresholds: [0.10, 0.18, 0.36]
 
 filters:
   # REIT（投資法人）は事業会社と決算・予想の性質が異なるため既定で除外する。
@@ -136,7 +141,9 @@ judgement:
     turnover_filter: true
     exclusion_list_applied: true
     slippage_round_trip_pct: 0.4
-    revision_threshold: null
+    # 当初仕様の「上方修正10%以上」。分布の約27%点で、
+    # フィルタ後も1,400件前後が残り、統計的に判定できる唯一の水準。
+    revision_threshold: 0.10
 
 statistics:
   bootstrap_iterations: 5000
