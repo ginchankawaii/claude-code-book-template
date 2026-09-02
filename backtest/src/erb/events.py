@@ -30,7 +30,10 @@ DOC_TYPE_RULES = (
 )
 
 #: REIT（投資法人）の開示。事業会社と決算・予想の性質が異なるため既定で除外する。
-REIT_MARKER = "_reit"
+#: 実データには2つの形が現れる。区切り文字を当てにしてはいけない。
+#:   FYFinancialStatements_Consolidated_REIT   末尾に付く形
+#:   REITEarnForecastRevision                  先頭に付く形（アンダースコアなし）
+REIT_MARKER = "reit"
 
 REVISION_EPS = 1e-9
 
@@ -50,7 +53,12 @@ def classify_doc_type(value: object) -> str:
 
 
 def is_reit(value: object) -> bool:
-    """REIT の開示か。DocType の末尾が _REIT のもの。"""
+    """REIT の開示か。
+
+    DocType のどこかに REIT が入っていれば REIT とみなす。
+    末尾に付く形（..._Consolidated_REIT）と先頭に付く形
+    （REITEarnForecastRevision）の両方があるため、位置を決め打ちしない。
+    """
     return REIT_MARKER in str(value).lower()
 
 
