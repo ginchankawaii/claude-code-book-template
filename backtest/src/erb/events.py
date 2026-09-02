@@ -15,13 +15,22 @@ import pandas as pd
 from .calendar import CloseTimeSchedule, TradingCalendar
 from .constants import is_excluded
 
-#: DocType の分類。実際の値は未確認なので部分一致で判定し、
-#: probe が実データの値を列挙して照合する。
+#: DocType の分類。2026-09-02 の probe で実データの値を確認済み。
+#:
+#:   EarnForecastRevision                        業績予想の修正
+#:   DividendForecastRevision                    配当予想の修正（対象外）
+#:   {1Q,2Q,3Q,FY}FinancialStatements_{Consolidated,NonConsolidated}_{JP,US,IFRS,Foreign,REIT}
+#:
+#: 判定は上から順に行う。"DividendForecastRevision" も "forecastrevision" を
+#: 含むため、配当の判定を業績より先に置くこと（順序に意味がある）。
 DOC_TYPE_RULES = (
-    ("dividend_forecast_revision", ("dividendforecast", "配当予想")),
-    ("earn_forecast_revision", ("earnforecast", "業績予想", "forecastrevision")),
-    ("financial_statements", ("financialstatements", "決算短信", "earnings")),
+    ("dividend_forecast_revision", ("dividendforecast",)),
+    ("earn_forecast_revision", ("earnforecast", "forecastrevision")),
+    ("financial_statements", ("financialstatements",)),
 )
+
+#: REIT（投資法人）の開示。事業会社と決算・予想の性質が異なるため既定で除外する。
+REIT_MARKER = "_reit"
 
 REVISION_EPS = 1e-9
 
@@ -38,6 +47,11 @@ def classify_doc_type(value: object) -> str:
         if any(n in s for n in needles):
             return label
     return "other"
+
+
+def is_reit(value: object) -> bool:
+    """REIT の開示か。DocType の末尾が _REIT のもの。"""
+    return REIT_MARKER in str(value).lower()
 
 
 def is_fy_closing(cur_per_type: object) -> bool:
@@ -66,6 +80,7 @@ def build_forecast_timeline(summary: pd.DataFrame) -> pd.DataFrame:
             "disc_no": rec.get("disc_no"),
             "doc_type": rec.get("doc_type"),
             "doc_class": classify_doc_type(rec.get("doc_type")),
+            "is_reit": is_reit(rec.get("doc_type")),
             "cur_per_type": rec.get("cur_per_type"),
             "op_actual": rec.get("op_actual"),
             "shares_out": rec.get("shares_out"),
@@ -229,7 +244,7 @@ def attach_market_cap(tl: pd.DataFrame, daily: pd.DataFrame) -> pd.DataFrame:
 
 def build_events(summary: pd.DataFrame, daily: pd.DataFrame, calendar: TradingCalendar,
                  close_schedule: CloseTimeSchedule, lookback_days: int,
-                 min_revisions: int) -> EventBuildResult:
+                 min_revisions: int, exclude_reit: bool = True) -> EventBuildResult:
     """イベント表を組み立てる。"""
     diag: dict = {"summary_rows": len(summary)}
 
@@ -244,6 +259,11 @@ def build_events(summary: pd.DataFrame, daily: pd.DataFrame, calendar: TradingCa
     before = len(tl)
     tl = tl[tl["doc_class"] != "dividend_forecast_revision"].copy()
     diag["dropped_dividend_only"] = before - len(tl)
+
+    if exclude_reit:
+        before = len(tl)
+        tl = tl[~tl["is_reit"]].copy()
+        diag["dropped_reit"] = before - len(tl)
 
     data_start = min(d for d in daily["date"] if d is not None) if len(daily) else date(1900, 1, 1)
     tl = add_habitual_flag(tl, lookback_days, min_revisions, data_start)

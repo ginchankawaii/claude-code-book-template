@@ -61,6 +61,11 @@ def normalize(cfg: Config, table: str, df: pd.DataFrame) -> pd.DataFrame:
         elif col in NUMERIC_HINTS:
             out[col] = pd.to_numeric(out[col], errors="coerce")
 
+    if table == "daily" and "mkt_cap" in out.columns:
+        # MktCap は百万円単位で返る。円に揃えないと時価総額フィルタが効かない。
+        multiplier = float(cfg.get("units", {}).get("mkt_cap_multiplier", 1))
+        out["mkt_cap"] = pd.to_numeric(out["mkt_cap"], errors="coerce") * multiplier
+
     if "code" in out.columns:
         out["code"] = out["code"].map(normalize_code)
     if "disc_time" in out.columns:

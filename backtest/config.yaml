@@ -3,13 +3,13 @@
 
 api:
   base_url: "https://api.jquants.com/v2"
-  # 実データで確認するまで確定させない。probe が食い違いを報告する。
+  # 2026-09-02 の probe で実データ確認済み（topix を除く）。
   endpoints:
-    daily:    "/equities/bars/daily"
-    master:   "/equities/master"
-    summary:  "/fins/summary"
-    calendar: "/markets/calendar"
-    topix:    "/indices/topix"
+    daily:    "/equities/bars/daily"   # 確認済 200
+    master:   "/equities/master"       # 確認済 200
+    summary:  "/fins/summary"          # 確認済 200
+    calendar: "/markets/calendar"      # 確認済 200
+    topix:    "/indices/daily-topix"   # Free では 403。Light 契約後に要確認
   rate_limit_sleep_sec: 0.2
 
 # V2 の列名 -> 内部の正準名
@@ -46,7 +46,8 @@ columns:
     AdjL: adj_low
     AdjC: adj_close
     AdjVo: adj_volume
-    MktCap: mkt_cap
+    MktCap: mkt_cap        # 単位は百万円。units.mkt_cap_multiplier で円に直す
+    ExRT: ex_right_type    # 権利落種類。配当・分割の権利落ちを跨いだ取引の識別に使う
   master:
     Date: date
     Code: code
@@ -63,6 +64,13 @@ columns:
     Date: date
     O: open
     C: close
+
+units:
+  # /equities/bars/daily の MktCap は「百万円」単位で返る。
+  # 極洋(13010): MktCap 54050 x 1e6 = 540億円（株価4475円で発行済1208万株）
+  # ネットワンシステムズ(75180): 359783 x 1e6 = 3598億円（TOB総額と整合）
+  # 円に揃えないと時価総額フィルタが一切効かないので、読み込み時に掛ける。
+  mkt_cap_multiplier: 1000000
 
 # 大引け時刻。東証は 2024-11-05 から 15:30 に延長された。
 market:
@@ -100,6 +108,9 @@ grid:
   revision_thresholds: null
 
 filters:
+  # REIT（投資法人）は事業会社と決算・予想の性質が異なるため既定で除外する。
+  # DocType が FYFinancialStatements_Consolidated_REIT のもの。
+  exclude_reit: true
   # 1本の建玉が直近20営業日平均売買代金のこの割合を超える銘柄は約定不能とみなす
   max_position_share_of_turnover: 0.01
   turnover_lookback_days: 20

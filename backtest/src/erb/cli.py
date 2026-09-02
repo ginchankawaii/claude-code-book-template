@@ -126,6 +126,7 @@ def _build_events(cfg: Config, bundle: dict) -> events_mod.EventBuildResult:
     return events_mod.build_events(
         bundle["summary"], bundle["daily"], bundle["calendar"], bundle["close_schedule"],
         int(cfg["habitual"]["lookback_days"]), int(cfg["habitual"]["min_revisions"]),
+        exclude_reit=bool(cfg["filters"].get("exclude_reit", True)),
     )
 
 
