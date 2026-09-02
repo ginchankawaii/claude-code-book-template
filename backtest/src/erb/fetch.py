@@ -121,6 +121,8 @@ def probe(cfg: Config, out_path: Path) -> str:
                          "（入っていなければ (発行済株式数-自己株)x終値 で代替する）\n")
         time.sleep(client.sleep)
 
+    lines.append(_delisting_check(client))
+
     lines.append("## 公式資料で確定済み\n")
     lines.append(
         "- ベースURL: https://api.jquants.com/v2\n"
@@ -132,8 +134,6 @@ def probe(cfg: Config, out_path: Path) -> str:
 
     lines.append("## 残りの確認項目（このプローブでは判定できない）\n")
     lines.append(
-        "- 上場廃止銘柄の過去データが残るか: 7518（ネットワンシステムズ、2025-03-18 上場廃止）を\n"
-        "  日付指定で取得して確認する。残っていなければ生存バイアスが不可避。\n"
         "- 寄らずの日の始値が null か前日終値か: 出来高0の日を抽出して確認する。\n"
         "- AdjFactor の適用方向: 分割のあった銘柄で調整前後の系列を比較する。\n"
     )
@@ -155,6 +155,50 @@ def fmt_date(d: date | str) -> str:
     if isinstance(d, str):
         return d.replace("-", "")
     return d.strftime(DATE_FORMAT)
+
+
+#: 生存バイアスの確認に使う銘柄。
+#: ネットワンシステムズ(7518) は SCSK による TOB を経て 2025-03-18 に上場廃止。
+#: 最終売買日は 2025-03-17。この銘柄の日足が残っていれば、上場廃止銘柄が
+#: 過去データとして保持されていることの証拠になる。
+DELISTED_PROBE_CODE = "75180"
+DELISTED_PROBE_LAST_TRADING_DAY = "2025-03-17"
+
+
+def _delisting_check(client: "JQuantsClient") -> str:
+    """上場廃止銘柄が過去データに残っているかを確かめる。
+
+    これは設計上いちばん重要な未確認事項。残っていなければ生存バイアスが
+    不可避で、バックテストの結果は実際より良く出る。
+    Free プランの収録期間（直近12週を除く2年分）にも 2025-03-17 は入るので、
+    課金する前にこの1点だけは確かめられる。
+    """
+    lines = ["## 生存バイアスの確認（最重要）\n"]
+    path = "/equities/bars/daily"
+    try:
+        body = client.get(path, {"code": DELISTED_PROBE_CODE,
+                                 "date": fmt_date(DELISTED_PROBE_LAST_TRADING_DAY)})
+        records = _extract_records(body)
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"確認できませんでした: {type(exc).__name__}: {exc}\n")
+        return "\n".join(lines)
+
+    lines.append("```")
+    lines.append(f"銘柄: {DELISTED_PROBE_CODE}（ネットワンシステムズ / 2025-03-18 上場廃止）")
+    lines.append(f"照会日: {DELISTED_PROBE_LAST_TRADING_DAY}（最終売買日）")
+    if records:
+        lines.append(f"結果: {len(records)} 件のデータあり")
+        lines.append("")
+        lines.append("=> 上場廃止銘柄が過去データとして残っている。生存バイアスは回避できる。")
+    else:
+        lines.append("結果: データなし")
+        lines.append("")
+        lines.append("=> 上場廃止銘柄が残っていない可能性が高い。")
+        lines.append("   この場合、バックテストからは『5年間ずっと上場していた銘柄』しか")
+        lines.append("   拾えず、結果は実際より良く出る（生存バイアス）。")
+        lines.append("   別の日付でも再確認し、それでも空なら方針を見直すこと。")
+    lines.append("```\n")
+    return "\n".join(lines)
 
 
 def _probe_params(table: str) -> dict[str, Any]:
