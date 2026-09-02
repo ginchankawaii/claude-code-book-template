@@ -282,3 +282,23 @@ def test_day0_decomposition_sums_to_next_open_return(prices, calendar):
     row = t.iloc[0]
     composed = (1 + row["d0_open_to_close"]) * (1 + row["d0_close_to_next_open"]) - 1
     assert composed == pytest.approx(row["gross_return"], rel=1e-9)
+
+
+
+def test_portfolio_pnl_equals_taken_mean_times_count(prices, calendar):
+    """建てた本の平均純リターン x 本数 x 建玉 = 実現損益 であること。
+
+    これが崩れていたら、選択則ではなくシミュレータのバグ。
+    """
+    evs = pd.concat([_event("A0001", date(2024, 11, 12), revision_rate=r)
+                     for r in (0.5, 0.4, 0.3, 0.2, 0.1)], ignore_index=True)
+    t = simulate_trades(evs, prices, calendar, 5, position_size_jpy=500_000)
+    priced = apply_costs(t, 0.4, 2.80, 0, 500_000)
+    pf = simulate_portfolio(priced, position_size_jpy=500_000, max_concurrent=3,
+                            equity_jpy=1_500_000, maintenance_margin_ratio=0.20,
+                            prices=prices, calendar=calendar)
+    assert pf["taken"] == 3 and pf["skipped_no_slot"] == 2
+    expected = pf["taken_mean_net_pct"] / 100 * 500_000 * pf["taken"]
+    assert pf["realized_pnl_jpy"] == pytest.approx(expected, rel=1e-9)
+    # 全件同じ銘柄・同じ日なので、建てた本と見送った本の平均は一致する
+    assert pf["taken_mean_net_pct"] == pytest.approx(pf["skipped_mean_net_pct"])

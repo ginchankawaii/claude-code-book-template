@@ -307,6 +307,8 @@ def simulate_portfolio(trades: pd.DataFrame, *, position_size_jpy: int, max_conc
             "taken": 0, "skipped_no_slot": 0, "margin_call_days": 0,
             "max_drawdown_pct": 0.0, "realized_pnl_jpy": 0.0, "by_year": {},
             "bankrupt_on": None,
+            "taken_mean_net_pct": float("nan"), "skipped_mean_net_pct": float("nan"),
+            "all_mean_net_pct": float("nan"),
         }
 
     ok = ok.sort_values(["entry_date", "revision_rate", "mkt_cap"],
@@ -314,6 +316,10 @@ def simulate_portfolio(trades: pd.DataFrame, *, position_size_jpy: int, max_conc
 
     open_positions: list[dict] = []
     bankrupt_on: date | None = None
+    # 診断: 枠の選択則が「建てた本」と「見送った本」で期待値を変えていないか。
+    # トレード平均とポートフォリオ損益が大きく乖離したとき、選択の偏りかバグかを切り分ける。
+    taken_returns: list[float] = []
+    skipped_returns: list[float] = []
     taken = 0
     skipped_no_slot = 0
     realized = 0.0
@@ -341,6 +347,7 @@ def simulate_portfolio(trades: pd.DataFrame, *, position_size_jpy: int, max_conc
         for p in open_positions:
             if p["exit_date"] is not None and p["exit_date"] <= d:
                 realized += p["net_return"] * position_size_jpy
+                taken_returns.append(p["net_return"])
             else:
                 still_open.append(p)
         open_positions = still_open
@@ -352,6 +359,7 @@ def simulate_portfolio(trades: pd.DataFrame, *, position_size_jpy: int, max_conc
                 taken += 1
             else:
                 skipped_no_slot += 1
+                skipped_returns.append(rec["net_return"])
 
         # 3) 維持率（含み損益は当日終値ベース）
         unrealized = 0.0
@@ -384,6 +392,7 @@ def simulate_portfolio(trades: pd.DataFrame, *, position_size_jpy: int, max_conc
     # 残った建玉を最終日に決済
     for p in open_positions:
         realized += p["net_return"] * position_size_jpy
+        taken_returns.append(p["net_return"])
 
     curve = pd.DataFrame(daily_rows)
     max_dd = _max_drawdown(curve["equity"]) if not curve.empty else 0.0
@@ -402,6 +411,9 @@ def simulate_portfolio(trades: pd.DataFrame, *, position_size_jpy: int, max_conc
         "realized_pnl_jpy": realized,
         "by_year": by_year,
         "bankrupt_on": bankrupt_on,
+        "taken_mean_net_pct": (float(np.mean(taken_returns) * 100) if taken_returns else float("nan")),
+        "skipped_mean_net_pct": (float(np.mean(skipped_returns) * 100) if skipped_returns else float("nan")),
+        "all_mean_net_pct": float(ok["net_return"].mean() * 100),
     }
 
 

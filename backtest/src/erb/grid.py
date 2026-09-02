@@ -169,6 +169,11 @@ def run_grid(events: pd.DataFrame, prices: PriceIndex, calendar: TradingCalendar
                         pf["bankrupt_on"].isoformat() if pf["bankrupt_on"] else "")
                     row["taken"] = pf["taken"]
                     row["skipped_no_slot"] = pf["skipped_no_slot"]
+                    # 建てた本 / 見送った本 / 全体 の平均純リターン。
+                    # 建てた本の平均 x 本数 x 建玉 が realized_pnl と合わなければバグ。
+                    row["taken_mean_net_pct"] = round(pf["taken_mean_net_pct"], 4)
+                    row["skipped_mean_net_pct"] = round(pf["skipped_mean_net_pct"], 4)
+                    row["all_mean_net_pct"] = round(pf["all_mean_net_pct"], 4)
 
             rows.append(row)
 
