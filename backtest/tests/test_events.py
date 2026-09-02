@@ -5,14 +5,8 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from erb.config import Config
 from erb.data import normalize
 from erb.events import build_events, build_forecast_timeline, compute_revision_rate
-
-
-@pytest.fixture
-def cfg():
-    return Config.load("config.yaml")
 
 
 def _summary_rows():

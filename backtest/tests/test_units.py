@@ -7,7 +7,6 @@ probe が実際に返した1件をそのまま使い、読み込み後に想定�
 import pandas as pd
 import pytest
 
-from erb.config import Config
 from erb.data import normalize
 
 # probe が /equities/bars/daily から返した実物（極洋 1301）
@@ -31,11 +30,6 @@ REAL_DELISTED_ROW = {
     "MktCap": 359783.0,
     "ExRT": None,
 }
-
-
-@pytest.fixture
-def cfg():
-    return Config.load("config.yaml")
 
 
 def test_mkt_cap_is_converted_from_millions_to_yen(cfg):

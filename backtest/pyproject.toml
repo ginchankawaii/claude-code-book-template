@@ -26,3 +26,5 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# カレントディレクトリに依存せずに走らせるため
+pythonpath = ["src"]

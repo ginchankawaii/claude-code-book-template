@@ -6,15 +6,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from erb.config import Config
 from erb.data import daily_with_turnover_average, normalize
 from erb.simulate import (NO_OPEN_EXCLUDE_LIMIT_UP, NO_OPEN_NEXT, PriceIndex,
                           apply_costs, simulate_portfolio, simulate_trades)
-
-
-@pytest.fixture
-def cfg():
-    return Config.load("config.yaml")
 
 
 @pytest.fixture

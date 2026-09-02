@@ -56,27 +56,21 @@ def test_missing_time_is_treated_as_after_close(close_schedule):
     assert close_schedule.is_after_close(date(2024, 11, 5), None) is True
 
 
-def test_calendar_can_be_derived_from_daily_prices(daily, days):
+def test_calendar_can_be_derived_from_daily_prices(cfg, daily, days):
     """取引カレンダーが取れない契約でも、日足から営業日を復元できること。"""
-    import pandas as pd
-
-    from erb.config import Config
     from erb.data import normalize
 
-    d = normalize(Config.load("config.yaml"), "daily", daily)
+    d = normalize(cfg, "daily", daily)
     cal = TradingCalendar.from_daily_prices(d)
     assert list(cal.days) == days
     assert cal.next_business_day(date(2024, 10, 25)) == date(2024, 10, 28)
 
 
-def test_derived_calendar_ignores_gaps_in_a_single_stock(daily):
+def test_derived_calendar_ignores_gaps_in_a_single_stock(cfg, daily):
     """1銘柄のデータが尽きても、他の銘柄が取引していれば営業日として残る。"""
-    import pandas as pd
-
-    from erb.config import Config
     from erb.data import normalize
 
-    d = normalize(Config.load("config.yaml"), "daily", daily)
+    d = normalize(cfg, "daily", daily)
     n_all = len(TradingCalendar.from_daily_prices(d).days)
     # C0003 は最後の5営業日のデータが無いが、営業日の数は変わらない
     n_without_c = len(TradingCalendar.from_daily_prices(d[d["code"] != "C0003"]).days)

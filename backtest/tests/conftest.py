@@ -6,11 +6,21 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from pathlib import Path
 
 import pandas as pd
 import pytest
 
 from erb.calendar import CloseTimeSchedule, TradingCalendar
+from erb.config import Config
+
+#: リポジトリ内の config.yaml。カレントディレクトリに依存させない。
+CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
+
+
+@pytest.fixture
+def cfg() -> Config:
+    return Config.load(CONFIG_PATH)
 
 
 def business_days(start: date, n: int) -> list[date]:
