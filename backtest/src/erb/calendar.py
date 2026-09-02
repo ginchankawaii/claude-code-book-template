@@ -22,6 +22,22 @@ class TradingCalendar:
         self._pos: dict[date, int] = {d: i for i, d in enumerate(self._days)}
 
     @classmethod
+    def from_daily_prices(cls, daily: pd.DataFrame) -> "TradingCalendar":
+        """日足データから営業日を導出する。
+
+        取引カレンダーが取得できない契約でも動くようにするための代替。
+        1銘柄でも値がついた日は営業日とみなす。全銘柄が売買停止になる日は
+        現実には無いので、これで営業日は復元できる。
+
+        ただし「全銘柄が休みの営業日」は原理的に区別できないため、
+        カレンダーが取れるならそちらを優先する。
+        """
+        dates = daily.loc[daily["date"].notna(), "date"]
+        if dates.empty:
+            raise ValueError("日足データから営業日を導出できません（日付が空です）")
+        return cls(dates.unique().tolist())
+
+    @classmethod
     def from_frame(cls, df: pd.DataFrame) -> "TradingCalendar":
         """mkt calendar の DataFrame から作る。HolDiv=0 が営業日。"""
         col = "holiday_div"

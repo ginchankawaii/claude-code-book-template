@@ -86,14 +86,15 @@ def _load_bundle(cfg: Config, data_dir: Path) -> dict:
     paths = {
         "summary": _find(data_dir, "summary"),
         "daily": _find(data_dir, "daily"),
-        "calendar": _find(data_dir, "calendar"),
+        "calendar": _find(data_dir, "calendar", required=False),
     }
     optional = {"master": _find(data_dir, "master", required=False),
                 "topix": _find(data_dir, "topix", required=False)}
 
     summary = data_mod.load_table(cfg, "summary", paths["summary"])
     daily = data_mod.load_table(cfg, "daily", paths["daily"])
-    cal_df = data_mod.load_table(cfg, "calendar", paths["calendar"])
+    cal_df = (data_mod.load_table(cfg, "calendar", paths["calendar"])
+              if paths["calendar"] else None)
 
     daily = data_mod.daily_with_turnover_average(
         daily, int(cfg["filters"]["turnover_lookback_days"]))
@@ -106,7 +107,12 @@ def _load_bundle(cfg: Config, data_dir: Path) -> dict:
     topix = (data_mod.load_table(cfg, "topix", optional["topix"])
              if optional["topix"] else None)
 
-    calendar = TradingCalendar.from_frame(cal_df)
+    if cal_df is not None:
+        calendar = TradingCalendar.from_frame(cal_df)
+    else:
+        # 取引カレンダーが無い契約でも動くよう、日足から営業日を導出する
+        print("警告: data/calendar が見つかりません。日足から営業日を導出します。")
+        calendar = TradingCalendar.from_daily_prices(daily)
     close_schedule = CloseTimeSchedule(cfg["market"]["close_time_changes"])
 
     return {
