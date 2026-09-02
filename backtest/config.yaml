@@ -9,7 +9,7 @@ api:
     master:   "/equities/master"       # 確認済 200
     summary:  "/fins/summary"          # 確認済 200
     calendar: "/markets/calendar"      # 確認済 200
-    topix:    "/indices/daily-topix"   # Free では 403。Light 契約後に要確認
+    topix:    "/indices/bars/daily/topix"  # 確認済。date ではなく from/to を取る
   rate_limit_sleep_sec: 0.2
 
 # V2 の列名 -> 内部の正準名

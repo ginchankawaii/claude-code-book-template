@@ -37,9 +37,8 @@ CANDIDATES = {
     "master":   ["/equities/master", "/equities/list", "/listed/info"],
     "summary":  ["/fins/summary", "/fins/statements"],
     "calendar": ["/markets/calendar", "/markets/trading_calendar"],
-    "topix":    ["/indices/daily-topix", "/indices/topix", "/indices/daily_topix",
-                 "/indices/bars/daily", "/indices/bars/topix", "/indices/topix/daily",
-                 "/idx/daily-topix", "/indices"],
+    # TOPIX は銘柄指定のない1本の系列で、date ではなく from/to を取る。
+    "topix":    ["/indices/bars/daily/topix"],
 }
 
 #: 403 が返っても候補を試し続ける表。パスが違うのか権限が無いのかを切り分けるため。
@@ -51,7 +50,7 @@ PARAMS = {
     "master":   {"date": "20250602"},
     "summary":  {"date": "20250515"},
     "calendar": {"from": "20250601", "to": "20250630"},
-    "topix":    {"date": "20250602"},
+    "topix":    {"from": "20250602", "to": "20250606"},
 }
 
 # ネットワンシステムズ(7518)。SCSK による TOB を経て 2025-03-18 上場廃止。

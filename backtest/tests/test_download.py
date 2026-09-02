@@ -150,3 +150,36 @@ def test_master_is_snapshotted_once_per_month(dl, tmp_path):
     dl.fetch_master(days)
     assert len(dl.client.calls) == 2
     assert {c[1]["date"] for c in dl.client.calls} == {"20240104", "20240201"}
+
+
+def test_topix_is_fetched_by_range_not_by_day(dl, tmp_path):
+    """TOPIX は銘柄指定のない1本の系列なので from/to で期間取得する。
+
+    date で1日ずつ叩くと 403 になるうえ、リクエスト数が20倍になる。
+    """
+    captured: list[dict] = []
+
+    def stub(path, params, attempts=5):
+        captured.append({"path": path, **params})
+        return [{"Date": "2024-01-04", "O": 2000.0, "C": 2010.0}]
+
+    dl.get_with_retry = stub
+    days = _days((2024, 1, 4), (2024, 1, 5), (2024, 1, 9), (2024, 2, 1))
+    path = dl.fetch_topix(days)
+
+    assert path == "/indices/bars/daily/topix"
+    # 2か月ぶん = 2リクエスト（日数ぶんではない）
+    assert len(captured) == 2
+    assert captured[0]["from"] == "20240104" and captured[0]["to"] == "20240109"
+    assert captured[1]["from"] == "20240201" and captured[1]["to"] == "20240201"
+    assert "date" not in captured[0]
+
+
+def test_topix_months_already_present_are_skipped(dl, tmp_path):
+    calls = []
+    dl.get_with_retry = lambda path, params, attempts=5: (
+        calls.append(params) or [{"Date": "2024-01-04", "O": 2000.0, "C": 2010.0}])
+    days = _days((2024, 1, 4))
+    dl.fetch_topix(days)
+    dl.fetch_topix(days)
+    assert len(calls) == 1

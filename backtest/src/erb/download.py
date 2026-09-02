@@ -22,8 +22,9 @@ import pandas as pd
 from .config import Config
 from .fetch import JQuantsClient, _extract_records, fmt_date
 
-#: TOPIX のパスは Free では 403 で確認できなかったため候補を順に試す。
-TOPIX_CANDIDATES = ["/indices/daily-topix", "/indices/topix", "/indices/daily_topix"]
+#: TOPIX 日足。公式クライアント(IdxBarsDailyTopixApiV2)と公式ドキュメントで確認済み。
+#: 銘柄指定が無い1本の系列なので、date ではなく from/to を取る。
+TOPIX_PATH = "/indices/bars/daily/topix"
 
 #: 日付ごとに取る表。銘柄マスタは月次スナップショットで足りる。
 BY_DATE_TABLES = ("daily", "summary")
@@ -178,34 +179,15 @@ class Downloader:
     # ---------------------------------------------------------------- TOPIX
 
     def fetch_topix(self, days: list[date]) -> str | None:
-        """TOPIX 日足。パスが未確定なので候補を順に試す。
+        """TOPIX 日足。超過リターンの判定に必須。
 
-        超過リターンの判定に必須。取れなければその旨を返して続行する。
+        銘柄別ではなく1本の系列なので from/to で期間指定する。
+        月単位に1リクエストで済むため、日足の1/20の回数で終わる。
         """
-        configured = self.cfg["api"]["endpoints"].get("topix")
-        candidates = [configured] + [c for c in TOPIX_CANDIDATES if c != configured]
-
-        probe_day = days[len(days) // 2]
-        path = None
-        for cand in candidates:
-            if not cand:
-                continue
-            try:
-                recs = self.get_with_retry(cand, {"date": fmt_date(probe_day)}, attempts=1)
-            except Exception as exc:  # noqa: BLE001
-                print(f"  topix {cand}: {exc}")
-                continue
-            if recs:
-                path = cand
-                print(f"  topix パス確定: {cand}")
-                break
-        if path is None:
-            print("  ! TOPIX が取得できませんでした。超過リターンの判定ができません。")
-            self.progress.errors.append("topix: パスが特定できない")
-            return None
-
+        path = self.cfg["api"]["endpoints"].get("topix") or TOPIX_PATH
         outdir = self.raw / "topix"
         outdir.mkdir(parents=True, exist_ok=True)
+
         by_month: dict[str, list[date]] = {}
         for d in days:
             by_month.setdefault(f"{d.year:04d}-{d.month:02d}", []).append(d)
@@ -215,16 +197,19 @@ class Downloader:
             if target.exists():
                 self.progress.skipped_months += 1
                 continue
-            rows: list[dict] = []
-            for d in by_month[month]:
-                try:
-                    rows.extend(self.get_with_retry(path, {"date": fmt_date(d)}))
-                except Exception as exc:  # noqa: BLE001
-                    self.progress.errors.append(f"topix {d}: {exc}")
-                time.sleep(self.sleep)
+            span = by_month[month]
+            try:
+                rows = self.get_with_retry(
+                    path, {"from": fmt_date(span[0]), "to": fmt_date(span[-1])})
+            except Exception as exc:  # noqa: BLE001
+                self.progress.errors.append(f"topix {month}: {exc}")
+                print(f"    ! topix {month} 取得失敗: {exc}")
+                continue
             pd.DataFrame(rows).to_parquet(target, index=False)
             self.progress.fetched_months += 1
+            self.progress.rows += len(rows)
             print(f"  topix {month}: {len(rows):>5,}行")
+            time.sleep(self.sleep)
         return path
 
     # ---------------------------------------------------------------- 束ねる
