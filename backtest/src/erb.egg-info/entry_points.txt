@@ -1,0 +1,2 @@
+[console_scripts]
+erb = erb.cli:main

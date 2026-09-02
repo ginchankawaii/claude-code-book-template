@@ -1,0 +1,129 @@
+# 決算・業績修正イベント バックテスト設定
+# 列名は J-Quants API V2 のもの。`erb probe` で実データと照合してから本番を回すこと。
+
+api:
+  base_url: "https://api.jquants.com/v2"
+  # 実データで確認するまで確定させない。probe が食い違いを報告する。
+  endpoints:
+    daily:    "/equities/bars/daily"
+    master:   "/equities/master"
+    summary:  "/fins/summary"
+    calendar: "/markets/calendar"
+    topix:    "/indices/topix"
+  rate_limit_sleep_sec: 0.2
+
+# V2 の列名 -> 内部の正準名
+columns:
+  summary:
+    DiscDate: disc_date
+    DiscTime: disc_time
+    Code: code
+    DiscNo: disc_no
+    DocType: doc_type
+    CurPerType: cur_per_type
+    CurFYSt: cur_fy_start
+    CurFYEn: cur_fy_end
+    OP: op_actual
+    FOP: fop
+    NxFOP: nxfop
+    FOP2Q: fop_2q
+    ShOutFY: shares_out
+    TrShFY: treasury_shares
+  daily:
+    Date: date
+    Code: code
+    O: open
+    H: high
+    L: low
+    C: close
+    Vo: volume
+    Va: turnover
+    UL: upper_limit
+    LL: lower_limit
+    AdjFactor: adj_factor
+    AdjO: adj_open
+    AdjH: adj_high
+    AdjL: adj_low
+    AdjC: adj_close
+    AdjVo: adj_volume
+    MktCap: mkt_cap
+  master:
+    Date: date
+    Code: code
+    CoName: name
+    Mkt: market
+    MktNm: market_name
+    ScaleCat: scale
+    Mrgn: margin_class
+    MrgnNm: margin_class_name
+  calendar:
+    Date: date
+    HolDiv: holiday_div
+  topix:
+    Date: date
+    O: open
+    C: close
+
+# 大引け時刻。東証は 2024-11-05 から 15:30 に延長された。
+market:
+  close_time_changes:
+    - {from: "2000-01-01", close: "15:00"}
+    - {from: "2024-11-05", close: "15:30"}
+
+# --- コードにハードコードされる制約（config で無効化できない） ---
+# 除外銘柄 8053 / 9719 / 7518 と「ロングのみ・空売り禁止」は
+# src/erb/constants.py に定数として置く。ここでは変更できない。
+
+costs:
+  margin_interest_annual_pct: 2.80   # 制度信用 買方金利（SBI/楽天の実勢）
+  commission_jpy_per_trade: 0
+  slippage_round_trip_pct: [0.3, 0.4, 0.5]
+
+portfolio:
+  position_size_jpy: 500000          # 1本の建玉
+  max_concurrent: 3                  # 同時保有本数
+  equity_cases_jpy: [500000, 1000000, 1500000]   # 元金 50 / 100 / 150 万
+  maintenance_margin_ratio: 0.20     # 維持率。20% 割れで追証
+  initial_margin_ratio: 0.30         # 委託保証金率
+
+grid:
+  holding_days: [1, 3, 5, 10]
+  mktcap_caps_jpy: [null, 50000000000, 30000000000]   # 全体 / 500億 / 300億
+  habitual_excluded: [true, false]
+  turnover_filter: [true, false]
+  exclusion_list_applied: [true, false]
+  # 修正率の閾値は results/histogram.md を見てから決める。
+  # 決めたら下に固定値を書き、以後動かさない。
+  revision_thresholds: null
+
+filters:
+  # 1本の建玉が直近20営業日平均売買代金のこの割合を超える銘柄は約定不能とみなす
+  max_position_share_of_turnover: 0.01
+  turnover_lookback_days: 20
+  # 制度信用で買えない銘柄を除外するか
+  require_margin_eligible: true
+  # 寄らずの扱い: skip / next_open / exclude_limit_up
+  no_open_policy: "skip"
+
+habitual:
+  lookback_days: 1095   # 3年
+  min_revisions: 4      # 4回以上で常習
+
+judgement:
+  # 純エッジ = TOPIX超過の粗エッジ - スリッページ - 金利
+  net_edge_abort_below_pct: 0.05
+  net_edge_paper_trade_below_pct: 0.35
+  # 主条件（事前登録）。修正率の閾値だけ histogram 確定後に埋める。
+  primary_cell:
+    holding_days: 5
+    mktcap_cap_jpy: null
+    habitual_excluded: true
+    turnover_filter: true
+    exclusion_list_applied: true
+    slippage_round_trip_pct: 0.4
+    revision_threshold: null
+
+statistics:
+  bootstrap_iterations: 5000
+  cluster_by: "week"     # 決算集中期の相関を吸収する
+  target_t_stat: 2.0

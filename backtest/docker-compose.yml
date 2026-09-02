@@ -1,0 +1,11 @@
+services:
+  erb:
+    build: .
+    image: erb:latest
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./results:/app/results
+      - ./config.yaml:/app/config.yaml:ro
+    working_dir: /app
