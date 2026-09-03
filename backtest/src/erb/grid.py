@@ -151,6 +151,7 @@ def run_grid(events: pd.DataFrame, prices: PriceIndex, calendar: TradingCalendar
                         maintenance_margin_ratio=float(port["maintenance_margin_ratio"]),
                         prices=prices,
                         calendar=calendar,
+                        slot_rule=str(port.get("slot_rule", "revision_desc")),
                     )
                     tag = f"eq{int(equity) // 10000}"
                     # 購読料は年間の固定費。検証期間の年数ぶんを引く。
@@ -211,12 +212,14 @@ def day0_decomposition(trades_by_n: dict, thresholds: list, position_size: int,
             cn = t["d0_close_to_next_open"]
             oc_x = oc - t["d0_topix_open_to_close"]
             cn_x = cn - t["d0_topix_close_to_next_open"]
-            n1 = t["gross_return"] - t["topix_return"]
+            # 両脚を複利で合成した「翌始値までの超過」。N=1 の超過と一致するはず
+            oo = (1 + oc) * (1 + cn) - 1
+            oo_t = (1 + t["d0_topix_open_to_close"]) * (1 + t["d0_topix_close_to_next_open"]) - 1
             rows.append({
                 "revision_threshold": thr,
                 "timing": timing,
                 "trades": int(oc.notna().sum()),
-                "next_open_excess_pct": float(n1.mean() * 100),
+                "next_open_excess_pct": float((oo - oo_t).mean() * 100),
                 "open_to_close_pct": float(oc.mean() * 100),
                 "open_to_close_excess_pct": float(oc_x.mean() * 100),
                 "close_to_next_open_pct": float(cn.mean() * 100),

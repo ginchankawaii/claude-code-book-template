@@ -51,6 +51,10 @@ def main(argv: list[str] | None = None) -> int:
     run_p = sub.add_parser("run", help="グリッドを回す")
     run_p.add_argument("--holding-days", type=int, nargs="*", default=None,
                        help="config の grid.holding_days を上書きする")
+    run_p.add_argument("--from", dest="ev_from", default=None,
+                       help="開示日がこの日以降のイベントだけを使う（YYYY-MM-DD）。OOS 判定用")
+    run_p.add_argument("--to", dest="ev_to", default=None,
+                       help="開示日がこの日以前のイベントだけを使う（YYYY-MM-DD）")
 
     args = parser.parse_args(argv)
     cfg = Config.load(args.config)
@@ -94,8 +98,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.holding_days:
             cfg.raw["grid"]["holding_days"] = args.holding_days
         built = _build_events(cfg, bundle)
-        report.write_histogram(built.events, results_dir)
-        result = grid.run_grid(built.events, bundle["prices"], bundle["calendar"],
+        events = built.events
+        if args.ev_from or args.ev_to:
+            # 期間で切るのは「イベントの開示日」だけ。常習フラグや前回予想は
+            # 全期間のデータから作ってあるので、OOS 側でも窓が欠けない。
+            lo = date.fromisoformat(args.ev_from) if args.ev_from else date.min
+            hi = date.fromisoformat(args.ev_to) if args.ev_to else date.max
+            d = pd.to_datetime(pd.Series(list(events["disc_date"])), errors="coerce").dt.date
+            events = events[(d >= lo) & (d <= hi)].reset_index(drop=True)
+            print(f"イベントを {lo} 〜 {hi} に限定: {len(events):,}件")
+        report.write_histogram(events, results_dir)
+        result = grid.run_grid(events, bundle["prices"], bundle["calendar"],
                                bundle.get("topix"), cfg)
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         written = report.write_results(result, cfg, results_dir, built.diagnostics, stamp,

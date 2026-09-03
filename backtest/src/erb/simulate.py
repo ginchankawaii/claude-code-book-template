@@ -287,9 +287,21 @@ def apply_costs(trades: pd.DataFrame, slippage_round_trip_pct: float,
     return out
 
 
+#: 枠が足りない日にどのシグナルを建てるか。
+#:   revision_desc  修正率の高い順 → 時価総額の小さい順（フェーズ1の事前登録。偏りが判明）
+#:   turnover_desc  売買代金の大きい順（流動性の高いものから）
+#:   first_come     並べ替えない（開示番号順＝実質先着）
+SLOT_RULES = {
+    "revision_desc": (["entry_date", "revision_rate", "mkt_cap"], [True, False, True]),
+    "turnover_desc": (["entry_date", "turnover_avg"], [True, False]),
+    "first_come": (["entry_date"], [True]),
+}
+
+
 def simulate_portfolio(trades: pd.DataFrame, *, position_size_jpy: int, max_concurrent: int,
                        equity_jpy: int, maintenance_margin_ratio: float,
-                       prices: PriceIndex, calendar: TradingCalendar | None = None) -> dict:
+                       prices: PriceIndex, calendar: TradingCalendar | None = None,
+                       slot_rule: str = "revision_desc") -> dict:
     """同時保有本数の制約を入れた日次シミュレーション。
 
     - 建玉は建てた順に保有し、返済日に決済する
@@ -312,8 +324,11 @@ def simulate_portfolio(trades: pd.DataFrame, *, position_size_jpy: int, max_conc
             "all_mean_net_pct": float("nan"),
         }
 
-    ok = ok.sort_values(["entry_date", "revision_rate", "mkt_cap"],
-                        ascending=[True, False, True]).reset_index(drop=True)
+    if slot_rule not in SLOT_RULES:
+        raise ValueError(f"未知の選択則: {slot_rule}（{sorted(SLOT_RULES)}）")
+    cols, asc = SLOT_RULES[slot_rule]
+    cols = [c for c in cols if c in ok.columns]
+    ok = ok.sort_values(cols, ascending=asc[:len(cols)], kind="stable").reset_index(drop=True)
 
     open_positions: list[dict] = []
     bankrupt_on: date | None = None

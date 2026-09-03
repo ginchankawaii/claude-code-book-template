@@ -184,6 +184,24 @@ else:
 
 say()
 say("=" * 60)
+say("### 旧期間（2016〜2021）の DiscTime 充足率（OOS 追試の門）")
+say("=" * 60)
+say("Light は5年分なので、ここは Standard 契約後にだけ意味がある。")
+say("場中 / 引け後 の分類には DiscTime が必須。空なら OOS 追試は成立しない。")
+if "summary" in found:
+    for day in ("20180511", "20191108", "20200806"):
+        code, body = get(found["summary"], {"date": day})
+        recs = records(body) if code == 200 else []
+        n = len(recs)
+        filled = sum(1 for r in recs if str(r.get("DiscTime") or "").strip())
+        say(f"  {day}: HTTP {code}  開示 {n:>4}件  DiscTime あり {filled:>4}件"
+            + ("" if n else "  （Light では範囲外。Standard で再実行）"))
+        time.sleep(0.3)
+else:
+    say("  summary のパスが特定できず確認できませんでした。")
+
+say()
+say("=" * 60)
 say("### 生存バイアスの確認（最重要）")
 say("=" * 60)
 if "daily" in found:

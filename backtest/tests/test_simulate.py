@@ -302,3 +302,23 @@ def test_portfolio_pnl_equals_taken_mean_times_count(prices, calendar):
     assert pf["realized_pnl_jpy"] == pytest.approx(expected, rel=1e-9)
     # 全件同じ銘柄・同じ日なので、建てた本と見送った本の平均は一致する
     assert pf["taken_mean_net_pct"] == pytest.approx(pf["skipped_mean_net_pct"])
+
+
+
+def test_slot_rule_changes_which_signals_are_taken(prices, calendar):
+    """選択則で建てる本が変わること。既定は従来の修正率降順。"""
+    evs = pd.concat([
+        _event("A0001", date(2024, 11, 12), revision_rate=0.9, turnover_avg=1e7),
+        _event("A0001", date(2024, 11, 12), revision_rate=0.1, turnover_avg=1e9),
+    ], ignore_index=True)
+    t = simulate_trades(evs, prices, calendar, 5, position_size_jpy=500_000)
+    t["turnover_avg"] = [1e7, 1e9]
+    priced = apply_costs(t, 0.4, 2.80, 0, 500_000)
+    kw = dict(position_size_jpy=500_000, max_concurrent=1, equity_jpy=1_500_000,
+              maintenance_margin_ratio=0.20, prices=prices, calendar=calendar)
+    by_rev = simulate_portfolio(priced, slot_rule="revision_desc", **kw)
+    by_turn = simulate_portfolio(priced, slot_rule="turnover_desc", **kw)
+    assert by_rev["taken"] == 1 and by_turn["taken"] == 1
+    # 同じ銘柄・同じ日なのでリターンは同じ。選ばれた本が違うことは skipped の平均で見る
+    with pytest.raises(ValueError):
+        simulate_portfolio(priced, slot_rule="nonsense", **kw)

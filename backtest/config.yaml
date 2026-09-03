@@ -100,6 +100,10 @@ portfolio:
   equity_cases_jpy: [500000, 1000000, 1500000]   # 元金 50 / 100 / 150 万
   maintenance_margin_ratio: 0.20     # 維持率。20% 割れで追証
   initial_margin_ratio: 0.30         # 委託保証金率
+  # 枠が足りない日の選択則。フェーズ1の事前登録は revision_desc だったが、
+  # 実データで「建てた本 −0.558% / 見送った本 +0.599%」と、最悪の本を選ぶ偏りが判明した。
+  # revision_desc / turnover_desc / first_come。変更は事前登録の上で1回だけ。
+  slot_rule: revision_desc
 
 grid:
   # 0 = 当日の引けで返済（日計り）。フェーズ2の仮説 H1。
