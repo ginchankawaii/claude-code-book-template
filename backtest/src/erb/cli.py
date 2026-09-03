@@ -20,6 +20,7 @@ from . import events as events_mod
 from . import fetch as fetch_mod
 from . import filters, grid, report
 from . import verify as verify_mod
+from . import night2 as night2_mod
 from .calendar import CloseTimeSchedule, TradingCalendar
 from .config import Config
 from .simulate import PriceIndex, apply_costs, simulate_trades
@@ -47,6 +48,9 @@ def main(argv: list[str] | None = None) -> int:
                          choices=["daily", "summary", "master", "topix"],
                          help="取る表を限定する（既定: 全部）")
     sub.add_parser("verify", help="落としたデータの検品（グリッドの前にこれ）")
+    n2_p = sub.add_parser("night2", help="2晩目システムの事前登録セルを検証する")
+    n2_p.add_argument("--from", dest="ev_from", default=None)
+    n2_p.add_argument("--to", dest="ev_to", default=None)
     sub.add_parser("histogram", help="修正率の分布を出す")
     run_p = sub.add_parser("run", help="グリッドを回す")
     run_p.add_argument("--holding-days", type=int, nargs="*", default=None,
@@ -86,6 +90,26 @@ def main(argv: list[str] | None = None) -> int:
         (results_dir / "verify.md").write_text(text, encoding="utf-8")
         print(text)
         print(f"書き出し: {results_dir / 'verify.md'}")
+        return 0
+
+    if args.command == "night2":
+        built = _build_events(cfg, bundle)
+        events = built.events
+        if args.ev_from or args.ev_to:
+            lo = date.fromisoformat(args.ev_from) if args.ev_from else date.min
+            hi = date.fromisoformat(args.ev_to) if args.ev_to else date.max
+            d = pd.to_datetime(pd.Series(list(events["disc_date"])), errors="coerce").dt.date
+            events = events[(d >= lo) & (d <= hi)].reset_index(drop=True)
+            print(f"イベントを {lo} 〜 {hi} に限定: {len(events):,}件")
+        events = _attach_loanable(events, bundle.get("master"))
+        res = night2_mod.run(events, bundle["prices"], bundle["calendar"], bundle.get("topix"), cfg)
+        stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        for p in night2_mod.write_report(res, results_dir, stamp):
+            print(f"書き出し: {p}")
+        main = res.cells[(~res.cells["is_control"]) & res.cells["executable_only"]
+                         & (res.cells["slippage_pct"] == 0.4)]
+        print(main[["cell", "trades", "excess_topix_pct", "net_edge_pct",
+                    "cluster_ci_low_pct", "verdict", "decision"]].to_string(index=False))
         return 0
 
     if args.command == "histogram":
@@ -147,6 +171,7 @@ def _load_bundle(cfg: Config, data_dir: Path) -> dict:
 
     master = (data_mod.load_table(cfg, "master", optional["master"])
               if optional["master"] else None)
+    bundle_master = master
     if master is not None and cfg["filters"].get("require_margin_eligible"):
         daily = _restrict_to_margin_eligible(daily, master)
 
@@ -164,8 +189,25 @@ def _load_bundle(cfg: Config, data_dir: Path) -> dict:
     return {
         "summary": summary, "daily": daily, "topix": topix,
         "calendar": calendar, "close_schedule": close_schedule,
-        "prices": PriceIndex.build(daily),
+        "prices": PriceIndex.build(daily), "master": bundle_master,
     }
+
+
+def _attach_loanable(events: pd.DataFrame, master: pd.DataFrame | None) -> pd.DataFrame:
+    """貸借銘柄かどうか（空売りできるか）をイベントに付ける。
+
+    銘柄マスタの Mrgn=2（貸借）を貸借とみなす。マスタが無ければ全部 False。
+    """
+    out = events.copy()
+    if master is None or "margin_class" not in master.columns:
+        out["loanable"] = False
+        return out
+    latest = master.sort_values("date").groupby("code", observed=True).tail(1)
+    cls = latest["margin_class"].astype(str).str.strip()
+    name = latest["margin_class_name"].astype(str) if "margin_class_name" in latest.columns else cls
+    loan = set(latest.loc[(cls == "2") | name.str.contains("貸借", na=False), "code"])
+    out["loanable"] = out["code"].isin(loan)
+    return out
 
 
 def _build_events(cfg: Config, bundle: dict) -> events_mod.EventBuildResult:

@@ -322,3 +322,74 @@ def test_slot_rule_changes_which_signals_are_taken(prices, calendar):
     # 同じ銘柄・同じ日なのでリターンは同じ。選ばれた本が違うことは skipped の平均で見る
     with pytest.raises(ValueError):
         simulate_portfolio(priced, slot_rule="nonsense", **kw)
+
+
+# ---------------------------------------------------------------- 2晩目システム
+
+def test_t0_close_entry_uses_close_and_next_open(prices, calendar, cfg, topix):
+    """E+1 の引けで建て、E+2 の寄付で返す。"""
+    from erb.data import normalize
+    from erb.simulate import ENTRY_T0_CLOSE
+
+    ev = _event("A0001", date(2024, 11, 12))
+    t = simulate_trades(ev, prices, calendar, 1, position_size_jpy=500_000,
+                        topix=normalize(cfg, "topix", topix), entry_mode=ENTRY_T0_CLOSE)
+    r = t.iloc[0]
+    assert r["status"] == "ok"
+    i = prices.position("A0001", date(2024, 11, 12))
+    c0 = prices.field("A0001", i, "adj_close")
+    o1 = prices.field("A0001", i + 1, "adj_open")
+    assert r["gross_return"] == pytest.approx(o1 / c0 - 1)
+    assert r["entry_date"] == date(2024, 11, 12)
+    assert r["exit_date"] == date(2024, 11, 13)
+    assert r["holding_calendar_days"] == 2          # 両端入れの1泊
+    assert not pd.isna(r["topix_return"])
+
+
+def test_short_side_flips_sign_and_uses_borrow_fee(prices, calendar, cfg, topix):
+    from erb.data import normalize
+    from erb.simulate import ENTRY_T0_CLOSE, SIDE_SHORT
+
+    ev = _event("A0001", date(2024, 11, 12))
+    tp = normalize(cfg, "topix", topix)
+    long_t = simulate_trades(ev, prices, calendar, 1, position_size_jpy=500_000,
+                             topix=tp, entry_mode=ENTRY_T0_CLOSE)
+    short_t = simulate_trades(ev, prices, calendar, 1, position_size_jpy=500_000,
+                              topix=tp, entry_mode=ENTRY_T0_CLOSE, side=SIDE_SHORT)
+    assert short_t.iloc[0]["gross_return"] == pytest.approx(-long_t.iloc[0]["gross_return"])
+    assert short_t.iloc[0]["topix_return"] == pytest.approx(-long_t.iloc[0]["topix_return"])
+
+    priced = apply_costs(short_t, 0.4, 2.80, 0, 500_000, short_borrow_annual_pct=1.15)
+    assert priced["interest_cost"].iloc[0] == pytest.approx(0.0115 * 2 / 365)
+    priced_l = apply_costs(long_t, 0.4, 2.80, 0, 500_000, short_borrow_annual_pct=1.15)
+    assert priced_l["interest_cost"].iloc[0] == pytest.approx(0.028 * 2 / 365)
+
+
+def test_limit_flags_are_recorded_for_t0_close_entry(cfg, daily, calendar):
+    """ストップ高で買えない／ストップ安で売れない日を後から落とせるよう、フラグを残す。"""
+    from erb.simulate import ENTRY_T0_CLOSE, SIDE_SHORT
+
+    d = daily.copy()
+    m = (d["Code"] == "A0001") & (d["Date"] == date(2024, 11, 12))
+    d.loc[m, "LL"] = "1"
+    dn = daily_with_turnover_average(normalize(cfg, "daily", d), 20)
+    px = PriceIndex.build(dn)
+    ev = _event("A0001", date(2024, 11, 12))
+    t = simulate_trades(ev, px, calendar, 1, position_size_jpy=500_000,
+                        entry_mode=ENTRY_T0_CLOSE, side=SIDE_SHORT)
+    assert bool(t.iloc[0]["entry_limit_down"]) is True
+    assert bool(t.iloc[0]["entry_limit_up"]) is False
+
+
+def test_night2_executable_filter_drops_locked_and_unloanable():
+    from erb.night2 import _executable
+    from erb.simulate import SIDE_LONG, SIDE_SHORT
+
+    t = pd.DataFrame({
+        "entry_limit_up": [True, False, False],
+        "entry_limit_down": [False, True, False],
+        "loanable": [True, True, False],
+    })
+    assert len(_executable(t, SIDE_LONG, True)) == 2
+    assert len(_executable(t, SIDE_SHORT, True)) == 1     # ストップ安と貸借以外を落とす
+    assert len(_executable(t, SIDE_SHORT, False)) == 2

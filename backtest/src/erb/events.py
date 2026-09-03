@@ -143,7 +143,10 @@ def add_habitual_flag(tl: pd.DataFrame, lookback_days: int, min_revisions: int,
     habitual_window_complete=False を立てて別集計できるようにする。
     """
     sort_cols = ["code", "_order"] if "_order" in tl.columns else ["code", "disc_date"]
-    out = tl.sort_values(sort_cols).reset_index(drop=True)
+    # 開示日が欠けている行は窓の計算ができない。落とさずに残し、常習判定は「不明」にする
+    valid = tl["disc_date"].notna()
+    dropped = tl[~valid].copy()
+    out = tl[valid].sort_values(sort_cols).reset_index(drop=True)
     changed = out["revision_rate"].notna() & (out["revision_rate"].abs() > REVISION_EPS)
     out["_is_change"] = changed
 
@@ -165,7 +168,13 @@ def add_habitual_flag(tl: pd.DataFrame, lookback_days: int, min_revisions: int,
     out["habitual_count"] = counts
     out["habitual"] = out["habitual_count"] >= min_revisions
     out["habitual_window_complete"] = complete
-    return out.drop(columns=["_is_change"])
+    out = out.drop(columns=["_is_change"])
+    if len(dropped):
+        dropped["habitual_count"] = 0
+        dropped["habitual"] = False
+        dropped["habitual_window_complete"] = False
+        out = pd.concat([out, dropped], ignore_index=True)
+    return out
 
 
 #: 東証の取引時間延伸日。この日から 15:00〜15:29 の開示が「引け後」から「場中」に変わった。

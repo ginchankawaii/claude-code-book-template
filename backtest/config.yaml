@@ -157,3 +157,13 @@ statistics:
   bootstrap_iterations: 5000
   cluster_by: "week"     # 決算集中期の相関を吸収する
   target_t_stat: 2.0
+
+# --- 2晩目システム（既存ルールとは別の信用取引システム。事前登録） ---
+night2:
+  holding_days: 1                 # E+1 引け → E+2 寄付（1泊）
+  position_size_jpy: 300000       # 1本の建玉。100株がこれに収まる銘柄だけ
+  max_concurrent: 3               # 同時保有
+  bucket_cases_jpy: [500000, 1000000]   # このシステム専用の資金（他と混ぜない）
+  slot_rule: turnover_desc        # 枠が足りない日は流動性の高い方から
+  short_borrow_annual_pct: 1.15   # 制度信用の貸株料（SBI）。一般信用売り無期限は 1.10%
+  require_loanable_for_short: true

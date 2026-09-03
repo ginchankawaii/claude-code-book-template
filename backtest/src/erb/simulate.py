@@ -75,6 +75,13 @@ class PriceIndex:
         return pd.Timestamp(self.frames[code]["_dates64"][i]).date()
 
 
+ENTRY_NEXT_OPEN = "next_open"   # 翌営業日 t0 の始値で建てる（フェーズ1）
+ENTRY_T0_CLOSE = "t0_close"     # 翌営業日 t0 の引けで建てる（2晩目システム）
+
+SIDE_LONG = "long"
+SIDE_SHORT = "short"
+
+
 def simulate_trades(
     events: pd.DataFrame,
     prices: PriceIndex,
@@ -84,6 +91,8 @@ def simulate_trades(
     position_size_jpy: int,
     no_open_policy: str = NO_OPEN_SKIP,
     topix: pd.DataFrame | None = None,
+    entry_mode: str = ENTRY_NEXT_OPEN,
+    side: str = SIDE_LONG,
 ) -> pd.DataFrame:
     """イベント1件を1トレードに変換する。
 
@@ -114,6 +123,7 @@ def simulate_trades(
             "habitual_window_complete": ev.get("habitual_window_complete"),
             "after_close": ev.get("after_close"),
             "regime": ev.get("regime"),
+            "loanable": ev.get("loanable"),
             "excluded_by_spec": ev.get("excluded_by_spec"),
             "doc_class": ev.get("doc_class"),
             "is_initial_forecast": ev.get("is_initial_forecast"),
@@ -122,6 +132,9 @@ def simulate_trades(
             "topix_return": np.nan,
             "holding_calendar_days": np.nan,
             "entry_limit_up": False,
+            "entry_limit_down": False,
+            "side": side,
+            "entry_mode": entry_mode,
             "turnover_avg": np.nan,
             "raw_entry_price": np.nan,
             # 初日の分解
@@ -149,6 +162,7 @@ def simulate_trades(
 
         limit_up = bool(prices.field(code, i, "upper_limit"))
         row["entry_limit_up"] = limit_up
+        row["entry_limit_down"] = bool(prices.field(code, i, "lower_limit"))
         if no_open_policy == NO_OPEN_EXCLUDE_LIMIT_UP and limit_up:
             row["status"] = "excluded_limit_up"
             rows.append(row)
@@ -171,6 +185,12 @@ def simulate_trades(
             continue
 
         actual_entry_date = prices.date_at(code, i)
+
+        if entry_mode == ENTRY_T0_CLOSE:
+            _fill_t0_close_trade(row, prices, calendar, topix_oc, code, i,
+                                 actual_entry_date, holding_days, position_size_jpy, side)
+            rows.append(row)
+            continue
 
         # 初日の分解（N に関係なく全トレードで計算）
         adj_close_d0 = prices.field(code, i, "adj_close")
@@ -257,11 +277,81 @@ def simulate_trades(
     return out
 
 
+def _fill_t0_close_trade(row: dict, prices: PriceIndex, calendar: TradingCalendar,
+                         topix_oc, code: str, i: int, t0: date, holding_days: int,
+                         position_size_jpy: int, side: str) -> None:
+    """t0 の引けで建て、t0+N の寄付で返す（2晩目システム）。
+
+    side=short はリターンの符号を反転する。空売りの執行制約（貸借銘柄・ストップ安）は
+    ここでは落とさず、フラグとして残して呼び出し側で切り分ける。
+    """
+    sign = -1.0 if side == SIDE_SHORT else 1.0
+    row["side"] = side
+    row["entry_mode"] = ENTRY_T0_CLOSE
+    raw_close = prices.field(code, i, "close")
+    adj_entry = prices.field(code, i, "adj_close")
+    vol = prices.field(code, i, "volume")
+    row["entry_limit_up"] = bool(prices.field(code, i, "upper_limit"))
+    row["entry_limit_down"] = bool(prices.field(code, i, "lower_limit"))
+    row["raw_entry_price"] = raw_close
+    row["turnover_avg"] = prices.field(code, i, "turnover_avg")
+
+    if not _positive(adj_entry) or not _positive(raw_close) or (not pd.isna(vol) and float(vol) <= 0):
+        row["status"] = "no_close"
+        return
+    if raw_close * SHARES_PER_LOT > position_size_jpy:
+        row["status"] = "lot_too_large"
+        return
+    if holding_days < 1:
+        row["status"] = "invalid_holding"
+        return
+
+    exit_date = calendar.shift(t0, holding_days)
+    if exit_date is None:
+        row["status"] = "exit_beyond_data"
+        return
+    j = prices.position(code, exit_date)
+    if j is not None:
+        adj_exit = prices.field(code, j, "adj_open")
+        exit_kind = "open"
+        actual_exit = exit_date
+        if not _positive(adj_exit):
+            adj_exit = prices.field(code, j, "adj_close")
+            exit_kind = "close_fallback"
+    else:
+        j = prices.position_on_or_before(code, exit_date)
+        if j is None or j <= i:
+            row["status"] = "no_exit"
+            return
+        adj_exit = prices.field(code, j, "adj_close")
+        exit_kind = "delisted_or_halted"
+        actual_exit = prices.date_at(code, j)
+    if not _positive(adj_exit):
+        row["status"] = "no_exit"
+        return
+
+    raw_ret = float(adj_exit) / float(adj_entry) - 1.0
+    row["status"] = "ok"
+    row["exit_kind"] = exit_kind
+    row["entry_date"] = t0
+    row["exit_date"] = actual_exit
+    row["gross_return"] = sign * raw_ret
+    row["holding_calendar_days"] = calendar.calendar_days_between(t0, actual_exit)
+    # TOPIX は同じ区間 引け→始値
+    t_in = topix_oc.get(t0) if topix_oc else None
+    t_out = topix_oc.get(actual_exit) if topix_oc else None
+    if t_in and t_out and _positive(t_in[1]) and _positive(t_out[0]):
+        row["topix_return"] = sign * (float(t_out[0]) / float(t_in[1]) - 1.0)
+    else:
+        row["topix_return"] = np.nan
+
+
 def apply_costs(trades: pd.DataFrame, slippage_round_trip_pct: float,
                 margin_interest_annual_pct: float,
                 commission_jpy_per_trade: int = 0,
                 position_size_jpy: int = 500_000,
-                day_trade_interest_annual_pct: float = 0.0) -> pd.DataFrame:
+                day_trade_interest_annual_pct: float = 0.0,
+                short_borrow_annual_pct: float = 1.15) -> pd.DataFrame:
     """スリッページ・金利・手数料を引いて純リターンを出す。
 
     金利は建玉に対して 年率 x 暦日/365。建日・返済日は両端入れ。
@@ -271,7 +361,10 @@ def apply_costs(trades: pd.DataFrame, slippage_round_trip_pct: float,
     out = trades.copy()
     slip = slippage_round_trip_pct / 100.0
     is_day_trade = out.get("exit_kind", pd.Series(index=out.index, dtype=object)) == "same_day_close"
-    rate = np.where(is_day_trade, day_trade_interest_annual_pct, margin_interest_annual_pct)
+    is_short = out.get("side", pd.Series(index=out.index, dtype=object)) == SIDE_SHORT
+    # 買いは買方金利、売りは貸株料、日計りは0
+    rate = np.where(is_day_trade, day_trade_interest_annual_pct,
+                    np.where(is_short, short_borrow_annual_pct, margin_interest_annual_pct))
     interest = (
         rate / 100.0
         * out["holding_calendar_days"].astype(float)

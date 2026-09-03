@@ -176,3 +176,15 @@ def test_regime_is_attached_to_events(cfg, daily, calendar, close_schedule):
     ev = built.events.set_index("disc_no")
     assert ev.loc["3", "regime"] == "intraday_post_early"     # 2024-11-18 12:00
     assert ev.loc["2", "regime"] == "after_close"             # 2024-11-11 15:30
+
+
+def test_habitual_flag_survives_missing_disclosure_dates(cfg, daily, calendar, close_schedule):
+    """開示日が欠けた行があっても落ちない。常習判定は「不明」扱いで残す。"""
+    rows = _summary_rows()
+    rows.append({**rows[1], "DiscNo": "9", "DiscDate": None})
+    summary = normalize(cfg, "summary", pd.DataFrame(rows))
+    d = normalize(cfg, "daily", daily)
+    built = build_events(summary, d, calendar, close_schedule, 1095, 4)
+    assert len(built.events) >= len(rows) - 1
+    missing = built.events[built.events["disc_no"] == "9"]
+    assert (missing["habitual"] == False).all()
