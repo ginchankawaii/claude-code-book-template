@@ -27,12 +27,17 @@ from .simulate import (ENTRY_T0_CLOSE, SIDE_LONG, SIDE_SHORT, PriceIndex,
                        apply_costs, simulate_portfolio, simulate_trades)
 
 
+# 報告書の主表に使う滑り。感度は §4 で別に出す
+PRIMARY_SLIPPAGE_PCT = 0.4
+
+
 @dataclass
 class Night2Result:
     cells: pd.DataFrame
     pair_portfolio: pd.DataFrame
     legs: dict[str, pd.DataFrame]
     skip_summary: dict
+    nonexec: pd.DataFrame | None = None
 
 
 def _executable(t: pd.DataFrame, side: str, require_loanable: bool) -> pd.DataFrame:
@@ -44,6 +49,44 @@ def _executable(t: pd.DataFrame, side: str, require_loanable: bool) -> pd.DataFr
     if require_loanable and "loanable" in out.columns:
         out = out[out["loanable"].fillna(False).astype(bool)]
     return out
+
+
+def nonexecutable_breakdown(priced: pd.DataFrame, side: str, require_loanable: bool) -> list[dict]:
+    """執行できない日の内訳（記述統計。判定には使わない）。
+
+    Stage 0 で「執行できた日だけ」と「全日」の差が大きかったとき、超過リターンが
+    張り付きの日に載っていたのか、貸借外の銘柄に載っていたのかを切り分けるための表。
+    excess_sum_share_pct は、全日の超過リターン合計のうちその群が占める割合。
+    """
+    if not len(priced):
+        return []
+    lim_up = priced["entry_limit_up"].fillna(False).astype(bool)
+    lim_dn = priced["entry_limit_down"].fillna(False).astype(bool)
+    if side == SIDE_LONG:
+        groups = [("executable", ~lim_up), ("limit_up_locked", lim_up)]
+    else:
+        if require_loanable and "loanable" in priced.columns:
+            loan = priced["loanable"].fillna(False).astype(bool)
+        else:
+            loan = pd.Series(True, index=priced.index)
+        groups = [("executable", ~lim_dn & loan),
+                  ("limit_down_locked", lim_dn),
+                  ("not_loanable_only", ~lim_dn & ~loan)]
+    total_excess = float(priced["excess_return"].sum())
+    rows = []
+    for reason, mask in groups:
+        g = priced[mask]
+        n = int(len(g))
+        rows.append({
+            "reason": reason,
+            "trades": n,
+            "share_of_trades_pct": round(n / len(priced) * 100, 1),
+            "excess_topix_pct": round(float(g["excess_return"].mean() * 100), 3) if n else float("nan"),
+            "net_edge_pct": round(float(g["net_excess_return"].mean() * 100), 3) if n else float("nan"),
+            "excess_sum_share_pct": (round(float(g["excess_return"].sum()) / total_excess * 100, 1)
+                                     if n and total_excess != 0 else float("nan")),
+        })
+    return rows
 
 
 def run(events: pd.DataFrame, prices: PriceIndex, calendar: TradingCalendar,
@@ -67,6 +110,7 @@ def run(events: pd.DataFrame, prices: PriceIndex, calendar: TradingCalendar,
         skip[side] = filters.skip_counts(t)
 
     cells = []
+    nonexec_rows = []
     specs = [
         # (label, side, threshold, is_control)
         ("long_up18", SIDE_LONG, 0.18, False),
@@ -86,6 +130,15 @@ def run(events: pd.DataFrame, prices: PriceIndex, calendar: TradingCalendar,
         base = filters.apply_turnover(base, True, position,
                                       float(filt["max_position_share_of_turnover"]))
         base = filters.apply_revision(base, thr)
+        if not is_control:
+            priced_all = apply_costs(
+                base, PRIMARY_SLIPPAGE_PCT, float(costs["margin_interest_annual_pct"]),
+                int(costs["commission_jpy_per_trade"]), position,
+                short_borrow_annual_pct=float(n2.get("short_borrow_annual_pct", 1.15)),
+            )
+            for r in nonexecutable_breakdown(priced_all, side,
+                                             bool(n2.get("require_loanable_for_short", True))):
+                nonexec_rows.append({"cell": label, **r})
         for exec_only in (True, False):
             sub = _executable(base, side, bool(n2.get("require_loanable_for_short", True))) if exec_only else base
             for slip in costs["slippage_round_trip_pct"]:
@@ -152,7 +205,7 @@ def run(events: pd.DataFrame, prices: PriceIndex, calendar: TradingCalendar,
             })
 
     return Night2Result(cells=pd.DataFrame(cells), pair_portfolio=pd.DataFrame(pair_rows),
-                        legs=legs, skip_summary=skip)
+                        legs=legs, skip_summary=skip, nonexec=pd.DataFrame(nonexec_rows))
 
 
 def write_report(res: Night2Result, out_dir, generated_at: str) -> list:
@@ -177,21 +230,33 @@ def write_report(res: Night2Result, out_dir, generated_at: str) -> list:
     cols = [c for c in cols if c in res.cells.columns]
 
     md.append("## 1. 主セル（執行できた日のみ・滑り0.4%）\n")
-    main = res.cells[(~res.cells["is_control"]) & res.cells["executable_only"] & (res.cells["slippage_pct"] == 0.4)]
+    main = res.cells[(~res.cells["is_control"]) & res.cells["executable_only"] & (res.cells["slippage_pct"] == PRIMARY_SLIPPAGE_PCT)]
     md.append(_table(main[cols]))
     md.append("")
     md.append("判定: 純エッジ = TOPIX超過 − 滑り − 金利/貸株料。0.05%未満 打ち切り / 0.35%超 少額実弾。"
               "3セル同時なので α=0.05/3。\n")
 
     md.append("## 2. 対照群（符号が逆になっていなければ、拾っているのはニュースの方向ではない）\n")
-    ctrl = res.cells[res.cells["is_control"] & res.cells["executable_only"] & (res.cells["slippage_pct"] == 0.4)]
+    ctrl = res.cells[res.cells["is_control"] & res.cells["executable_only"] & (res.cells["slippage_pct"] == PRIMARY_SLIPPAGE_PCT)]
     md.append(_table(ctrl[cols]))
     md.append("")
 
     md.append("## 3. 執行できない日を含めた場合（ストップ高/安の張り付き・貸借以外）\n")
     md.append("差が大きいほど、リターンが『執行できない日』に依存していたことになる。\n")
-    allx = res.cells[(~res.cells["is_control"]) & (~res.cells["executable_only"]) & (res.cells["slippage_pct"] == 0.4)]
+    allx = res.cells[(~res.cells["is_control"]) & (~res.cells["executable_only"]) & (res.cells["slippage_pct"] == PRIMARY_SLIPPAGE_PCT)]
     md.append(_table(allx[cols]))
+    md.append("")
+
+    md.append("## 3b. 執行できない日の内訳（主セル・全日・滑り0.4%）\n")
+    md.append("excess_sum_share_pct = 全日の超過リターン合計のうち、その群が占める割合。"
+              "executable 以外に載っていれば、その分は取れない。\n")
+    if res.nonexec is not None and len(res.nonexec):
+        md.append(_table(res.nonexec))
+        nx = out_dir / "night2_nonexec.csv"
+        res.nonexec.to_csv(nx, index=False)
+        written.append(nx)
+    else:
+        md.append("(内訳なし)")
     md.append("")
 
     md.append("## 4. 滑り感度（主セル・執行できた日のみ）\n")
@@ -203,7 +268,7 @@ def write_report(res: Night2Result, out_dir, generated_at: str) -> list:
     md.append("## 5. 年別（主セル・粗リターン%）\n")
     yr_rows = []
     for _, r in res.cells[(~res.cells["is_control"]) & res.cells["executable_only"]
-                           & (res.cells["slippage_pct"] == 0.4)].iterrows():
+                           & (res.cells["slippage_pct"] == PRIMARY_SLIPPAGE_PCT)].iterrows():
         yr_rows.append({"cell": r["cell"], **{str(k): round(v, 3) for k, v in (r["by_year"] or {}).items()}})
     if yr_rows:
         md.append(_table(pd.DataFrame(yr_rows)))
