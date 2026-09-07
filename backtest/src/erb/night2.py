@@ -62,16 +62,34 @@ def nonexecutable_breakdown(priced: pd.DataFrame, side: str, require_loanable: b
         return []
     lim_up = priced["entry_limit_up"].fillna(False).astype(bool)
     lim_dn = priced["entry_limit_down"].fillna(False).astype(bool)
+
+    def _locked(col: str, flag: pd.Series) -> pd.Series | None:
+        if col not in priced.columns:
+            return None
+        return priced[col].fillna(False).astype(bool) & flag
+
+    up_locked = _locked("entry_limit_up_locked", lim_up)
+    dn_locked = _locked("entry_limit_down_locked", lim_dn)
     if side == SIDE_LONG:
-        groups = [("executable", ~lim_up), ("limit_up_locked", lim_up)]
+        groups = [("executable", ~lim_up)]
+        if up_locked is None:
+            groups.append(("limit_up_flagged", lim_up))
+        else:
+            # 引けで張り付いていた日は買えない。触れただけで引けは下だった日は本来買えた
+            groups += [("limit_up_locked_at_close", up_locked),
+                       ("limit_up_touched_not_locked", lim_up & ~up_locked)]
     else:
         if require_loanable and "loanable" in priced.columns:
             loan = priced["loanable"].fillna(False).astype(bool)
         else:
             loan = pd.Series(True, index=priced.index)
-        groups = [("executable", ~lim_dn & loan),
-                  ("limit_down_locked", lim_dn),
-                  ("not_loanable_only", ~lim_dn & ~loan)]
+        groups = [("executable", ~lim_dn & loan)]
+        if dn_locked is None:
+            groups.append(("limit_down_flagged", lim_dn))
+        else:
+            groups += [("limit_down_locked_at_close", dn_locked),
+                       ("limit_down_touched_not_locked", lim_dn & ~dn_locked)]
+        groups.append(("not_loanable_only", ~lim_dn & ~loan))
     total_excess = float(priced["excess_return"].sum())
     rows = []
     for reason, mask in groups:

@@ -32,7 +32,7 @@ class PriceIndex:
     def build(cls, daily: pd.DataFrame) -> "PriceIndex":
         frames: dict[str, dict] = {}
         cols = ["date", "open", "close", "adj_open", "adj_close", "volume"]
-        optional = ["upper_limit", "lower_limit", "turnover_avg", "turnover"]
+        optional = ["upper_limit", "lower_limit", "turnover_avg", "turnover", "high", "low"]
         for code, grp in daily.sort_values(["code", "date"]).groupby("code", observed=True, sort=False):
             entry = {c: grp[c].to_numpy() for c in cols if c in grp.columns}
             for c in optional:
@@ -133,6 +133,10 @@ def simulate_trades(
             "holding_calendar_days": np.nan,
             "entry_limit_up": False,
             "entry_limit_down": False,
+            # 引けの時点で張り付いていたか（終値 == 高値/安値）。UL/LL は「その日に触れたか」の
+            # 可能性があるので、執行不能の内訳を出すときはこちらで分ける
+            "entry_limit_up_locked": False,
+            "entry_limit_down_locked": False,
             "side": side,
             "entry_mode": entry_mode,
             "turnover_avg": np.nan,
@@ -277,6 +281,13 @@ def simulate_trades(
     return out
 
 
+def _same_price(a, b) -> bool:
+    """終値と高値（安値）が同じ値か。どちらかが欠損なら False。"""
+    if a is None or b is None or pd.isna(a) or pd.isna(b):
+        return False
+    return abs(float(a) - float(b)) <= 1e-6 * max(1.0, abs(float(a)))
+
+
 def _fill_t0_close_trade(row: dict, prices: PriceIndex, calendar: TradingCalendar,
                          topix_oc, code: str, i: int, t0: date, holding_days: int,
                          position_size_jpy: int, side: str) -> None:
@@ -293,6 +304,8 @@ def _fill_t0_close_trade(row: dict, prices: PriceIndex, calendar: TradingCalenda
     vol = prices.field(code, i, "volume")
     row["entry_limit_up"] = bool(prices.field(code, i, "upper_limit"))
     row["entry_limit_down"] = bool(prices.field(code, i, "lower_limit"))
+    row["entry_limit_up_locked"] = row["entry_limit_up"] and _same_price(raw_close, prices.field(code, i, "high"))
+    row["entry_limit_down_locked"] = row["entry_limit_down"] and _same_price(raw_close, prices.field(code, i, "low"))
     row["raw_entry_price"] = raw_close
     row["turnover_avg"] = prices.field(code, i, "turnover_avg")
 

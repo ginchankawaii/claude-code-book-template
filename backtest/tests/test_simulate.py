@@ -379,6 +379,26 @@ def test_limit_flags_are_recorded_for_t0_close_entry(cfg, daily, calendar):
                         entry_mode=ENTRY_T0_CLOSE, side=SIDE_SHORT)
     assert bool(t.iloc[0]["entry_limit_down"]) is True
     assert bool(t.iloc[0]["entry_limit_up"]) is False
+    # 終値 1005+i と安値 990+i は一致しない → 触れただけで、引けでは張り付いていない
+    assert bool(t.iloc[0]["entry_limit_down_locked"]) is False
+
+
+def test_locked_flag_requires_close_at_the_limit(cfg, daily, calendar):
+    """UL=1 かつ 終値 == 高値 のときだけ「引けで張り付き」。"""
+    from erb.simulate import ENTRY_T0_CLOSE
+
+    d = daily.copy()
+    m = (d["Code"] == "A0001") & (d["Date"] == date(2024, 11, 12))
+    d.loc[m, "UL"] = "1"
+    d.loc[m, "C"] = d.loc[m, "H"]
+    d.loc[m, "AdjC"] = d.loc[m, "AdjH"]
+    dn = daily_with_turnover_average(normalize(cfg, "daily", d), 20)
+    px = PriceIndex.build(dn)
+    ev = _event("A0001", date(2024, 11, 12))
+    t = simulate_trades(ev, px, calendar, 1, position_size_jpy=500_000, entry_mode=ENTRY_T0_CLOSE)
+    assert bool(t.iloc[0]["entry_limit_up"]) is True
+    assert bool(t.iloc[0]["entry_limit_up_locked"]) is True
+    assert bool(t.iloc[0]["entry_limit_down_locked"]) is False
 
 
 def test_night2_executable_filter_drops_locked_and_unloanable():
