@@ -96,3 +96,17 @@ def test_split_halves_handles_all_on_one_side():
     t = _trades([0.01] * 5, start=date(2025, 1, 1), step_days=1)
     a, b = split_halves(t, date(2021, 1, 1))
     assert len(a) == 0 and len(b) == 5
+
+
+def test_cluster_ci_alpha_widens_interval():
+    import numpy as np
+    import pandas as pd
+    from erb.metrics import _cluster_bootstrap_ci
+    rng = np.random.default_rng(1)
+    df = pd.DataFrame({"v": rng.normal(0.001, 0.03, 400),
+                       "_cluster_key": [f"w{i // 5}" for i in range(400)]})
+    lo95, hi95 = _cluster_bootstrap_ci(df, "v", "week", 2000, 7, cluster_key=df["_cluster_key"], alpha=0.05)
+    lo97, hi97 = _cluster_bootstrap_ci(df, "v", "week", 2000, 7, cluster_key=df["_cluster_key"], alpha=2 * 0.05 / 3)
+    assert lo97 < lo95 and hi97 > hi95
+    with pytest.raises(ValueError):
+        _cluster_bootstrap_ci(df, "v", "week", 100, 7, cluster_key=df["_cluster_key"], alpha=1.5)

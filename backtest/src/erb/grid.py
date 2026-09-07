@@ -102,6 +102,7 @@ def run_grid(events: pd.DataFrame, prices: PriceIndex, calendar: TradingCalendar
                 bootstrap_iterations=int(stat["bootstrap_iterations"]),
                 cluster_by=str(stat["cluster_by"]),
                 target_t=float(stat["target_t_stat"]),
+                alpha=float(stat.get("alpha", 0.05)),
             )
 
             # 事前登録した採用条件のひとつ:

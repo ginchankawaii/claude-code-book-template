@@ -12,6 +12,7 @@ import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from . import data as data_mod
@@ -193,20 +194,52 @@ def _load_bundle(cfg: Config, data_dir: Path) -> dict:
     }
 
 
+def _margin_snapshots(master: pd.DataFrame) -> pd.DataFrame:
+    """銘柄マスタを (スナップショット日, code) で並べた表にする。"""
+    snap = master[["date", "code"]].copy()
+    snap["_snap"] = pd.to_datetime(snap["date"], errors="coerce")
+    snap["code"] = snap["code"].astype(str)
+    cls = master["margin_class"].astype(str).str.strip()
+    name = master["margin_class_name"].astype(str) if "margin_class_name" in master.columns else cls
+    snap["_loanable"] = ((cls == "2") | name.str.contains("貸借", na=False)).to_numpy()
+    snap["_eligible"] = (~cls.isin(["", "0", "nan", "None"])).to_numpy()
+    return snap.dropna(subset=["_snap"]).sort_values("_snap", kind="stable")[["_snap", "code", "_loanable", "_eligible"]]
+
+
+def _asof_flag(left: pd.DataFrame, snap: pd.DataFrame, when: pd.Series, flag: str) -> pd.Series:
+    """各行の時点 `when` における銘柄マスタのフラグを返す（先読みしない）。
+
+    その時点より前のスナップショットが無い行（標本の先頭付近）は、最初のスナップショットで代用する。
+    これは軽い先読みだが、5年の標本の最初の1か月に限られる。
+    """
+    l = pd.DataFrame({"_when": pd.to_datetime(when, errors="coerce").to_numpy(),
+                      "code": left["code"].astype(str).to_numpy()}, index=left.index)
+    l["_row"] = np.arange(len(l))
+    valid = l.dropna(subset=["_when"]).sort_values("_when", kind="stable")
+    right = snap[["_snap", "code", flag]]
+    back = pd.merge_asof(valid, right, left_on="_when", right_on="_snap", by="code", direction="backward")
+    fwd = pd.merge_asof(valid, right, left_on="_when", right_on="_snap", by="code", direction="forward")
+    val = back[flag].where(back[flag].notna(), fwd[flag])
+    out = pd.Series(False, index=left.index)
+    out.iloc[valid["_row"].to_numpy()] = val.fillna(False).astype(bool).to_numpy()
+    return out
+
+
 def _attach_loanable(events: pd.DataFrame, master: pd.DataFrame | None) -> pd.DataFrame:
     """貸借銘柄かどうか（空売りできるか）をイベントに付ける。
 
     銘柄マスタの Mrgn=2（貸借）を貸借とみなす。マスタが無ければ全部 False。
+    区分は開示日時点のスナップショットで判定する（最新のスナップショットを全期間に
+    当てると、後から貸借に昇格した銘柄を過去にさかのぼって「売れた」ことにしてしまう）。
     """
     out = events.copy()
-    if master is None or "margin_class" not in master.columns:
+    if master is None or "margin_class" not in master.columns or out.empty:
         out["loanable"] = False
         return out
-    latest = master.sort_values("date").groupby("code", observed=True).tail(1)
-    cls = latest["margin_class"].astype(str).str.strip()
-    name = latest["margin_class_name"].astype(str) if "margin_class_name" in latest.columns else cls
-    loan = set(latest.loc[(cls == "2") | name.str.contains("貸借", na=False), "code"])
-    out["loanable"] = out["code"].isin(loan)
+    when = out["disc_date"] if "disc_date" in out.columns else out["entry_date"]
+    if "entry_date" in out.columns:
+        when = when.where(when.notna(), out["entry_date"])
+    out["loanable"] = _asof_flag(out, _margin_snapshots(master), when, "_loanable")
     return out
 
 
@@ -219,20 +252,18 @@ def _build_events(cfg: Config, bundle: dict) -> events_mod.EventBuildResult:
 
 
 def _restrict_to_margin_eligible(daily: pd.DataFrame, master: pd.DataFrame) -> pd.DataFrame:
-    """制度信用で買える銘柄に限定する。
+    """制度信用で買える銘柄・日に限定する。
 
     銘柄マスタの信用区分が「非対象」の銘柄は信用買いできないため、
-    そもそもこの戦略の対象外。
+    そもそもこの戦略の対象外。区分はその日時点のスナップショットで判定する。
     """
-    if "margin_class" not in master.columns:
+    if "margin_class" not in master.columns or daily.empty:
         return daily
-    latest = master.sort_values("date").groupby("code", observed=True).tail(1)
-    eligible = set(
-        latest.loc[~latest["margin_class"].astype(str).str.strip().isin(["", "0", "nan", "None"]), "code"]
-    )
-    if not eligible:
+    snap = _margin_snapshots(master)
+    if snap.empty or not snap["_eligible"].any():
         return daily
-    return daily[daily["code"].isin(eligible)]
+    eligible = _asof_flag(daily, snap, daily["date"], "_eligible")
+    return daily[eligible.to_numpy()]
 
 
 def _find(data_dir: Path, stem: str, required: bool = True) -> Path | None:

@@ -15,8 +15,12 @@ def summarize(trades: pd.DataFrame, *, return_col: str = "gross_return",
               excess_col: str = "excess_return", net_col: str = "net_excess_return",
               bootstrap_iterations: int = 5000, cluster_by: str = "week",
               target_t: float = 2.0, seed: int = 20260902,
-              cluster_col: str = "_cluster_key") -> dict:
-    """1セル分の集計。"""
+              cluster_col: str = "_cluster_key", alpha: float = 0.05) -> dict:
+    """1セル分の集計。
+
+    alpha は両側の有意水準。信頼区間の下限だけを門に使う（片側）なら、
+    片側 α に対して alpha = 2α を渡す（例: 3セル同時の 0.05/3 → alpha = 0.0333）。
+    """
     n = len(trades)
     if n == 0:
         return {"trades": 0, "verdict": "判定不能(0件)"}
@@ -43,7 +47,7 @@ def summarize(trades: pd.DataFrame, *, return_col: str = "gross_return",
     precomputed = trades[cluster_col] if cluster_col in trades.columns else None
     lo, hi = _cluster_bootstrap_ci(trades, base.name or net_col, cluster_by,
                                    bootstrap_iterations, seed,
-                                   cluster_key=precomputed)
+                                   cluster_key=precomputed, alpha=alpha)
     out["cluster_ci_low_pct"] = lo
     out["cluster_ci_high_pct"] = hi
 
@@ -103,7 +107,8 @@ def _cluster_key(trades: pd.DataFrame, cluster_by: str) -> pd.Series:
 
 def _cluster_bootstrap_ci(trades: pd.DataFrame, col: str, cluster_by: str,
                           iterations: int, seed: int,
-                          cluster_key: pd.Series | None = None) -> tuple[float, float]:
+                          cluster_key: pd.Series | None = None,
+                          alpha: float = 0.05) -> tuple[float, float]:
     """同じ週のトレードをまとめて再抽出する。
 
     トレード単位で再抽出すると、決算集中期の相関を無視して
@@ -141,7 +146,9 @@ def _cluster_bootstrap_ci(trades: pd.DataFrame, col: str, cluster_by: str,
         means[done:done + take] = sums[idx].sum(axis=1) / sizes[idx].sum(axis=1)
         done += take
 
-    lo, hi = np.percentile(means, [2.5, 97.5])
+    if not (0 < alpha < 1):
+        raise ValueError(f"alpha は (0,1) の範囲: {alpha}")
+    lo, hi = np.percentile(means, [100 * alpha / 2, 100 * (1 - alpha / 2)])
     return (float(lo * 100), float(hi * 100))
 
 

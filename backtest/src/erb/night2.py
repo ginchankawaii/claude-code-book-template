@@ -29,6 +29,8 @@ from .simulate import (ENTRY_T0_CLOSE, SIDE_LONG, SIDE_SHORT, PriceIndex,
 
 # 報告書の主表に使う滑り。感度は §4 で別に出す
 PRIMARY_SLIPPAGE_PCT = 0.4
+# 主セル3つを同時に見るので、CI 下限の門は片側 0.05/3（規程 §7）。両側に直して渡す
+ONE_SIDED_ALPHA = 0.05 / 3
 
 
 @dataclass
@@ -168,6 +170,7 @@ def run(events: pd.DataFrame, prices: PriceIndex, calendar: TradingCalendar,
                 summ = metrics.summarize(
                     priced, bootstrap_iterations=int(stat["bootstrap_iterations"]),
                     cluster_by=str(stat["cluster_by"]), target_t=float(stat["target_t_stat"]),
+                    alpha=2 * ONE_SIDED_ALPHA,
                 )
                 row = {"cell": label, "side": side, "threshold": thr, "is_control": is_control,
                        "executable_only": exec_only, "slippage_pct": float(slip),

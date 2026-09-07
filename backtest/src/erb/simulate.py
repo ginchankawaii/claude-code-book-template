@@ -141,6 +141,7 @@ def simulate_trades(
             "entry_mode": entry_mode,
             "turnover_avg": np.nan,
             "raw_entry_price": np.nan,
+            "adj_entry_price": np.nan,
             # 初日の分解
             "d0_open_to_close": np.nan,
             "d0_close_to_next_open": np.nan,
@@ -175,6 +176,7 @@ def simulate_trades(
         raw_open = prices.field(code, i, "open")
         adj_entry = prices.field(code, i, "adj_open")
         row["raw_entry_price"] = raw_open
+        row["adj_entry_price"] = adj_entry
         row["turnover_avg"] = prices.field(code, i, "turnover_avg")
 
         if not _positive(adj_entry) or not _positive(raw_open):
@@ -307,6 +309,7 @@ def _fill_t0_close_trade(row: dict, prices: PriceIndex, calendar: TradingCalenda
     row["entry_limit_up_locked"] = row["entry_limit_up"] and _same_price(raw_close, prices.field(code, i, "high"))
     row["entry_limit_down_locked"] = row["entry_limit_down"] and _same_price(raw_close, prices.field(code, i, "low"))
     row["raw_entry_price"] = raw_close
+    row["adj_entry_price"] = adj_entry
     row["turnover_avg"] = prices.field(code, i, "turnover_avg")
 
     if not _positive(adj_entry) or not _positive(raw_close) or (not pd.isna(vol) and float(vol) <= 0):
@@ -488,13 +491,19 @@ def simulate_portfolio(trades: pd.DataFrame, *, position_size_jpy: int, max_conc
         gross_position = 0.0
         for p in open_positions:
             i = prices.position_on_or_before(p["code"], d)
-            entry_i = prices.position(p["code"], p["entry_date"])
-            if i is None or entry_i is None:
+            if i is None:
                 continue
             px_now = prices.field(p["code"], i, "adj_close")
-            px_in = prices.field(p["code"], entry_i, "adj_open")
+            # 建値はトレード行に残した実際の建値（寄付か引けか）を使う。
+            # 以前は常に建て日の始値を使っていたため、引けで建てる2晩目の含み損益と
+            # ショートの符号が逆になっていた（維持率・追証日数・破産日にだけ効く）
+            px_in = p.get("adj_entry_price")
+            if not _positive(px_in):
+                entry_i = prices.position(p["code"], p["entry_date"])
+                px_in = prices.field(p["code"], entry_i, "adj_open") if entry_i is not None else np.nan
             if _positive(px_now) and _positive(px_in):
-                unrealized += (float(px_now) / float(px_in) - 1.0) * position_size_jpy
+                sign = -1.0 if p.get("side") == SIDE_SHORT else 1.0
+                unrealized += sign * (float(px_now) / float(px_in) - 1.0) * position_size_jpy
             gross_position += position_size_jpy
 
         equity = equity_jpy + realized + unrealized

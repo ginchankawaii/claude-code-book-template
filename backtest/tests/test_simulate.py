@@ -413,3 +413,28 @@ def test_night2_executable_filter_drops_locked_and_unloanable():
     assert len(_executable(t, SIDE_LONG, True)) == 2
     assert len(_executable(t, SIDE_SHORT, True)) == 1     # ストップ安と貸借以外を落とす
     assert len(_executable(t, SIDE_SHORT, False)) == 2
+
+
+def test_unrealized_pnl_uses_actual_entry_price_and_short_sign(prices, calendar, cfg, topix):
+    """含み損益は、実際の建値（引け建てなら引け）とサイドの符号で計算する。
+
+    A0001 は毎日上がるので、ショートの含み損益はマイナス、ロングはプラスになるはず。
+    """
+    from erb.simulate import ENTRY_T0_CLOSE, SIDE_SHORT
+    tp = normalize(cfg, "topix", topix)
+    ev = _event("A0001", date(2024, 11, 12))
+    kw = dict(position_size_jpy=300_000, max_concurrent=3, equity_jpy=1_000_000,
+              maintenance_margin_ratio=0.20, prices=prices, calendar=calendar)
+    curves = {}
+    for side in ("long", SIDE_SHORT):
+        t = simulate_trades(ev, prices, calendar, 3, position_size_jpy=300_000, topix=tp,
+                            entry_mode=ENTRY_T0_CLOSE, side=side)
+        assert t.iloc[0]["adj_entry_price"] == pytest.approx(float(prices.field("A0001", prices.position("A0001", date(2024, 11, 12)), "adj_close")))
+        priced = apply_costs(t, 0.0, 0.0, 0, 300_000)
+        pf = simulate_portfolio(priced, **kw)
+        curves[side] = pf["equity_curve"].set_index("date")["equity"]
+    d1 = calendar.shift(date(2024, 11, 12), 1)
+    assert curves["long"].loc[d1] > 1_000_000
+    assert curves[SIDE_SHORT].loc[d1] < 1_000_000
+    # 建て日の引けに建てたので、建て日の含み損益は 0
+    assert curves["long"].loc[date(2024, 11, 12)] == pytest.approx(1_000_000)
