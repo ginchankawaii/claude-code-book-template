@@ -3,6 +3,9 @@ data/*
 !data/.gitkeep
 results/*
 !results/.gitkeep
+# 集計結果（md/csv）は J-Quants の生データではないので追跡してよい
+!results/*.md
+!results/*.csv
 
 .env
 probe_result.txt

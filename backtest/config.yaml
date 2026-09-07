@@ -80,8 +80,9 @@ market:
     - {from: "2024-11-05", close: "15:30"}
 
 # --- コードにハードコードされる制約（config で無効化できない） ---
-# 除外銘柄 8053 / 9719 / 7518 と「ロングのみ・空売り禁止」は
+# 除外銘柄 8053 / 9719 / 7518 と、フェーズ1（erb run）の「ロングのみ」は
 # src/erb/constants.py に定数として置く。ここでは変更できない。
+# 2晩目（erb night2）だけは規程 SYSTEM-NIGHT2.md に基づき side=short を検定する。
 
 costs:
   margin_interest_annual_pct: 2.80   # 制度信用 買方金利（SBI/楽天の実勢）
