@@ -1,0 +1,12 @@
+' ============================================================
+' ThisWorkbook に貼り付けるコード
+' VBE(Alt+F11) 左側ツリーの「ThisWorkbook」をダブルクリックして
+' 開いたコード画面に、下の内容をそのまま貼り付けてください。
+' ============================================================
+
+Private Sub Workbook_Open()
+    On Error Resume Next
+    ' ブックが開き切ってから3秒後に自動配信チェックを実行
+    ' (設定シートの「自動配信」がOFFなら何もしません)
+    Application.OnTime Now + TimeSerial(0, 0, 3), "modDigest.SendDigestAuto"
+End Sub
