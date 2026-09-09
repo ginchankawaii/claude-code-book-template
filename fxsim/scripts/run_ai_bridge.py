@@ -315,6 +315,14 @@ def _touch_lock(lock: Optional[Path], poll: int) -> None:
         pass
 
 
+def _status_frozen(ea_now, last_ea_time) -> bool:
+    """A live EA rewrites its status every 30s, so its clock must advance
+    between two polls (600s). Equal = the EA is not exporting (dead, detached,
+    or its file writes fail): the book and the clock in that file are stale.
+    Old EAs report no clock at all; that is 'unknown', not frozen."""
+    return ea_now is not None and last_ea_time is not None and ea_now == last_ea_time
+
+
 def _settle_adopted_book(pos: float, stop_price, mint=None, ea_exec_seq: int = 0):
     """Settle a restored LONG that carries no order id, against a TRUSTED book
     reading (a probe that passed the freshness gates — never a raw status read:
@@ -745,6 +753,8 @@ def main() -> None:
     entry_backoff_until = 0.0
     ea_exec_seq = 0          # id the EA reports as last executed (0 = unknown)
     clock_skew = 0.0         # MT5 clock minus container clock, seconds
+    last_ea_time = None      # EA clock at the previous poll (liveness check)
+    frozen_status = False
 
     while True:
         try:
@@ -758,8 +768,25 @@ def main() -> None:
             trigger = None
             skip_scheduled = False
             if probe is not None:
-                last_probe_ok = _time.time()
                 trend_up, price, pos, st = probe
+                # EA liveness (round-6c): a live EA rewrites the status every
+                # 30s, so ea_time MUST advance between two polls. A frozen
+                # status means the EA is not exporting: its book and clock are
+                # stale, and a skew computed from a frozen clock would drift
+                # negative every poll until EXP was written in the past — an
+                # EA coming back from a >TTL outage then flattened a healthy
+                # long. Treat frozen as blind, like stale bars: last_probe_ok
+                # is NOT refreshed, so the stop-liveness heartbeat withholding
+                # engages after the grace and the EA fail-safe can act.
+                ea_now = st.get("ea_time")
+                frozen_status = _status_frozen(ea_now, last_ea_time)
+                last_ea_time = ea_now
+                if frozen_status:
+                    print(f"[ai] EA status FROZEN (ea_time {ea_now} unchanged since last poll) — "
+                          f"the EA is not exporting; treating this probe as blind", flush=True)
+                    probe = None
+            if probe is not None:
+                last_probe_ok = _time.time()
                 # What the EA itself reports (round-6b). Trusted because the
                 # probe passed the same freshness gates as the bars.
                 ea_exec_seq = int(st.get("exec_seq") or 0)

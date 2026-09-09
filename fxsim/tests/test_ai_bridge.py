@@ -631,3 +631,13 @@ def test_trend_gate_returns_the_ea_status(monkeypatch):
     monkeypatch.setattr(R, "MAX_BAR_JUMP_PCT", 1e9)
     up, price, pos, st = R._trend_gate("USD_JPY", "D", 90, str(DATA_DIR / "USD_JPY_D.csv"))
     assert pos == 0.09 and st["exec_seq"] == 1700000000 and st["build"] == "r6b-status"
+
+
+# ---- round-6c: EA liveness from its own clock ------------------------------
+
+def test_frozen_status_is_detected_only_when_the_ea_clock_stalls():
+    assert R._status_frozen(1800000600, 1800000600) is True      # no advance in a poll
+    assert R._status_frozen(1800000600, 1800000000) is False
+    assert R._status_frozen(1800000600, None) is False           # first poll
+    assert R._status_frozen(None, None) is False                 # old EA: unknown, not frozen
+    assert R._status_frozen(None, 1800000000) is False           # EA downgraded mid-run

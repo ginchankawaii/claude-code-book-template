@@ -92,7 +92,9 @@ def test_dead_brain_is_red_not_yellow():
 def test_old_ea_build_is_red():
     r = _report(ea_build="")                       # readable status, no build column
     assert any(c["name"] == "EAビルド" and c["flag"] == monitor.RED for c in r["checks"])
-    assert not any(c["name"] == "EAビルド" for c in _report(ea_build="r6b-status")["checks"])
+    assert not any(c["name"] == "EAビルド" for c in _report(ea_build=monitor.EA_BUILD_EXPECTED)["checks"])
+    assert any(c["name"] == "EAビルド" and c["flag"] == monitor.RED          # one build behind
+               for c in _report(ea_build="r6b-status")["checks"])
     assert not any(c["name"] == "EAビルド" for c in _report(ea_build=None)["checks"])
 
 

@@ -30,7 +30,7 @@ input double InpResizePct     = 0.20;    // ... or >= this fraction of current s
 
 // Bumped whenever the EA's execution behaviour changes, so the operator can
 // tell a recompiled EA from a stale one at a glance — the input dialog cannot.
-#define EA_BUILD "r6b-status"
+#define EA_BUILD "r6c-status"
 
 CTrade trade;
 datetime g_expiry = 0;   // last EXP token seen on the signal (0 = heartbeat-less)
@@ -90,7 +90,16 @@ int OnInit()
 }
 
 void OnDeinit(const int reason) { EventKillTimer(); Comment(""); }
-void OnTimer() { ExportAll(); ProcessSignal(); UpdateStatusComment(); }
+void OnTimer()
+{
+   ExportAll(); ProcessSignal(); UpdateStatusComment();
+   // MQL5 deletes a global variable that has not been touched for 4 weeks.
+   // The executed id is only written on an open/adopt, and this system holds
+   // positions for months — so a long hold, a terminal restart, and a stop
+   // that filled while the terminal was down would find g_exec_seq == 0 and
+   // re-buy the standing line. Touch it every tick (round-6c).
+   if(g_exec_seq > 0) GlobalVariableSet(SeqGvName(), (double)g_exec_seq);
+}
 void OnTick()  { /* timer drives everything */ }
 
 //--- always-visible chart status: is the Python brain alive? ---------
