@@ -73,8 +73,11 @@ class FakeEA:
         band = max(0.10, self.lots * 0.20)
         if self.lots < 0.10:
             band = 0.0
-        if abs(diff) < band:
-            # r6 ADOPT RULE: the book already reflects this order -> executed
+        step = 0.01
+        # r6b ADOPT RULE: "at target" is half a lot step, INDEPENDENT of the
+        # deadband — with band=0 under 0.10 lots the r6 rule was dead code at
+        # every size a sub-300k-yen account can hold.
+        if abs(diff) < step * 0.5 or abs(diff) < band:
             if self._is_new_order(seq, key):
                 self._commit(seq, key)
                 self.actions.append(f"adopt {seq}")
@@ -242,3 +245,21 @@ def test_lower_or_equal_id_never_opens(tmp_path):
     _heartbeat(tmp_path, 0.17, seq=1800000001)
     ea.tick(tmp_path)
     assert ea.lots == 0.17
+
+
+# --- round-6b: the r6 fix was verified at 0.24 lots; the owner holds 0.09 ---
+
+import pytest
+
+
+@pytest.mark.parametrize("lots", [0.01, 0.05, 0.09, 0.099, 0.10, 0.24])
+def test_adopt_rule_works_at_every_size_the_account_can_hold(tmp_path, lots):
+    ea = FakeEA(lots=lots, exec_seq=1700000000)
+    _heartbeat(tmp_path, lots, seq=1800000000)
+    ea.tick(tmp_path)
+    assert ea.exec_seq == 1800000000, f"adopt rule did not fire at {lots} lots"
+    ea.lots = 0.0                                    # broker SL fills
+    for _ in range(5):
+        _heartbeat(tmp_path, lots, seq=1800000000)
+        ea.tick(tmp_path)
+    assert ea.lots == 0.0, f"re-bought after the stop at {lots} lots"

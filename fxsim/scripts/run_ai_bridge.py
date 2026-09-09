@@ -145,6 +145,12 @@ def _load_bars(instrument: str, granularity: str, sma_n: int, history_csv: str):
 # a 0.007-lot intent into a heartbeat-less, fail-safe-less limbo.
 FLAT_EPS = 0.01
 
+# Container clock vs the MT5 terminal's clock (reported in the status file).
+# WSL2's clock stops during Windows sleep and is not resynced on resume; a lag
+# beyond signal_ttl - poll makes every EXP arrive already expired. EXP is now
+# written in the EA's clock, and this is the threshold for shouting about it.
+CLOCK_SKEW_WARN_S = 300.0
+
 # How often a blocked challenger re-evaluates the incumbent's lock, and how
 # often it says so. Waiting is deliberately boring: the loop below NEVER exits.
 LOCK_WAIT_TICK_S = 30.0
@@ -309,7 +315,7 @@ def _touch_lock(lock: Optional[Path], poll: int) -> None:
         pass
 
 
-def _settle_adopted_book(pos: float, stop_price, mint=None):
+def _settle_adopted_book(pos: float, stop_price, mint=None, ea_exec_seq: int = 0):
     """Settle a restored LONG that carries no order id, against a TRUSTED book
     reading (a probe that passed the freshness gates — never a raw status read:
     round-6 found a torn/missing status file read as "book empty", and the
@@ -322,8 +328,18 @@ def _settle_adopted_book(pos: float, stop_price, mint=None):
     Empty book -> FLAT; re-entry only through a fresh gate decision."""
     mint = mint or _next_seq
     if pos >= FLAT_EPS:
-        seq = mint(0)
-        print(f"[ai] adopting the live book of {pos:.2f} lots as order {seq}", flush=True)
+        if ea_exec_seq and ea_exec_seq > 0:
+            # The EA tells us which id opened this book: REUSE it, so the very
+            # first heartbeat is a heartbeat to the EA and can never open.
+            # Minting a fresh id left a one-EA-tick window in which an
+            # external close was re-bought (round-6b).
+            seq = int(ea_exec_seq)
+            print(f"[ai] adopting the live book of {pos:.2f} lots under the EA's "
+                  f"executed order {seq}", flush=True)
+        else:
+            seq = mint(0)
+            print(f"[ai] adopting the live book of {pos:.2f} lots as order {seq} "
+                  f"(EA reports no executed id — pre-r6b build?)", flush=True)
         return "LONG", float(pos), stop_price, seq, True
     print("[ai] restored intent LONG but the book is empty — adopting FLAT; re-entry "
           "goes through a fresh gate decision", flush=True)
@@ -332,8 +348,9 @@ def _settle_adopted_book(pos: float, stop_price, mint=None):
 
 def _trend_gate(instrument: str, granularity: str, sma_n: int,
                 history_csv: str) -> Optional[tuple[bool, float, float]]:
-    """Cheap poll probe: (trend_up, last_close, position_lots), or None if the
-    bridge isn't ready. No AI call, no DB write — safe to run every poll tick."""
+    """Cheap poll probe: (trend_up, last_close, position_lots, status), or None
+    if the bridge isn't ready. No AI call, no DB write — safe every poll tick.
+    `status` is the EA's status row (may carry exec_seq / ea_time / build)."""
     status = bridge.read_status()
     if status is None or (status.get("equity") or 0) <= 0:
         return None
@@ -343,7 +360,7 @@ def _trend_gate(instrument: str, granularity: str, sma_n: int,
     closes = [c.close for c in candles]
     price = float(closes[-1])
     ma = sum(closes[-sma_n:]) / float(sma_n)
-    return price > ma, price, float(status.get("position_lots") or 0.0)
+    return price > ma, price, float(status.get("position_lots") or 0.0), status
 
 
 def _restore_state(granularity: str = "H1") -> tuple[Optional[str], Optional[float], float]:
@@ -420,14 +437,16 @@ def build_context(instrument: str, candles, status: dict, granularity: str = "D"
     }
 
 
-def _next_seq(prev: int) -> int:
+def _next_seq(prev: int, floor: int = 0) -> int:
     """Mint an order id for the bridge's SEQ token.
 
     Wall-clock seconds, so it keeps increasing across brain restarts — a
     counter that restarted at 1 would read to the EA as a brand-new order and
     re-open a position closed while the brain was down. The +1 keeps it
-    strictly increasing if two orders land inside the same second."""
-    return max(int(prev) + 1, int(_time.time()))
+    strictly increasing if two orders land inside the same second. `floor` is
+    the id the EA reports as last executed: minting above it steps over any id
+    the EA holds that this brain never saw (round-6b self-heal)."""
+    return max(int(prev) + 1, int(floor) + 1, int(_time.time()))
 
 
 def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float,
@@ -724,6 +743,8 @@ def main() -> None:
     blind_grace_s = max(3 * args.poll, 60)
     entry_attempts = 0
     entry_backoff_until = 0.0
+    ea_exec_seq = 0          # id the EA reports as last executed (0 = unknown)
+    clock_skew = 0.0         # MT5 clock minus container clock, seconds
 
     while True:
         try:
@@ -738,13 +759,30 @@ def main() -> None:
             skip_scheduled = False
             if probe is not None:
                 last_probe_ok = _time.time()
-                trend_up, price, pos = probe
+                trend_up, price, pos, st = probe
+                # What the EA itself reports (round-6b). Trusted because the
+                # probe passed the same freshness gates as the bars.
+                ea_exec_seq = int(st.get("exec_seq") or 0)
+                if st.get("ea_time"):
+                    clock_skew = float(st["ea_time"]) - _time.time()
+                    if abs(clock_skew) > CLOCK_SKEW_WARN_S:
+                        print(f"[ai] CRITICAL: this container's clock is {-clock_skew:+.0f}s "
+                              f"from MT5's. EXP is written in MT5's clock so the fail-safe "
+                              f"stays honest, but fix it: `wsl --shutdown` then restart "
+                              f"Docker Desktop.", flush=True)
+                ea_build = st.get("build")
+                if ea_build != bridge.EA_BUILD_EXPECTED:
+                    print(f"[ai] WARNING: EA build is "
+                          f"{ea_build or 'unknown (pre-r6b: no build column)'}, this brain "
+                          f"expects {bridge.EA_BUILD_EXPECTED}. Fixes that live in the EA "
+                          f"are NOT running: copy mt5_ea/SteadyBridge.mq5, recompile (F7), "
+                          f"re-attach.", flush=True)
                 if pos > 0:
                     entry_attempts = 0            # the book moved; breaker resets
                 if settle_pending:
                     settle_pending = False
                     intent, intent_lots, stop_price, order_seq, seen_long = \
-                        _settle_adopted_book(pos, stop_price)
+                        _settle_adopted_book(pos, stop_price, ea_exec_seq=ea_exec_seq)
                     try:                          # visible to diagnose_live / run_monitor
                         st = bridge.read_status()
                         if st and (st.get("balance") or 0) > 0:
@@ -800,7 +838,7 @@ def main() -> None:
                         print(f"[ai] external-close DB record failed: {exc}", flush=True)
                     intent, intent_lots, stop_price = "FLAT", 0.0, None
                     seen_long = False
-                    order_seq = _next_seq(order_seq)   # the standing order is void
+                    order_seq = _next_seq(order_seq, ea_exec_seq)   # the standing order is void
                     last_gate = _time.time()      # cooldown before any re-entry
 
                 # Round-4 chaos (d): a restored stop IMPLAUSIBLY far above the
@@ -828,7 +866,7 @@ def main() -> None:
                         print(f"[ai][DRY] STOP hit ({price:.3f} <= {stop_price:.3f}); "
                               f"FLAT NOT written", flush=True)
                     else:
-                        order_seq = _next_seq(order_seq)
+                        order_seq = _next_seq(order_seq, ea_exec_seq)
                         bridge.write_signal("FLAT", 0.0, seq=order_seq)
                         print(f"[ai] STOP hit: last {price:.3f} <= stop {stop_price:.3f} "
                               f"-> FLAT (gate may re-enter if trend holds)", flush=True)
@@ -869,7 +907,7 @@ def main() -> None:
                 res = decide_once(cfg, args.instrument, args.max_risk, args.max_lots,
                                   args.history, trader, args.dry, trigger,
                                   granularity=args.granularity, sma_n=args.sma,
-                                  prev_stop=stop_price, seq=order_seq)
+                                  prev_stop=stop_price, seq=max(order_seq, ea_exec_seq))
                 if res is not None:
                     order_seq = res["seq"]
                     intent = res["action"]
@@ -893,9 +931,12 @@ def main() -> None:
                         if entry_attempts >= 3:
                             entry_backoff_until = _time.time() + 3600
                             entry_attempts = 0
-                            print("[ai] WARNING: 3 entry orders did not move the book — "
-                                  "backing off 1h. Check the EA / broker lot spec "
-                                  "(min/step) in MT5.", flush=True)
+                            hint = (f"EA's last executed id {ea_exec_seq} vs ours {order_seq}"
+                                    if ea_exec_seq else "EA reports no executed id (pre-r6b build?)")
+                            print(f"[ai] WARNING: 3 entry orders did not move the book — "
+                                  f"backing off 1h. {hint}. Check in MT5: Algo trading ON? "
+                                  f"EA attached and build {bridge.EA_BUILD_EXPECTED}? broker "
+                                  f"lot min/step?", flush=True)
 
             # Heartbeat: atomically re-assert the current order with a fresh
             # expiry AND the protective stop (a broker-SL-aware EA mirrors it as
@@ -918,7 +959,7 @@ def main() -> None:
                     and (intent == "FLAT" or intent_lots >= FLAT_EPS)):
                 ttl = int(args.signal_ttl_min * 60)
                 bridge.write_signal(intent, intent_lots if intent == "LONG" else 0.0,
-                                    expires_at=(int(_time.time()) + ttl) if ttl > 0 else None,
+                                    expires_at=(int(_time.time() + clock_skew) + ttl) if ttl > 0 else None,
                                     sl=stop_price if intent == "LONG" else None,
                                     seq=order_seq)
         except Exception as exc:

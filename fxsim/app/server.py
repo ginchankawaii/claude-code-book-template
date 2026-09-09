@@ -235,7 +235,7 @@ def get_live(run_id: int | None = None, kind: str | None = None) -> dict:
 
     kind="fx" or "stocks" picks the latest run of that system so the FX and
     margin-stock dashboards don't overwrite each other."""
-    rid = run_id or db.latest_run_id(kind)
+    rid = run_id or db.latest_live_run_id(kind)   # never a backtest row (round-6)
     if not rid:
         return {"run": None, "kind": kind}
     run = db.get_run(rid)

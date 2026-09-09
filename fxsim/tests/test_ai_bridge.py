@@ -179,10 +179,10 @@ def test_trend_gate_probe(monkeypatch):
                         lambda *a, **k: {"balance": 500000.0, "equity": 500000.0,
                                          "position_lots": 0.05})
     monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _UP)
-    up, price, pos = R._trend_gate("USD_JPY", "D", 90, str(DATA_DIR / "USD_JPY_D.csv"))
+    up, price, pos, st = R._trend_gate("USD_JPY", "D", 90, str(DATA_DIR / "USD_JPY_D.csv"))
     assert up is True and price == _UP[-1].close and pos == 0.05
     monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _DOWN)
-    up, _, _ = R._trend_gate("USD_JPY", "D", 90, str(DATA_DIR / "USD_JPY_D.csv"))
+    up, _, _, _ = R._trend_gate("USD_JPY", "D", 90, str(DATA_DIR / "USD_JPY_D.csv"))
     assert up is False
 
 
@@ -595,3 +595,39 @@ def test_find_run_ignores_dashboard_backtests(monkeypatch):
     ]
     monkeypatch.setattr(db, "list_runs", lambda: rows)
     assert R._find_run("H1") == 7
+
+
+# ---- round-6b: the brain trusts what the EA reports ------------------------
+
+def test_next_seq_steps_over_the_ea_executed_id():
+    # An EA id above the brain's clock (a --once run on the Windows clock, a
+    # hand-edited line the adopt rule committed) held the system flat forever:
+    # every fresh id was "not newer". The floor makes the next mint step over it.
+    import time as _t
+    ea = int(_t.time()) + 5000
+    assert R._next_seq(0, ea) == ea + 1
+    assert R._next_seq(ea + 10, ea) == ea + 11
+    assert R._next_seq(0, 0) >= int(_t.time())
+
+
+def test_settle_reuses_the_ea_executed_id_for_an_open_book():
+    # No fresh mint when the EA says which id opened the book: the first
+    # heartbeat is then a heartbeat to the EA and can never open.
+    intent, lots, stop, seq, seen = R._settle_adopted_book(
+        0.09, 150.5, mint=lambda p: 999, ea_exec_seq=1700000000)
+    assert (intent, lots, seq, seen) == ("LONG", 0.09, 1700000000, True)
+    # pre-r6b EA (no exec_seq): fall back to minting
+    assert R._settle_adopted_book(0.09, 150.5, mint=lambda p: 999)[3] == 999
+    # empty book never reuses anything
+    assert R._settle_adopted_book(0.0, 150.5, mint=lambda p: 999, ea_exec_seq=1700000000)[0] == "FLAT"
+
+
+def test_trend_gate_returns_the_ea_status(monkeypatch):
+    monkeypatch.setattr(bridge, "read_status", lambda *a, **k: {
+        "balance": 272000.0, "equity": 272000.0, "position_lots": 0.09,
+        "exec_seq": 1700000000, "ea_time": 1800000000, "build": "r6b-status"})
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _UP)
+    monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    monkeypatch.setattr(R, "MAX_BAR_JUMP_PCT", 1e9)
+    up, price, pos, st = R._trend_gate("USD_JPY", "D", 90, str(DATA_DIR / "USD_JPY_D.csv"))
+    assert pos == 0.09 and st["exec_seq"] == 1700000000 and st["build"] == "r6b-status"

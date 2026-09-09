@@ -216,6 +216,21 @@ def get_run(run_id: int, db_path: Optional[str] = None) -> Optional[dict]:
         return dict(row) if row else None
 
 
+def latest_live_run_id(kind: Optional[str] = None, db_path: Optional[str] = None) -> Optional[int]:
+    """Newest LIVE run (mode='live') of a system. The operator's instruments —
+    run_monitor and the /live page — must describe the live system, never the
+    dashboard backtest that happens to be the newest row (round-6)."""
+    sql = "SELECT id FROM runs WHERE mode = 'live'"
+    if kind == "stocks":
+        sql += " AND instrument = 'JP-STOCKS'"
+    elif kind == "fx":
+        sql += " AND instrument <> 'JP-STOCKS'"
+    sql += " ORDER BY id DESC LIMIT 1"
+    with connect(db_path) as conn:
+        row = conn.execute(sql).fetchone()
+        return int(row["id"]) if row else None
+
+
 def latest_run_id(kind: Optional[str] = None, db_path: Optional[str] = None) -> Optional[int]:
     """Latest run id. kind="fx" or "stocks" filters by instrument so the FX and
     margin-stock systems get separate live views (JP-STOCKS == the stock system)."""

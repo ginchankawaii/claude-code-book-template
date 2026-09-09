@@ -30,7 +30,7 @@ input double InpResizePct     = 0.20;    // ... or >= this fraction of current s
 
 // Bumped whenever the EA's execution behaviour changes, so the operator can
 // tell a recompiled EA from a stale one at a glance — the input dialog cannot.
-#define EA_BUILD "r6-adopt"
+#define EA_BUILD "r6b-status"
 
 CTrade trade;
 datetime g_expiry = 0;   // last EXP token seen on the signal (0 = heartbeat-less)
@@ -52,7 +52,7 @@ datetime g_expiry = 0;   // last EXP token seen on the signal (0 = heartbeat-les
 //  of MT5 does not re-open a position that was closed while it was down.
 long   g_exec_seq  = 0;    // last SEQ we opened/increased on
 string g_exec_key  = "";   // same, for unsequenced (manual/legacy) signals
-bool   g_held_flat = false;// warned once about holding flat on a heartbeat
+int    g_held_ticks = 0;   // ticks spent holding flat on a heartbeat (notice every 20)
 
 string SeqGvName() { return "SteadyBridge_seq_" + InpSymbol + "_" + (string)InpMagic; }
 
@@ -155,14 +155,23 @@ void ExportAll()
    int hs = FileOpen(InpStatusFile, FILE_WRITE|FILE_CSV|FILE_ANSI|FILE_COMMON, ',');
    if(hs != INVALID_HANDLE)
    {
-      FileWrite(hs, "balance", "equity", "position_lots");
+      // Columns 4-6 (round-6b) let the brain stop GUESSING: which id this EA
+      // last executed (so a restart reuses it instead of minting one the EA
+      // never bought), this terminal's clock (EXP is written in it, so a
+      // lagging container clock can no longer expire every order), and the
+      // build tag (a stale EA is otherwise invisible to every instrument).
+      // Older readers parse the first three columns and ignore the rest.
+      FileWrite(hs, "balance", "equity", "position_lots", "exec_seq", "ea_time", "build");
       // 3 decimals: at 2dp a dust residue (e.g. 0.004 lots after a partial
       // close) is invisible to the brain, which then loops paid entry
       // decisions forever against a book it cannot see (round-4 audit).
       FileWrite(hs,
          DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2),
          DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2),
-         DoubleToString(CurrentLots(), 3));
+         DoubleToString(CurrentLots(), 3),
+         (string)g_exec_seq,
+         (string)(long)TimeGMT(),
+         EA_BUILD);
       FileClose(hs);
    }
 }
@@ -336,20 +345,21 @@ void ProcessSignal()
       if(target <= 0) return;                   // long-or-flat: never sell
       if(!IsNewOrder(seq, order_key))
       {
-         if(!g_held_flat)
-            Print("SteadyBridge: flat, but this signal is a HEARTBEAT of order ",
-                  seq, " which was already executed -> NOT re-opening. The "
-                  "position was closed by the stop, the fail-safe or you; the "
-                  "brain must decide again before any new entry.");
-         g_held_flat = true;
+         if(g_held_ticks % 20 == 0)           // every ~10 min, not once (round-6b)
+            Print("SteadyBridge: flat, but signal id ", seq, " is not newer than the last "
+                  "executed id ", g_exec_seq, " -> NOT re-opening. The position was closed "
+                  "by the stop, the fail-safe or you; a NEW brain decision (higher id) "
+                  "is required. If the brain IS deciding and this persists, its clock "
+                  "is behind: see steady_status.csv exec_seq / ea_time.");
+         g_held_ticks++;
          return;
       }
-      g_held_flat = false;
+      g_held_ticks = 0;
       if(trade.Buy(MathAbs(target), InpSymbol, 0.0, ValidLongSL(sl_px), 0.0))
          CommitExec(seq, order_key);
       return;
    }
-   g_held_flat = false;
+   g_held_ticks = 0;
    // 4) same direction -> resize toward target if outside the deadband.
    //    A dust book (below the deadband floor itself) must always converge:
    //    the round-4 audit wedged the state at 0.004 lots forever otherwise.
@@ -357,14 +367,20 @@ void ProcessSignal()
    double diff = tgt_abs - cur_abs;
    double band = MathMax(InpResizeMinLots, cur_abs * InpResizePct);
    if(cur_abs < InpResizeMinLots) band = 0;   // dust: no deadband, converge
-   if(MathAbs(diff) < band)
+   double step = SymbolInfoDouble(InpSymbol, SYMBOL_VOLUME_STEP);
+   if(step <= 0) step = 0.01;
+   // ADOPT RULE (round-6): the book already reflects this order, so it
+   // counts as executed even though this EA never placed it. Without
+   // this, an id the brain minted for an ADOPTED position (restart with
+   // no id on the bridge) stayed "new" forever, and the first external
+   // close — broker stop, fail-safe, or you — was re-bought within 30s
+   // with no decision and no stop: the round-5 hole through another door.
+   // Round-6b: "at target" is judged against HALF A LOT STEP, independent
+   // of the resize deadband — with band=0 below InpResizeMinLots the rule
+   // was dead code at every size a sub-300k-yen account can hold (0.09).
+   bool at_target = MathAbs(diff) < step * 0.5;
+   if(at_target || MathAbs(diff) < band)
    {
-      // ADOPT RULE (round-6): the book already reflects this order, so it
-      // counts as executed even though this EA never placed it. Without
-      // this, an id the brain minted for an ADOPTED position (restart with
-      // no id on the bridge) stayed "new" forever, and the first external
-      // close — broker stop, fail-safe, or you — was re-bought within 30s
-      // with no decision and no stop: the round-5 hole through another door.
       if(IsNewOrder(seq, order_key))
       {
          CommitExec(seq, order_key);

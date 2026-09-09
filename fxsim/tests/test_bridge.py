@@ -50,3 +50,15 @@ def test_write_signal_sl_token(tmp_path):
         "LONG 0.09 EXP 1782950000 SL 149.805"
     bridge.write_signal("FLAT", 0, base=tmp_path, sl=None)
     assert (tmp_path / bridge.SIGNAL_FILE).read_text().strip() == "FLAT 0.00"
+
+
+def test_read_status_parses_round6b_columns_and_tolerates_old_ones(tmp_path):
+    p = tmp_path / bridge.STATUS_FILE
+    p.write_text("balance,equity,position_lots,exec_seq,ea_time,build\n"
+                 "272164.00,272164.00,0.090,1800000000,1800001234,r6b-status\n")
+    s = bridge.read_status(base=tmp_path)
+    assert s["position_lots"] == 0.09 and s["exec_seq"] == 1800000000
+    assert s["ea_time"] == 1800001234 and s["build"] == "r6b-status"
+    p.write_text("balance,equity,position_lots\n272164.00,272164.00,0.090\n")   # old EA
+    s = bridge.read_status(base=tmp_path)
+    assert s["position_lots"] == 0.09 and "exec_seq" not in s and "build" not in s

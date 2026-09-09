@@ -17,6 +17,8 @@ scripts/run_monitor.py CLI feeds them data from the DB + the live bar feed.
 """
 from __future__ import annotations
 
+from .bridge import EA_BUILD_EXPECTED
+
 from datetime import datetime
 
 # Backtest expectation for the shipped FX recipe (research_run8, 2015-2026).
@@ -76,7 +78,9 @@ def build_report(*, initial_balance: float, equity_values: list[float],
                  span_days: float, actions: list[str],
                  live_position: str | None = None,
                  trend_basis: str | None = None,
-                 staleness_days: float | None = None) -> dict:
+                 staleness_days: float | None = None,
+                 last_ai_binding: bool | None = None,
+                 ea_build: str | None = None) -> dict:
     """Assemble the health report + per-check flags + an overall verdict."""
     st = equity_stats(equity_values)
     years = max(span_days, 0.0) / 365.25
@@ -132,10 +136,24 @@ def build_report(*, initial_balance: float, equity_values: list[float],
         checks.append({"name": "リターン", "flag": GREEN,
                        "msg": f"年率換算 {ann:+.1f}%（想定+{EXP_CAGR_PCT:.0f}%圏）"})
 
-    # --- staleness: has the system actually been updating? ---
-    if staleness_days is not None and staleness_days > 1.5:
+    # --- staleness: has the system actually been updating? A running brain
+    #     records equity on every decision and decides at least every 20h, so
+    #     >3 days is never normal — before round-6 this could only ever be
+    #     YELLOW, and a brain dead for weeks reported "観察" (I10). ---
+    if staleness_days is not None and staleness_days > 3.0:
+        checks.append({"name": "稼働鮮度", "flag": RED,
+                       "msg": f"最終更新が{staleness_days:.1f}日前：脳（fxコンテナ）が停止している疑い → "
+                              f"`docker compose ps` / `docker compose logs fx` を確認し `docker compose up -d fx`"})
+    elif staleness_days is not None and staleness_days > 1.5:
         checks.append({"name": "稼働鮮度", "flag": YELLOW,
                        "msg": f"最終更新が{staleness_days:.1f}日前（週末以外なら run_ai_bridge の稼働を確認）"})
+
+    # --- EA build: every fix that lives in the EA exists only if the chart
+    #     runs the build the brain's protocol assumes (round-6). ---
+    if ea_build is not None and ea_build != EA_BUILD_EXPECTED:
+        checks.append({"name": "EAビルド", "flag": RED,
+                       "msg": f"EAは {ea_build or '不明（旧EA：build列なし）'}、必要なのは {EA_BUILD_EXPECTED} → "
+                              f"mt5_ea/SteadyBridge.mq5 を再コンパイルして付け直す"})
 
     # --- execution drift: live book vs the system's LAST DECISION (NOT the raw
     #     trend — the live system has an Opus veto layer, so a legitimate FLAT
@@ -144,7 +162,14 @@ def build_report(*, initial_balance: float, equity_values: list[float],
     if last_decision in ("LONG", "FLAT") and live_position:
         note = ""
         if trend_basis and trend_basis.upper() != last_decision:
-            note = f"（トレンド基調={trend_basis.upper()}→Opus等で{last_decision}判断）"
+            # Attribute the gap to the AI only when the AI actually bound that
+            # decision; in shadow authority it never does, and the reachable
+            # causes are a dead brain, a blind feed or a gate cooldown (round-6).
+            if last_ai_binding:
+                note = f"（トレンド基調={trend_basis.upper()}→Opus拒否で{last_decision}判断）"
+            else:
+                note = (f"（トレンド基調={trend_basis.upper()}≠判断{last_decision}：AIの拘束なし → "
+                        f"判断が古い／脳停止／盲目／ゲート冷却中の疑い。稼働鮮度と `docker compose logs fx` を確認）")
         if last_decision == live_position.upper():
             checks.append({"name": "執行一致", "flag": GREEN,
                            "msg": f"システム判断={last_decision}=建玉（一致）{note}"})

@@ -24,6 +24,11 @@ BARS_FILE = "steady_bars.csv"
 STATUS_FILE = "steady_status.csv"
 SIGNAL_FILE = "steady_signal.txt"
 
+# The EA build this brain's protocol assumes (mt5_ea/SteadyBridge.mq5 EA_BUILD).
+# The EA reports its build in the status file; anything else means a fix that
+# lives in the EA is not actually running on the chart.
+EA_BUILD_EXPECTED = "r6b-status"
+
 
 def common_files_dir() -> Path:
     """MT5 shared files dir: %APPDATA%\\MetaQuotes\\Terminal\\Common\\Files."""
@@ -48,11 +53,24 @@ def read_status(base: Optional[Path] = None) -> Optional[dict]:
         return None
     try:
         lines = [ln for ln in path.read_text().splitlines() if ln.strip()]
-        row = lines[-1].split(",")
-        return {"balance": float(row[0]), "equity": float(row[1]),
-                "position_lots": float(row[2])}
+        row = [c.strip() for c in lines[-1].split(",")]
+        out = {"balance": float(row[0]), "equity": float(row[1]),
+               "position_lots": float(row[2])}
     except (ValueError, IndexError, OSError):
         return None
+    # Optional columns from a round-6b EA; older EAs write three. exec_seq =
+    # the id the EA last opened/increased/adopted on; ea_time = the terminal's
+    # unix clock (EXP must be written in THAT clock); build = EA_BUILD.
+    try:
+        if len(row) >= 4 and row[3]:
+            out["exec_seq"] = int(float(row[3]))
+        if len(row) >= 5 and row[4]:
+            out["ea_time"] = int(float(row[4]))
+        if len(row) >= 6 and row[5]:
+            out["build"] = row[5]
+    except ValueError:
+        pass
+    return out
 
 
 def write_signal(action: str, lots: float, base: Optional[Path] = None,

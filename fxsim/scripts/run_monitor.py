@@ -43,15 +43,41 @@ def _current_strategy_signal(cfg: Settings, instrument: str, history_csv: str) -
     need = cfg.trend_sma + 5
     candles = bridge.read_bars(instrument, cfg.granularity)
     if len(candles) < need:
-        try:
-            candles = load_csv_file(__import__("pathlib").Path(history_csv), instrument, cfg.granularity)
-        except Exception:
-            return None
-    if len(candles) < need:
+        # No silent fallback to the bundled CSV (round-6): a "trend basis"
+        # computed from frozen data would explain a dead feed as an AI veto.
+        print(f"[monitor] bar feed unavailable/short ({len(candles)} bars < {need}) — "
+              f"trend basis not computed; is the EA exporting?")
         return None
     df = enrich(candles_to_df(candles))
     sig = TrendRegimeStrategy(sma=cfg.trend_sma).generate(instrument, df)
     return "LONG" if sig.direction > 0 else "FLAT"
+
+
+def _last_ai_binding(rid: int) -> bool | None:
+    """Did the AI actually BIND the last decision? Only then may a trend/decision
+    gap be attributed to an Opus veto (round-6: in shadow authority the note
+    'Opus等でFLAT判断' was true in zero reachable cases)."""
+    for s in reversed(db.load_signals(rid)):
+        if s.get("source") != "combined":
+            continue
+        try:
+            comp = json.loads(s["components"]) if s.get("components") else {}
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return bool(comp.get("ai_binding")) if "ai_binding" in comp else None
+    return None
+
+
+def _ea_build() -> str | None:
+    """EA build tag from the status file: None = status unreadable (skip the
+    check), "" = readable but no build column (an old EA -> RED)."""
+    try:
+        s = bridge.read_status()
+    except Exception:
+        return None
+    if not s:
+        return None
+    return str(s.get("build") or "")
 
 
 def _live_position() -> str | None:
@@ -76,10 +102,12 @@ def main() -> None:
     args = ap.parse_args()
 
     db.init_db()
-    rid = args.run_id or db.latest_run_id(args.kind)
+    rid = args.run_id or db.latest_live_run_id(args.kind)   # never a backtest row (round-6)
     if not rid:
-        print(f"[monitor] {args.kind} のrunがまだありません。"); return
+        print(f"[monitor] {args.kind} のライブrunがまだありません。"); return
     run = db.get_run(rid)
+    print(f"[monitor] run #{rid} mode={run.get('mode')} gran={run.get('granularity')} "
+          f"started={str(run.get('started_at'))[:16]}")
     equity = db.load_equity(rid)
     if len(equity) < 2:
         print(f"[monitor] run #{rid}: エクイティ記録が少なすぎます（判断にはもう少し稼働が必要）。"); return
@@ -98,7 +126,8 @@ def main() -> None:
     rep = monitor.build_report(
         initial_balance=run["initial_balance"], equity_values=eq_vals,
         span_days=span, actions=actions, live_position=live_pos,
-        trend_basis=trend_basis, staleness_days=staleness)
+        trend_basis=trend_basis, staleness_days=staleness,
+        last_ai_binding=_last_ai_binding(rid), ea_build=_ea_build())
 
     bal0 = rep["initial_balance"]; eq = rep["current_equity"]; s = rep["stats"]
     print("=" * 60)

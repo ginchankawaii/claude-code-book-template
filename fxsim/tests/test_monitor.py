@@ -71,3 +71,46 @@ def test_overtrading_flags_red():
                                equity_values=[500000, 500000], span_days=40, actions=actions)
     tf = next(c for c in rep["checks"] if c["name"] == "取引頻度")
     assert tf["flag"] == RED
+
+
+# ---- round-6: the operator's instruments must not lie --------------------
+
+def _report(**kw):
+    base = dict(initial_balance=272000.0, equity_values=[272000.0, 272500.0],
+                span_days=30.0, actions=["LONG"] * 3)
+    base.update(kw)
+    return monitor.build_report(**base)
+
+
+def test_dead_brain_is_red_not_yellow():
+    r = _report(staleness_days=13.0)
+    assert r["worst"] == monitor.RED
+    assert any(c["name"] == "稼働鮮度" and c["flag"] == monitor.RED for c in r["checks"])
+    assert _report(staleness_days=2.0)["worst"] != monitor.RED       # a long weekend
+
+
+def test_old_ea_build_is_red():
+    r = _report(ea_build="")                       # readable status, no build column
+    assert any(c["name"] == "EAビルド" and c["flag"] == monitor.RED for c in r["checks"])
+    assert not any(c["name"] == "EAビルド" for c in _report(ea_build="r6b-status")["checks"])
+    assert not any(c["name"] == "EAビルド" for c in _report(ea_build=None)["checks"])
+
+
+def test_trend_gap_is_not_blamed_on_opus_unless_it_bound():
+    kw = dict(actions=["LONG", "FLAT"], live_position="FLAT", trend_basis="LONG")
+    msg = next(c["msg"] for c in _report(**kw, last_ai_binding=False)["checks"] if c["name"] == "執行一致")
+    assert "Opus" not in msg and "脳停止" in msg
+    msg = next(c["msg"] for c in _report(**kw, last_ai_binding=True)["checks"] if c["name"] == "執行一致")
+    assert "Opus拒否" in msg
+
+
+def test_latest_live_run_id_ignores_dashboard_backtests(tmp_path):
+    from app import db
+    path = str(tmp_path / "t.db")
+    db.init_db(path)
+    live = db.create_run(mode="live", instrument="USD_JPY", granularity="H1",
+                         initial_balance=272000.0, params={"system": "steady-ai"}, db_path=path)
+    db.create_run(mode="backtest", instrument="USD_JPY", granularity="H1",
+                  initial_balance=500000.0, params={}, db_path=path)          # newer row
+    assert db.latest_run_id("fx", db_path=path) != live                       # the old bug
+    assert db.latest_live_run_id("fx", db_path=path) == live
