@@ -131,6 +131,22 @@ def main() -> None:
                    risk_per_trade=args.risk, use_take_profit=False,
                    initial_balance=args.balance)
     db.init_db()
+    # This legacy brain speaks none of the bridge protocol (no SEQ, EXP or SL)
+    # and takes no lock. If the AI brain is live on this bridge, a line from
+    # here is a second writer the EA executes at a different size and stop
+    # (round-6): refuse, rather than fight. A forgotten Task Scheduler job is
+    # the realistic way this happens — delete it (docs/MT5_BRIDGE.md).
+    lock = bridge.common_files_dir() / "steady_brain.lock"
+    try:
+        lock_age = _time.time() - lock.stat().st_mtime if lock.exists() else None
+    except OSError:
+        lock_age = None
+    if not args.dry and lock_age is not None and lock_age < 3600:
+        print(f"[bridge] REFUSING to start: the AI brain holds this bridge ({lock}, "
+              f"heartbeat {lock_age:.0f}s ago). Two writers liquidate each other. Stop "
+              f"run_ai_bridge first, or run with --dry. If this is a leftover Task "
+              f"Scheduler job, delete it.", flush=True)
+        raise SystemExit(2)
     if args.once:
         cycle(cfg, args.instrument, args.max_lots, args.dry, args.history)
     else:

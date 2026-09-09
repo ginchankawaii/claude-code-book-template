@@ -73,6 +73,7 @@ def _find_run(granularity: str = "H1") -> Optional[int]:
     position. The run must match the configuration it will govern."""
     for r in db.list_runs():
         if (not r.get("ended_at") and "steady-ai" in (r.get("params") or "")
+                and (r.get("mode") or "live") == "live"          # never a dashboard backtest
                 and (r.get("granularity") or "H1") == granularity):
             return r["id"]
     return None
@@ -306,6 +307,27 @@ def _touch_lock(lock: Optional[Path], poll: int) -> None:
         os.replace(tmp, lock)
     except Exception:
         pass
+
+
+def _settle_adopted_book(pos: float, stop_price, mint=None):
+    """Settle a restored LONG that carries no order id, against a TRUSTED book
+    reading (a probe that passed the freshness gates — never a raw status read:
+    round-6 found a torn/missing status file read as "book empty", and the
+    first heartbeat closed a healthy long, FLAT being ungated at the EA).
+
+    Returns (intent, intent_lots, stop_price, order_seq, seen_long).
+    Open book -> adopt it under a freshly minted id; the EA's adopt rule
+    ("a LONG the book already reflects counts as executed") commits that id
+    on its next tick, so an external close afterwards is NOT re-bought.
+    Empty book -> FLAT; re-entry only through a fresh gate decision."""
+    mint = mint or _next_seq
+    if pos >= FLAT_EPS:
+        seq = mint(0)
+        print(f"[ai] adopting the live book of {pos:.2f} lots as order {seq}", flush=True)
+        return "LONG", float(pos), stop_price, seq, True
+    print("[ai] restored intent LONG but the book is empty — adopting FLAT; re-entry "
+          "goes through a fresh gate decision", flush=True)
+    return "FLAT", 0.0, None, mint(0), False
 
 
 def _trend_gate(instrument: str, granularity: str, sma_n: int,
@@ -678,22 +700,16 @@ def main() -> None:
         stop_txt = f" stop {stop_price:.3f}" if stop_price else ""
         seq_txt = f" seq {order_seq}" if order_seq else ""
         print(f"[ai] restored state: intent {intent}{stop_txt}{seq_txt}", flush=True)
-    if intent == "LONG" and not order_seq:
-        # The DB says LONG but the bridge carries no order id (a pre-round-5
-        # signal, or none at all), so we cannot say WHICH order that intent
-        # refers to — and an unidentifiable LONG heartbeat is precisely what
-        # licenses the EA to re-open. Settle it against the book, once, now.
-        book = float((bridge.read_status() or {}).get("position_lots") or 0.0)
-        if book >= FLAT_EPS:
-            intent_lots, seen_long = book, True
-            order_seq = _next_seq(0)
-            print(f"[ai] adopting the live book of {book:.2f} lots as order "
-                  f"{order_seq}", flush=True)
-        else:
-            print("[ai] restored intent LONG but the book is empty and the bridge "
-                  "carries no order id — adopting FLAT; re-entry goes through a "
-                  "fresh gate decision", flush=True)
-            intent, intent_lots, stop_price = "FLAT", 0.0, None
+    # A LONG intent with no order id on the bridge (pre-round-5 signal, or DB
+    # and bridge disagree after a lost write) cannot be heartbeated: an
+    # unidentifiable LONG is precisely what licenses the EA to re-open. It is
+    # settled on the FIRST TRUSTED PROBE inside the loop (_settle_adopted_book),
+    # never from a raw status read here. Until then intent_lots stays 0 and the
+    # heartbeat guard withholds LONG, exactly as the pre-round-5 code did.
+    settle_pending = intent == "LONG" and not order_seq
+    if settle_pending:
+        print("[ai] restored intent LONG carries no order id — settling it against the "
+              "book on the first trusted probe", flush=True)
     if not order_seq and intent != "LONG":
         # Nothing is open, so minting an id opens nothing — and it means every
         # signal this brain writes carries SEQ, which is how the operator can
@@ -725,6 +741,24 @@ def main() -> None:
                 trend_up, price, pos = probe
                 if pos > 0:
                     entry_attempts = 0            # the book moved; breaker resets
+                if settle_pending:
+                    settle_pending = False
+                    intent, intent_lots, stop_price, order_seq, seen_long = \
+                        _settle_adopted_book(pos, stop_price)
+                    try:                          # visible to diagnose_live / run_monitor
+                        st = bridge.read_status()
+                        if st and (st.get("balance") or 0) > 0:
+                            rid = _ongoing_run(st["balance"], trader.model,
+                                               args.max_risk, args.granularity)
+                            db.record_signal(rid, now, args.instrument, "combined",
+                                             1 if intent == "LONG" else 0, 0.0,
+                                             f"restart: settled restored LONG against book "
+                                             f"{pos:.2f} -> {intent}",
+                                             {"action": intent, "trigger": "restart-settle",
+                                              "stop_price": stop_price, "target_lots": intent_lots,
+                                              "position_lots": pos, "seq": order_seq})
+                    except Exception as exc:
+                        print(f"[ai] settle DB record failed: {exc}", flush=True)
                 if intent == "LONG" and intent_lots <= 0 and pos >= FLAT_EPS:
                     intent_lots = pos      # after a restart: adopt the book's size
                     # (dust below FLAT_EPS is NOT adopted: heartbeating "LONG 0.00"

@@ -31,7 +31,7 @@ class FakeEA:
         self.actions: list[str] = []
 
     def _is_new_order(self, seq, key):
-        return seq != self.exec_seq if seq else key != self.exec_key
+        return seq > self.exec_seq if seq else key != self.exec_key   # r6: strictly greater
 
     def _commit(self, seq, key):
         self.exec_key = key
@@ -74,6 +74,10 @@ class FakeEA:
         if self.lots < 0.10:
             band = 0.0
         if abs(diff) < band:
+            # r6 ADOPT RULE: the book already reflects this order -> executed
+            if self._is_new_order(seq, key):
+                self._commit(seq, key)
+                self.actions.append(f"adopt {seq}")
             return
         if diff > 0:
             if not self._is_new_order(seq, key):
@@ -196,3 +200,45 @@ def test_unsequenced_signal_falls_back_to_content(tmp_path):
     bridge.write_signal("LONG", 0.25, base=tmp_path, expires_at=10_020, sl=158.0)
     ea.tick(tmp_path)
     assert ea.lots == 0.25
+
+
+# --- round-6: the bootstrap hole (an ADOPTED position's id was never "executed")
+
+def test_adopted_position_is_not_re_bought_after_external_close(tmp_path):
+    # Restart with a LONG in the DB but no id on the bridge: the brain adopts
+    # the open book under a freshly minted id. The EA never placed that id, so
+    # before r6 it stayed "new" forever and the first external close was
+    # re-bought within 30s with no decision and no stop.
+    ea = FakeEA(lots=0.24, exec_seq=1700000000)      # position from an old order
+    _heartbeat(tmp_path, 0.24, seq=1800000000)       # brain's adopted-book heartbeat
+    ea.tick(tmp_path)
+    assert ea.lots == 0.24 and ea.actions == ["adopt 1800000000"]
+    ea.lots = 0.0                                    # broker SL fills
+    for _ in range(10):
+        _heartbeat(tmp_path, 0.24, seq=1800000000)
+        ea.tick(tmp_path)
+    assert ea.lots == 0.0, "adopted order was re-bought after the stop filled"
+
+
+def test_adopt_survives_terminal_restart(tmp_path):
+    ea = FakeEA(lots=0.24, exec_seq=0)
+    _heartbeat(tmp_path, 0.24, seq=1800000000)
+    ea.tick(tmp_path)                                # adopt -> persisted
+    ea.lots = 0.0
+    ea.restart()
+    _heartbeat(tmp_path, 0.24, seq=1800000000)
+    ea.tick(tmp_path)
+    assert ea.lots == 0.0
+
+
+def test_lower_or_equal_id_never_opens(tmp_path):
+    # Ids only ever increase. A LOWER id is a stale writer or a restored old
+    # signal file and must not re-open; only a strictly greater one may.
+    ea = FakeEA(lots=0.0, exec_seq=1800000000)
+    for seq in (1799999999, 1800000000):
+        _heartbeat(tmp_path, 0.17, seq=seq)
+        ea.tick(tmp_path)
+        assert ea.lots == 0.0
+    _heartbeat(tmp_path, 0.17, seq=1800000001)
+    ea.tick(tmp_path)
+    assert ea.lots == 0.17

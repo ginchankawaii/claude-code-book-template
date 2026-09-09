@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace as _dc_replace
 import secrets
 import threading
 from pathlib import Path
@@ -33,7 +34,21 @@ _DASH_PASS = os.getenv("FXSIM_DASH_PASS", "")
 _basic = HTTPBasic(auto_error=False)
 
 
+_TUNNEL_TOKEN = os.getenv("CLOUDFLARE_TUNNEL_TOKEN", "")
+
+
 def _auth(creds: HTTPBasicCredentials | None = Depends(_basic)) -> None:
+    if _TUNNEL_TOKEN and not _DASH_PASS:
+        # docs/REMOTE.md calls the password "mandatory" before tunnelling, but
+        # nothing enforced it: with a tunnel token present and no password the
+        # live account's balance, equity, signals and a CPU-heavy backtest
+        # endpoint were reachable by anyone on the internet (round-6). Refuse
+        # every request instead of crash-looping the container, so the
+        # operator sees WHY when they open the page.
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="CLOUDFLARE_TUNNEL_TOKEN は設定されていますが FXSIM_DASH_PASS が"
+                                   "空です。公開前に .env で FXSIM_DASH_PASS を設定してください"
+                                   "（docs/REMOTE.md 手順0）。")
     if not _DASH_PASS:
         return  # no password configured -> open (local use)
     if creds is None or not (
@@ -163,22 +178,31 @@ def get_fundamental() -> list[dict]:
     return out
 
 
+# A request may drive an OFFLINE backtest only: never the live broker adapter
+# (credentials, rate limits), never an unbounded bar count, and never by
+# mutating the process-wide settings that every other route reports from.
+_BACKTEST_PROVIDERS = {"csv", "sample"}
+MAX_BACKTEST_BARS = 20_000
+
+
 @app.post("/api/backtest")
 def trigger_backtest(payload: dict) -> dict:
-    instrument = payload.get("instrument", settings.instruments[0])
-    granularity = payload.get("granularity", settings.granularity)
-    bars = int(payload.get("bars", 1500))
-    provider_name = payload.get("provider", settings.data_provider)
+    instrument = str(payload.get("instrument", settings.instruments[0]))
+    granularity = str(payload.get("granularity", settings.granularity))
+    bars = max(100, min(int(payload.get("bars", 1500)), MAX_BACKTEST_BARS))
+    provider_name = str(payload.get("provider", settings.data_provider)).lower()
+    if provider_name not in _BACKTEST_PROVIDERS:
+        raise HTTPException(400, f"provider must be one of {sorted(_BACKTEST_PROVIDERS)}")
 
     if not _backtest_lock.acquire(blocking=False):
         raise HTTPException(409, "a backtest is already running")
     try:
-        settings.granularity = granularity
+        cfg = _dc_replace(settings, granularity=granularity)   # per-request copy
         provider = get_provider(provider_name)
         candles = provider.history(instrument, granularity, bars)
         if not candles:
             raise HTTPException(400, "no candles returned by provider")
-        stats = run_backtest(candles, instrument, persist=True)
+        stats = run_backtest(candles, instrument, cfg=cfg, persist=True)
         return {"run_id": stats.run_id, "stats": stats_dict(stats)}
     except HTTPException:
         raise

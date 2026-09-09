@@ -564,3 +564,34 @@ def test_lock_heartbeat_is_atomic(tmp_path):
     R._touch_lock(lock, 600)
     assert R._lock_verdict(lock, 600)[0] in ("take", "wait")   # parses cleanly
     assert not list(tmp_path.glob("*.tmp"))                    # no debris left
+
+
+# ---- round-6: restart settlement happens on a TRUSTED probe, never a raw read
+
+def test_settle_adopts_open_book_under_a_new_id(capsys):
+    intent, lots, stop, seq, seen = R._settle_adopted_book(0.24, 150.5, mint=lambda p: 4242)
+    assert (intent, lots, stop, seq, seen) == ("LONG", 0.24, 150.5, 4242, True)
+
+
+def test_settle_empty_book_becomes_flat_not_a_long_heartbeat():
+    intent, lots, stop, seq, seen = R._settle_adopted_book(0.0, 150.5, mint=lambda p: 4242)
+    assert intent == "FLAT" and lots == 0.0 and stop is None and seen is False
+    assert seq == 4242                            # FLAT still carries an id
+
+
+def test_settle_dust_is_treated_as_empty():
+    assert R._settle_adopted_book(R.FLAT_EPS / 2, 150.5, mint=lambda p: 1)[0] == "FLAT"
+
+
+def test_find_run_ignores_dashboard_backtests(monkeypatch):
+    # A backtest triggered from the (internet-exposed) dashboard writes a run
+    # into the same sqlite file the brain restores from. It must never be
+    # picked as the brain's run, whatever its params say.
+    rows = [
+        {"id": 9, "ended_at": None, "mode": "backtest", "granularity": "H1",
+         "params": '{"system": "steady-ai"}'},
+        {"id": 7, "ended_at": None, "mode": "live", "granularity": "H1",
+         "params": '{"system": "steady-ai"}'},
+    ]
+    monkeypatch.setattr(db, "list_runs", lambda: rows)
+    assert R._find_run("H1") == 7

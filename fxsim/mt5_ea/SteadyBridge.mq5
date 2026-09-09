@@ -30,7 +30,7 @@ input double InpResizePct     = 0.20;    // ... or >= this fraction of current s
 
 // Bumped whenever the EA's execution behaviour changes, so the operator can
 // tell a recompiled EA from a stale one at a glance — the input dialog cannot.
-#define EA_BUILD "r5-seqgate"
+#define EA_BUILD "r6-adopt"
 
 CTrade trade;
 datetime g_expiry = 0;   // last EXP token seen on the signal (0 = heartbeat-less)
@@ -61,7 +61,10 @@ string SeqGvName() { return "SteadyBridge_seq_" + InpSymbol + "_" + (string)InpM
 //  the line content with the ever-changing EXP token removed.
 bool IsNewOrder(long seq, string key)
 {
-   if(seq > 0) return seq != g_exec_seq;
+   // Ids are minted from the wall clock and only ever increase, so "new"
+   // means STRICTLY greater: a lower id can only be a stale writer or a
+   // restored old signal file, and must never re-open (round-6).
+   if(seq > 0) return seq > g_exec_seq;
    return key != g_exec_key;
 }
 
@@ -354,7 +357,22 @@ void ProcessSignal()
    double diff = tgt_abs - cur_abs;
    double band = MathMax(InpResizeMinLots, cur_abs * InpResizePct);
    if(cur_abs < InpResizeMinLots) band = 0;   // dust: no deadband, converge
-   if(MathAbs(diff) < band) return;           // close enough -> hold (no churn)
+   if(MathAbs(diff) < band)
+   {
+      // ADOPT RULE (round-6): the book already reflects this order, so it
+      // counts as executed even though this EA never placed it. Without
+      // this, an id the brain minted for an ADOPTED position (restart with
+      // no id on the bridge) stayed "new" forever, and the first external
+      // close — broker stop, fail-safe, or you — was re-bought within 30s
+      // with no decision and no stop: the round-5 hole through another door.
+      if(IsNewOrder(seq, order_key))
+      {
+         CommitExec(seq, order_key);
+         Print("SteadyBridge: adopted standing order ", seq, " — the book already "
+               "holds it (", DoubleToString(cur_abs, 2), " lots); it will not be re-opened.");
+      }
+      return;                                 // close enough -> hold (no churn)
+   }
    if(diff > 0)
    {
       // Increasing is the risk-adding direction, so it needs a new order too:
