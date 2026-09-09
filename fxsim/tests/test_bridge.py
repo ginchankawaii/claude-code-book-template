@@ -62,3 +62,12 @@ def test_read_status_parses_round6b_columns_and_tolerates_old_ones(tmp_path):
     p.write_text("balance,equity,position_lots\n272164.00,272164.00,0.090\n")   # old EA
     s = bridge.read_status(base=tmp_path)
     assert s["position_lots"] == 0.09 and "exec_seq" not in s and "build" not in s
+
+
+def test_read_status_rejects_a_torn_extended_row_as_a_whole(tmp_path):
+    # A row cut inside ea_time must not yield a 1970-era clock (round-6c).
+    p = tmp_path / bridge.STATUS_FILE
+    p.write_text("balance,equity,position_lots,exec_seq,ea_time,build\n"
+                 "272000.00,272100.00,0.090,1799900000,1800\n")
+    s = bridge.read_status(base=tmp_path)
+    assert s["position_lots"] == 0.09 and "ea_time" not in s and "exec_seq" not in s

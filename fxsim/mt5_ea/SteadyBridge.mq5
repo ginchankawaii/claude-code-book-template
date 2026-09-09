@@ -30,7 +30,7 @@ input double InpResizePct     = 0.20;    // ... or >= this fraction of current s
 
 // Bumped whenever the EA's execution behaviour changes, so the operator can
 // tell a recompiled EA from a stale one at a glance — the input dialog cannot.
-#define EA_BUILD "r6c-status"
+#define EA_BUILD "r6d-status"
 
 CTrade trade;
 datetime g_expiry = 0;   // last EXP token seen on the signal (0 = heartbeat-less)
@@ -71,7 +71,15 @@ bool IsNewOrder(long seq, string key)
 void CommitExec(long seq, string key)
 {
    g_exec_key = key;
-   if(seq > 0) { g_exec_seq = seq; GlobalVariableSet(SeqGvName(), (double)seq); }
+   if(seq > 0)
+   {
+      g_exec_seq = seq;
+      GlobalVariableSet(SeqGvName(), (double)seq);
+      // Globals live in memory and reach disk on a clean shutdown; a power
+      // loss or BSOD right after an entry would restart with the PREVIOUS
+      // id and re-buy a stop that filled while the PC was down (round-6c).
+      GlobalVariablesFlush();
+   }
 }
 
 int OnInit()
@@ -98,7 +106,7 @@ void OnTimer()
    // positions for months — so a long hold, a terminal restart, and a stop
    // that filled while the terminal was down would find g_exec_seq == 0 and
    // re-buy the standing line. Touch it every tick (round-6c).
-   if(g_exec_seq > 0) GlobalVariableSet(SeqGvName(), (double)g_exec_seq);
+   if(g_exec_seq > 0) { GlobalVariableSet(SeqGvName(), (double)g_exec_seq); GlobalVariablesFlush(); }
 }
 void OnTick()  { /* timer drives everything */ }
 

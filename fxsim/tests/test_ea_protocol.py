@@ -37,10 +37,16 @@ class FakeEA:
         self.exec_key = key
         if seq:
             self.exec_seq = seq
+            self.exec_seq_on_disk = seq          # r6d: GlobalVariablesFlush()
 
     def restart(self):
-        """Terminal restart: in-memory state is lost, the GlobalVariable is not."""
+        """Clean terminal restart: in-memory state is lost, the GlobalVariable is not."""
         self.exec_key = ""
+
+    def crash(self):
+        """Power loss / BSOD: only what was FLUSHED to disk survives."""
+        self.exec_key = ""
+        self.exec_seq = getattr(self, "exec_seq_on_disk", 0)
 
     def tick(self, base, now=0):
         sig = bridge.read_signal(base=base)
@@ -263,3 +269,19 @@ def test_adopt_rule_works_at_every_size_the_account_can_hold(tmp_path, lots):
         _heartbeat(tmp_path, lots, seq=1800000000)
         ea.tick(tmp_path)
     assert ea.lots == 0.0, f"re-bought after the stop at {lots} lots"
+
+
+def test_hard_crash_after_an_entry_does_not_lose_the_executed_id(tmp_path):
+    # Globals reach disk on a clean shutdown; without an explicit flush a power
+    # loss right after an entry restarted with the PREVIOUS id and re-bought a
+    # stop that filled while the PC was down (round-6c).
+    ea = FakeEA(lots=0.0, exec_seq=1700000000)
+    ea.exec_seq_on_disk = 1700000000
+    _heartbeat(tmp_path, 0.09, seq=1800000000)
+    ea.tick(tmp_path)
+    assert ea.lots == 0.09
+    ea.lots = 0.0                                    # broker SL fills during the outage
+    ea.crash()
+    _heartbeat(tmp_path, 0.09, seq=1800000000)       # the standing line, still live
+    ea.tick(tmp_path)
+    assert ea.lots == 0.0, "re-bought after a crash: the executed id was not flushed"

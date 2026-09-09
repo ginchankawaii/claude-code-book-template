@@ -315,6 +315,27 @@ def _touch_lock(lock: Optional[Path], poll: int) -> None:
         pass
 
 
+# A clock skew beyond this is not a skew: WSL2 lag is minutes to hours, so a
+# larger value is a torn/absurd sample and must not be used to place EXP.
+MAX_SKEW_TRUST_S = 24 * 3600.0
+
+
+def _skew_from(ea_time, now: float, last_ea_time) -> Optional[float]:
+    """MT5 clock minus container clock from one status sample, or None when the
+    sample cannot be trusted: absent, going BACKWARDS (torn row / clock reset),
+    or absurdly far from now (a truncated number). An untrusted sample must not
+    correct EXP: one bad read would otherwise write an EXP already in the past
+    and the EA would flatten a healthy long within 30s (round-6c)."""
+    if ea_time is None:
+        return None
+    if last_ea_time is not None and ea_time < last_ea_time:
+        return None
+    skew = float(ea_time) - now
+    if abs(skew) > MAX_SKEW_TRUST_S:
+        return None
+    return skew
+
+
 def _status_frozen(ea_now, last_ea_time) -> bool:
     """A live EA rewrites its status every 30s, so its clock must advance
     between two polls (600s). Equal = the EA is not exporting (dead, detached,
@@ -460,7 +481,8 @@ def _next_seq(prev: int, floor: int = 0) -> int:
 def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float,
                 history_csv: str, trader: AITrader, dry: bool, trigger: str,
                 granularity: str = "D", sma_n: int = 90,
-                prev_stop: Optional[float] = None, seq: int = 0) -> Optional[dict]:
+                prev_stop: Optional[float] = None, seq: int = 0,
+                expires_at: Optional[int] = None) -> Optional[dict]:
     """One full decision. Returns {"action","lots","stop","fresh","seq"} or None
     if the bridge wasn't ready. "stop" is the protective stop the resident loop
     must enforce (new on fresh entries, carried on holds, None when flat).
@@ -619,8 +641,11 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
     if dry:
         print("[ai][DRY] signal NOT written", flush=True)
     else:
+        # The resident passes its skew-corrected EXP so that no line it writes
+        # is ever EXP-less: a decision line without EXP stood as a
+        # time-unbounded order the EA executed whenever it returned (round-6c).
         bridge.write_signal(action, lots, sl=stop_price if action == "LONG" else None,
-                            seq=out_seq)
+                            seq=out_seq, expires_at=expires_at)
         print(f"[ai] wrote signal: {action} {lots:.2f} (seq {out_seq})", flush=True)
     return {"action": action, "lots": lots, "stop": stop_price, "fresh": fresh,
             "seq": out_seq}
@@ -755,6 +780,9 @@ def main() -> None:
     clock_skew = 0.0         # MT5 clock minus container clock, seconds
     last_ea_time = None      # EA clock at the previous poll (liveness check)
     frozen_status = False
+    skew_samples = 0         # consecutive trusted, advancing clock samples
+    prev_skew = 0.0
+    ttl_s = int(args.signal_ttl_min * 60)
 
     while True:
         try:
@@ -780,19 +808,36 @@ def main() -> None:
                 # engages after the grace and the EA fail-safe can act.
                 ea_now = st.get("ea_time")
                 frozen_status = _status_frozen(ea_now, last_ea_time)
-                last_ea_time = ea_now
-                if frozen_status:
-                    print(f"[ai] EA status FROZEN (ea_time {ea_now} unchanged since last poll) — "
-                          f"the EA is not exporting; treating this probe as blind", flush=True)
+                sk = None if frozen_status else _skew_from(ea_now, _time.time(), last_ea_time)
+                if frozen_status or (ea_now is not None and sk is None):
+                    why = ("unchanged since last poll — the EA is not exporting" if frozen_status
+                           else "not a plausible clock (torn row or reset)")
+                    print(f"[ai] EA status untrusted (ea_time {ea_now} {why}); treating this "
+                          f"probe as blind and skipping scheduled decisions", flush=True)
                     probe = None
+                    # Blind must also mean NO scheduled decision: a daily/event
+                    # decide_once on a frozen book and <=75h-old bars replaced
+                    # the standing line while the heartbeat was withheld — a
+                    # time-unbounded order the EA executed on return (round-6c).
+                    skip_scheduled = True
+                    skew_samples = 0
+                last_ea_time = ea_now
             if probe is not None:
                 last_probe_ok = _time.time()
                 # What the EA itself reports (round-6b). Trusted because the
                 # probe passed the same freshness gates as the bars.
                 ea_exec_seq = int(st.get("exec_seq") or 0)
-                if st.get("ea_time"):
-                    clock_skew = float(st["ea_time"]) - _time.time()
-                    if abs(clock_skew) > CLOCK_SKEW_WARN_S:
+                if sk is not None:
+                    prev_skew, clock_skew = clock_skew, sk
+                    skew_samples += 1
+                    # Shout only when the skew is STABLE across two live samples:
+                    # a real clock lag is constant, while the last row of an EA
+                    # that died mid-interval reads as a skew that grows by one
+                    # poll interval per poll (and the next poll catches it as
+                    # frozen). The first sample after a restart during an
+                    # outage looks exactly like a lag too.
+                    if (abs(clock_skew) > CLOCK_SKEW_WARN_S and skew_samples >= 2
+                            and abs(clock_skew - prev_skew) < 60.0):
                         print(f"[ai] CRITICAL: this container's clock is {-clock_skew:+.0f}s "
                               f"from MT5's. EXP is written in MT5's clock so the fail-safe "
                               f"stays honest, but fix it: `wsl --shutdown` then restart "
@@ -934,7 +979,8 @@ def main() -> None:
                 res = decide_once(cfg, args.instrument, args.max_risk, args.max_lots,
                                   args.history, trader, args.dry, trigger,
                                   granularity=args.granularity, sma_n=args.sma,
-                                  prev_stop=stop_price, seq=max(order_seq, ea_exec_seq))
+                                  prev_stop=stop_price, seq=max(order_seq, ea_exec_seq),
+                                  expires_at=(int(_time.time() + clock_skew) + ttl_s) if ttl_s > 0 else None)
                 if res is not None:
                     order_seq = res["seq"]
                     intent = res["action"]
@@ -984,9 +1030,8 @@ def main() -> None:
                           f"stop enforcement is DOWN", flush=True)
             if (not args.dry and intent is not None and hb_ok
                     and (intent == "FLAT" or intent_lots >= FLAT_EPS)):
-                ttl = int(args.signal_ttl_min * 60)
                 bridge.write_signal(intent, intent_lots if intent == "LONG" else 0.0,
-                                    expires_at=(int(_time.time() + clock_skew) + ttl) if ttl > 0 else None,
+                                    expires_at=(int(_time.time() + clock_skew) + ttl_s) if ttl_s > 0 else None,
                                     sl=stop_price if intent == "LONG" else None,
                                     seq=order_seq)
         except Exception as exc:

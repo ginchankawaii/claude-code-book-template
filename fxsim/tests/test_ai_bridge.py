@@ -641,3 +641,12 @@ def test_frozen_status_is_detected_only_when_the_ea_clock_stalls():
     assert R._status_frozen(1800000600, None) is False           # first poll
     assert R._status_frozen(None, None) is False                 # old EA: unknown, not frozen
     assert R._status_frozen(None, 1800000000) is False           # EA downgraded mid-run
+
+
+def test_skew_sample_is_trusted_only_when_plausible_and_advancing():
+    now = 1800000000.0
+    assert R._skew_from(1800000030, now, 1799999400) == 30.0
+    assert R._skew_from(None, now, 1799999400) is None              # old EA
+    assert R._skew_from(1800, now, 1799999400) is None              # torn: decades off
+    assert R._skew_from(1799999000, now, 1799999400) is None        # clock went backwards
+    assert R._skew_from(1800000000 - 5 * 3600, now, None) == -5 * 3600.0   # a real lag
