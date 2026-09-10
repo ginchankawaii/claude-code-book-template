@@ -28,6 +28,13 @@ SIGNAL_FILE = "steady_signal.txt"
 # The EA reports its build in the status file; anything else means a fix that
 # lives in the EA is not actually running on the chart.
 EA_BUILD_EXPECTED = "r6e-status"
+# Bars older than this are refused by the brain (it goes blind); the operator's
+# instruments must judge the feed by the same rule (round-6f).
+MAX_BAR_AGE_H = 75.0
+# A six-column EA rewrites its status every 30s; a row older than this means
+# the EA is not exporting (the brain's own liveness rule is "ea_time advances
+# between polls"; a one-shot instrument can only use age).
+EA_STATUS_STALE_S = 1500.0
 
 
 def common_files_dir() -> Path:

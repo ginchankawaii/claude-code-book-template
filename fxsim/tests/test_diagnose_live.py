@@ -287,3 +287,33 @@ def test_main_run_id_not_found(synth_db, capsys):
     rc = D.main(["--db", synth_db, "--run-id", "999"])
     assert rc == 1
     assert "エラー" in capsys.readouterr().out
+
+
+# ---- round-6f: the brain's reconciliation records are real exits ------------
+
+def test_external_close_at_the_stop_is_a_stop_out():
+    sig = {"reason": "external close detected at 158.900 (was LONG 0.09, stop 159.0)",
+           "comp": {"action": "FLAT", "trigger": "external-close", "stop_price": 159.0,
+                    "price": 158.9}}
+    assert D.classify_exit(sig) == "stop"
+    sig["comp"]["price"] = 161.0                              # closed well above the stop
+    assert D.classify_exit(sig) == "external"
+    del sig["comp"]["price"]                                  # older record: parse the reason
+    assert D.classify_exit(sig) == "stop"
+
+
+def test_cancelled_unfilled_order_is_not_a_cycle():
+    from datetime import datetime, timezone, timedelta
+    t0 = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    sigs = [
+        {"direction": 1, "dt": t0, "reason": "trend-up",
+         "comp": {"action": "LONG", "trigger": "gate-entry", "target_lots": 0.09, "stop_price": 150.0}},
+        {"direction": 0, "dt": t0 + timedelta(hours=2), "reason": "cancelled unfilled order 1",
+         "comp": {"action": "FLAT", "trigger": "cancel-unfilled"}},
+        {"direction": 1, "dt": t0 + timedelta(hours=30), "reason": "trend-up",
+         "comp": {"action": "LONG", "trigger": "gate-entry", "target_lots": 0.09, "stop_price": 151.0}},
+        {"direction": 0, "dt": t0 + timedelta(hours=60), "reason": "external close detected at 150.900 (was LONG 0.09, stop 151.0)",
+         "comp": {"action": "FLAT", "trigger": "external-close", "stop_price": 151.0, "price": 150.9}},
+    ]
+    cycles, _ = D.build_cycles(sigs)
+    assert [c["trigger"] for c in cycles] == ["stop"]        # the cancelled one never existed

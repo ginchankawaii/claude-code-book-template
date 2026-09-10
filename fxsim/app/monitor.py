@@ -17,7 +17,7 @@ scripts/run_monitor.py CLI feeds them data from the DB + the live bar feed.
 """
 from __future__ import annotations
 
-from .bridge import EA_BUILD_EXPECTED
+from .bridge import EA_BUILD_EXPECTED, EA_STATUS_STALE_S, MAX_BAR_AGE_H
 
 from datetime import datetime
 
@@ -80,7 +80,10 @@ def build_report(*, initial_balance: float, equity_values: list[float],
                  trend_basis: str | None = None,
                  staleness_days: float | None = None,
                  last_ai_binding: bool | None = None,
-                 ea_build: str | None = None) -> dict:
+                 ea_build: str | None = None,
+                 status_missing: bool = False,
+                 ea_status_age_s: float | None = None,
+                 bars_age_h: float | None = None) -> dict:
     """Assemble the health report + per-check flags + an overall verdict."""
     st = equity_stats(equity_values)
     years = max(span_days, 0.0) / 365.25
@@ -148,6 +151,31 @@ def build_report(*, initial_balance: float, equity_values: list[float],
         checks.append({"name": "稼働鮮度", "flag": YELLOW,
                        "msg": f"最終更新が{staleness_days:.1f}日前（週末以外なら run_ai_bridge の稼働を確認）"})
 
+    # --- bridge liveness (round-6f): a status file the EA stopped writing,
+    #     a missing file, or bars the brain refuses all made 執行一致 read
+    #     🟢 from frozen data while the brain was blind. ---
+    bridge_stale = False
+    if status_missing:
+        bridge_stale = True
+        checks.append({"name": "EA稼働", "flag": RED,
+                       "msg": "statusファイルが読めない：EA未接続 or 共有フォルダ未マウント → MT5で"
+                              "SteadyBridgeが付いているか、`docker compose ps`、MT5_COMMON_FILES を確認"})
+    elif ea_status_age_s is not None and ea_status_age_s > EA_STATUS_STALE_S:
+        bridge_stale = True
+        checks.append({"name": "EA稼働", "flag": RED,
+                       "msg": f"EAのstatusが{ea_status_age_s / 60:.0f}分前で止まっている：EA停止の疑い → "
+                              f"MT5/EA/アルゴ取引ONを確認（脳は盲目→心拍停止→EXPで決済に向かう状態。"
+                              f"脳のログに CRITICAL clock があれば時計ズレ → `wsl --shutdown`）"})
+    elif ea_status_age_s is not None and ea_status_age_s < -300.0:
+        checks.append({"name": "時計", "flag": RED,
+                       "msg": f"MT5の時計がコンテナより{-ea_status_age_s:.0f}秒進んでいる：WSL2の時計ズレ → "
+                              f"`wsl --shutdown` してDocker Desktopを再起動"})
+    if bars_age_h is not None and bars_age_h > MAX_BAR_AGE_H:
+        bridge_stale = True
+        checks.append({"name": "バー鮮度", "flag": RED,
+                       "msg": f"バーが{bars_age_h:.0f}時間前で止まっている（>{MAX_BAR_AGE_H:.0f}h）：脳はこの"
+                              f"フィードを拒否して盲目→心拍停止→EAがEXPで決済する状態 → EAの配信を確認"})
+
     # --- EA build: every fix that lives in the EA exists only if the chart
     #     runs the build the brain's protocol assumes (round-6). ---
     if ea_build is not None and ea_build != EA_BUILD_EXPECTED:
@@ -159,7 +187,11 @@ def build_report(*, initial_balance: float, equity_values: list[float],
     #     trend — the live system has an Opus veto layer, so a legitimate FLAT
     #     decision must not be mis-flagged as drift). ---
     last_decision = actions[-1].upper() if actions else None
-    if last_decision in ("LONG", "FLAT") and live_position:
+    if bridge_stale and live_position:
+        # A match against a frozen file is not a match (round-6f).
+        checks.append({"name": "執行一致", "flag": YELLOW,
+                       "msg": "判定不能：ブリッジ（status/バー）が古いため、建玉の一致は凍結ファイルとの一致"})
+    elif last_decision in ("LONG", "FLAT") and live_position:
         note = ""
         if trend_basis and trend_basis.upper() != last_decision:
             # Attribute the gap to the AI only when the AI actually bound that

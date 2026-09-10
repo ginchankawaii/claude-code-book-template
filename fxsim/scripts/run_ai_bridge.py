@@ -91,7 +91,7 @@ def _ongoing_run(start_balance: float, model: str, max_risk: float,
 
 # Bars older than this are refused (weekend + a Monday holiday still passes;
 # a wedged/detached EA feed or a frozen fallback CSV does not).
-MAX_BAR_AGE_H = 75.0
+MAX_BAR_AGE_H = bridge.MAX_BAR_AGE_H
 # A last bar further than this from the previous close is quarantined as a
 # feed glitch (Round-4: a single corrupt print — close=0.001, or a +15% spike —
 # drove REAL orders; USD/JPY has never moved 3% in one H1 bar).
@@ -978,7 +978,7 @@ def main() -> None:
                                              f"external close detected at {price:.3f} "
                                              f"(was LONG {intent_lots:.2f}, stop {stop_price})",
                                              {"action": "FLAT", "trigger": "external-close",
-                                              "stop_price": stop_price})
+                                              "stop_price": stop_price, "price": price})
                     except Exception as exc:
                         print(f"[ai] external-close DB record failed: {exc}", flush=True)
                     intent, intent_lots, stop_price = "FLAT", 0.0, None

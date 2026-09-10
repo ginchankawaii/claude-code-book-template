@@ -116,3 +116,36 @@ def test_latest_live_run_id_ignores_dashboard_backtests(tmp_path):
                   initial_balance=500000.0, params={}, db_path=path)          # newer row
     assert db.latest_run_id("fx", db_path=path) != live                       # the old bug
     assert db.latest_live_run_id("fx", db_path=path) == live
+
+
+# ---- round-6f: the monitor must judge the bridge's LIVENESS, not its presence
+
+def test_frozen_status_never_yields_a_green_execution_match():
+    kw = dict(actions=["LONG"], live_position="LONG", trend_basis="LONG")
+    r = _report(**kw, ea_status_age_s=3 * 3600.0)             # EA stopped writing 3h ago
+    assert any(c["name"] == "EA稼働" and c["flag"] == monitor.RED for c in r["checks"])
+    assert not any(c["name"] == "執行一致" and c["flag"] == monitor.GREEN for c in r["checks"])
+    assert r["worst"] == monitor.RED
+
+
+def test_missing_status_is_red_not_silent():
+    r = _report(actions=["LONG"], live_position=None, status_missing=True)
+    assert any(c["name"] == "EA稼働" and c["flag"] == monitor.RED for c in r["checks"])
+
+
+def test_stale_bars_are_red_and_block_the_match():
+    r = _report(actions=["LONG"], live_position="LONG", trend_basis=None, bars_age_h=80.0)
+    assert any(c["name"] == "バー鮮度" and c["flag"] == monitor.RED for c in r["checks"])
+    assert not any(c["name"] == "執行一致" and c["flag"] == monitor.GREEN for c in r["checks"])
+
+
+def test_clock_skew_is_named():
+    r = _report(actions=["LONG"], live_position="LONG", ea_status_age_s=-7200.0)
+    assert any(c["name"] == "時計" and "wsl --shutdown" in c["msg"] for c in r["checks"])
+
+
+def test_live_bridge_keeps_the_old_verdict():
+    r = _report(actions=["LONG"], live_position="LONG", trend_basis="LONG",
+                ea_status_age_s=20.0, bars_age_h=1.0)
+    assert not any(c["name"] in ("EA稼働", "バー鮮度", "時計") for c in r["checks"])
+    assert any(c["name"] == "執行一致" and c["flag"] == monitor.GREEN for c in r["checks"])

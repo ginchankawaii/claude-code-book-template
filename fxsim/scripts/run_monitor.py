@@ -38,6 +38,15 @@ def _actions(run_id: int) -> list[str]:
     return out
 
 
+def _bars_age_h(candles) -> float | None:
+    if not candles:
+        return None
+    t = candles[-1].time
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - t).total_seconds() / 3600.0
+
+
 def _current_strategy_signal(cfg: Settings, instrument: str, history_csv: str) -> str | None:
     """What the trend filter says RIGHT NOW, from the live bar feed (or CSV)."""
     need = cfg.trend_sma + 5
@@ -47,6 +56,13 @@ def _current_strategy_signal(cfg: Settings, instrument: str, history_csv: str) -
         # computed from frozen data would explain a dead feed as an AI veto.
         print(f"[monitor] bar feed unavailable/short ({len(candles)} bars < {need}) — "
               f"trend basis not computed; is the EA exporting?")
+        return None
+    age = _bars_age_h(candles)
+    if age is not None and age > bridge.MAX_BAR_AGE_H:
+        # The brain refuses these bars and goes blind; a trend basis from them
+        # would describe a feed the system itself is not trading on (round-6f).
+        print(f"[monitor] bars are {age:.0f}h old (> {bridge.MAX_BAR_AGE_H:.0f}h): the brain "
+              f"is blind on this feed — trend basis not computed")
         return None
     df = enrich(candles_to_df(candles))
     sig = TrendRegimeStrategy(sma=cfg.trend_sma).generate(instrument, df)
@@ -78,6 +94,30 @@ def _ea_build() -> str | None:
     if not s:
         return None
     return str(s.get("build") or "")
+
+
+def _bridge_liveness() -> dict:
+    """What the status file says about the EA being ALIVE, not just present.
+    run_monitor read only position_lots/build and printed 🟢 執行一致 from a
+    file the EA had stopped writing a day earlier (round-6f)."""
+    out = {"missing": False, "age_s": None, "legacy": False}
+    try:
+        st = bridge.read_status()
+    except Exception:
+        st = None
+    if not st:
+        out["missing"] = True
+        return out
+    now = datetime.now(timezone.utc).timestamp()
+    if st.get("ea_time") is not None:
+        out["age_s"] = now - float(st["ea_time"])
+    else:
+        out["legacy"] = True
+        try:
+            out["age_s"] = now - (bridge.common_files_dir() / bridge.STATUS_FILE).stat().st_mtime
+        except OSError:
+            out["age_s"] = None
+    return out
 
 
 def _live_position() -> str | None:
@@ -118,16 +158,22 @@ def main() -> None:
     actions = _actions(rid)
 
     trend_basis = live_pos = None
+    liveness = {"missing": False, "age_s": None, "legacy": False}
+    bars_age = None
     if args.kind == "fx":
         cfg = Settings(granularity=args.granularity, trend_sma=args.sma)
         trend_basis = _current_strategy_signal(cfg, args.instrument, args.history)
         live_pos = _live_position()
+        liveness = _bridge_liveness()
+        bars_age = _bars_age_h(bridge.read_bars(args.instrument, args.granularity))
 
     rep = monitor.build_report(
         initial_balance=run["initial_balance"], equity_values=eq_vals,
         span_days=span, actions=actions, live_position=live_pos,
         trend_basis=trend_basis, staleness_days=staleness,
-        last_ai_binding=_last_ai_binding(rid), ea_build=_ea_build())
+        last_ai_binding=_last_ai_binding(rid), ea_build=_ea_build(),
+        status_missing=liveness["missing"], ea_status_age_s=liveness["age_s"],
+        bars_age_h=bars_age)
 
     bal0 = rep["initial_balance"]; eq = rep["current_equity"]; s = rep["stats"]
     print("=" * 60)

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -144,6 +145,20 @@ def classify_exit(sig: dict) -> str:
     reason = (sig.get("reason") or "")
     if comp.get("trigger") == "stop" or reason.startswith("stop-loss"):
         return "stop"
+    trig = comp.get("trigger")
+    if trig == "cancel-unfilled":
+        return "cancel"
+    if trig in ("external-close", "restart-settle"):
+        # Since round-4 the stop is a REAL broker SL: a stop fill reaches the DB
+        # as the brain's reconciliation record, not as trigger=='stop'. It is a
+        # stop-out when the close price sits at/below the stop (round-6f).
+        px, sp = comp.get("price"), comp.get("stop_price")
+        if px is None:
+            m = re.search(r"detected at (\d+(?:\.\d+)?)", reason)
+            px = float(m.group(1)) if m else None
+        if px is not None and sp and float(px) <= float(sp) * 1.001:
+            return "stop"
+        return "external"
     if "veto" in reason:
         return "ai-veto"
     if "trend-down" in reason or comp.get("trend_up") is False:
@@ -180,6 +195,9 @@ def build_cycles(signals: list[dict]) -> tuple[list[dict], list[dict]]:
                 if pos > cur["lots"]:
                     cur["lots"] = pos
         else:
+            if cur is not None and comp.get("trigger") == "cancel-unfilled":
+                cur = None                        # never filled: not a cycle
+                continue
             if cur is not None:
                 cur["exit_sig"] = s
                 cur["exit_time"] = s["dt"]
@@ -234,8 +252,12 @@ def attach_pnl(cycles: list[dict], equity: list[dict]) -> None:
         exit_comp = c["exit_sig"]["comp"]
         # ストップは stop_price、それ以外は直近 equity の価格を出口価格の目安に
         exit_row = bal_at_or_before(c["exit_time"])
-        c["exit_price"] = exit_comp.get("stop_price") if c["trigger"] == "stop" else (
-            exit_row.get("price") if exit_row else None)
+        if c["trigger"] == "stop" and exit_comp.get("stop_price"):
+            c["exit_price"] = exit_comp.get("stop_price")
+        elif exit_comp.get("price"):
+            c["exit_price"] = exit_comp.get("price")     # brain-observed close price
+        else:
+            c["exit_price"] = exit_row.get("price") if exit_row else None
         after = first_after(c["exit_time"])
         if after is not None and c["entry_balance"] is not None:
             c["pnl"] = float(after["balance"]) - float(c["entry_balance"])
@@ -445,6 +467,7 @@ def _fmt_dt(dt: Optional[datetime]) -> str:
 
 
 _TRIGGER_JA = {"stop": "ストップ", "ai-veto": "AI拒否", "trend": "トレンド",
+               "external": "外部決済", "cancel": "取消",
                "other": "その他", "open": "保有中"}
 
 
