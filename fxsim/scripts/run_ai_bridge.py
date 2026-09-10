@@ -345,6 +345,27 @@ def _skew_from(ea_time, now: float, last_ea_time, prev_raw: Optional[float] = No
     return skew
 
 
+def _row_trust(st: dict, ea_build_seen: bool, buildless_streak: int):
+    """Is this status row's extended part usable? Returns
+    (torn, ea_build_seen, buildless_streak, note).
+
+    A six-column EA has been seen and this row has no build column -> one
+    such row is a torn read (blind for this poll). Two in a row is not a torn
+    read but an OLD EA re-attached: fall back to legacy (guess) mode with the
+    build warning, instead of staying blind — round-6e's guard was sticky and
+    one torn row left the brain blind for the life of the process, so the
+    fail-safe flattened a healthy long and nothing ever reconciled it."""
+    if st.get("build"):
+        return False, True, 0, ""
+    if not ea_build_seen:
+        return False, False, 0, ""
+    buildless_streak += 1
+    if buildless_streak >= 2:
+        return False, False, 0, ("status has had no build column for two polls — an "
+                                 "older EA is attached; running in legacy mode")
+    return True, True, buildless_streak, "row has no build column — torn read"
+
+
 def _status_frozen(ea_now, last_ea_time) -> bool:
     """A live EA rewrites its status every 30s, so its clock must advance
     between two polls (600s). Equal = the EA is not exporting (dead, detached,
@@ -794,6 +815,7 @@ def main() -> None:
     prev_raw_skew = None     # last raw (possibly untrusted) skew, for the stability test
     ea_build_seen = False    # a six-column EA has reported on this bridge
     torn_row = False
+    buildless_streak = 0     # consecutive build-less rows after a six-column EA
     ttl_s = int(args.signal_ttl_min * 60)
 
     while True:
@@ -819,16 +841,16 @@ def main() -> None:
                 # is NOT refreshed, so the stop-liveness heartbeat withholding
                 # engages after the grace and the EA fail-safe can act.
                 ea_now = st.get("ea_time")
-                if st.get("build"):
-                    ea_build_seen = True
-                elif ea_build_seen:
-                    # A six-column EA is on this bridge, yet this row has no
-                    # build: the row is torn (a cut inside position_lots reads
-                    # "0.0" = empty book -> a false external close). Blind.
+                # Judge THIS row (never history): a six-column EA is on this
+                # bridge, yet this row has no build -> torn (a cut inside
+                # position_lots reads "0.0" = empty book -> a false external
+                # close) -> blind for one poll. Two such rows = an older EA.
+                torn_row, ea_build_seen, buildless_streak, trust_note = _row_trust(
+                    st, ea_build_seen, buildless_streak)
+                if trust_note and not torn_row:
+                    print(f"[ai] WARNING: {trust_note}", flush=True)
+                if torn_row:
                     ea_now = None
-                    torn_row = True
-                else:
-                    torn_row = False
                 frozen_status = _status_frozen(ea_now, last_ea_time)
                 raw_now = (float(ea_now) - _time.time()) if ea_now is not None else None
                 sk = None if frozen_status else _skew_from(ea_now, _time.time(), last_ea_time,
@@ -836,7 +858,7 @@ def main() -> None:
                 prev_raw_skew = raw_now if (ea_now is not None and not frozen_status) else prev_raw_skew
                 if frozen_status or torn_row or (ea_now is not None and sk is None):
                     why = ("unchanged since last poll — the EA is not exporting" if frozen_status
-                           else "row has no build column — torn read" if torn_row
+                           else trust_note if torn_row
                            else f"not a plausible clock ({raw_now:+.0f}s off; if this repeats "
                                 f"next poll it is a real lag: run `wsl --shutdown`)")
                     print(f"[ai] EA status untrusted (ea_time {ea_now} {why}); treating this "
@@ -908,9 +930,22 @@ def main() -> None:
                     # in a downtrend, with a stop above the bid (round-6e).
                     print(f"[ai] cancelling UNFILLED order {order_seq}: trend turned down before "
                           f"the EA executed it", flush=True)
+                    cancelled = order_seq
                     intent, intent_lots, stop_price = "FLAT", 0.0, None
                     order_seq = _next_seq(order_seq, ea_exec_seq)
                     last_gate = _time.time()
+                    try:                          # else run_monitor reads the stale LONG as drift
+                        st3 = bridge.read_status()
+                        if st3 and (st3.get("balance") or 0) > 0:
+                            rid = _ongoing_run(st3["balance"], trader.model,
+                                               args.max_risk, args.granularity)
+                            db.record_signal(rid, now, args.instrument, "combined", 0, 0.0,
+                                             f"cancelled unfilled order {cancelled}: trend "
+                                             f"turned down before the EA executed it",
+                                             {"action": "FLAT", "trigger": "cancel-unfilled",
+                                              "seq": order_seq})
+                    except Exception as exc:
+                        print(f"[ai] cancel DB record failed: {exc}", flush=True)
                 if intent == "LONG" and pos >= FLAT_EPS:
                     seen_long = True              # the order was really filled
                     if pos < intent_lots - FLAT_EPS:

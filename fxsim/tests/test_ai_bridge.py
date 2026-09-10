@@ -658,3 +658,17 @@ def test_large_but_stable_skew_is_a_real_lag_not_a_torn_row():
     assert R._skew_from(now + lag, now, None) is None           # first sample: refuse
     assert R._skew_from(now + lag + 600, now + 600, now + lag, prev_raw=lag) == lag   # stable: accept
     assert R._skew_from(1800, now, None, prev_raw=lag) is None  # torn: not stable
+
+
+def test_torn_row_is_judged_per_row_and_a_downgrade_falls_back_to_legacy():
+    six = {"build": "r6e-status"}; three = {}
+    torn, seen, streak, note = R._row_trust(six, False, 0)
+    assert (torn, seen, streak) == (False, True, 0)
+    torn, seen, streak, note = R._row_trust(three, seen, streak)      # one torn row
+    assert torn and seen and streak == 1
+    torn, seen, streak, note = R._row_trust(six, seen, streak)        # good row -> trusted again
+    assert (torn, seen, streak) == (False, True, 0)                   # not sticky
+    torn, seen, streak, _ = R._row_trust(three, seen, streak)
+    torn, seen, streak, note = R._row_trust(three, seen, streak)      # second in a row
+    assert not torn and not seen and streak == 0 and "older EA" in note
+    assert R._row_trust(three, False, 0)[0] is False                  # old EA from the start
