@@ -169,6 +169,18 @@ py -3.12 -m scripts.run_monitor --kind stocks
   事前登録規則によりリバート。`FXSIM_DYN_LEV_POW=2` で再有効化可）。DDブレーキは
   **既定OFF**（初のバックテストでCAGR−4.3pp・DD悪化と判明。`FXSIM_DD_BRAKE=1`で復活）。
 
+## 実弾ドリル（Round-6 完全性批評家の指名：監査が代行できない唯一の検証）
+EA側の閉鎖証明はすべてPython転写モデル経由で、**本物のMQL5と本物のブローカーでは一度も確認されていない**。
+0.01ロット（往復スプレッド≒4円）で、Round-5/6で致命だった欠陥そのものを本番で確かめる：
+1. `steady_status.csv` の6列目が `r6e-status` であることを確認（EAが本当に新版か）
+2. `docker compose run --rm app python -m scripts.run_monitor` を**コンテナ内で**実行し、
+   `EA稼働`／`バー鮮度`／`バー本数`／`時計` の行が出る（＝新計器）ことを確認
+   ※Windowsの `py -3.12` で実行すると時計の系がMT5と同じになり、コンテナの時計遅れは見えない
+3. システムがロング中に、MT5の取引タブで建玉に **S/L が付いている**ことを確認
+4. その建玉を **MT5で手動決済**し60秒観察：**EAが買い戻さない**こと。10分以内に脳のログに
+   `book closed EXTERNALLY … adopting FLAT` が出ること
+5. 監視計器が2パス連続クリーンになるまで、🟢を理由にロットを増やさない
+
 ## Docker死活の運用（実際に死んでいた事例からの教訓）
 - コンテナ自体は `restart: unless-stopped` で自動復活するが、**Docker Desktopごと死ぬと無力**
   （Windows Update再起動・WSLのOOM・手動終了）。必ず：

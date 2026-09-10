@@ -152,10 +152,12 @@ def classify_exit(sig: dict) -> str:
         # Since round-4 the stop is a REAL broker SL: a stop fill reaches the DB
         # as the brain's reconciliation record, not as trigger=='stop'. It is a
         # stop-out when the close price sits at/below the stop (round-6f).
-        px, sp = comp.get("price"), comp.get("stop_price")
+        px, sp, low = comp.get("price"), comp.get("stop_price"), comp.get("low")
         if px is None:
             m = re.search(r"detected at (\d+(?:\.\d+)?)", reason)
             px = float(m.group(1)) if m else None
+        if sp and low is not None and float(low) <= float(sp):
+            return "stop"                     # the bar traded through the stop
         if px is not None and sp and float(px) <= float(sp) * 1.001:
             return "stop"
         return "external"
@@ -294,8 +296,9 @@ def count_consults(signals: list[dict]) -> dict:
     for s in signals:
         comp = s["comp"]
         trig = str(comp.get("trigger") or "")
-        if trig == "stop":
-            n["stop_records"] += 1
+        if trig == "stop" or (trig in ("external-close", "restart-settle")
+                              and classify_exit(s) == "stop"):
+            n["stop_records"] += 1        # broker-SL fills arrive as external closes
             continue
         if not any(trig.startswith(t) for t in _DECISION_TRIGGERS):
             continue
@@ -523,7 +526,7 @@ def render_report(data: dict, status: Optional[dict]) -> None:
         print("  (* は価格差からの概算。無印は残高差分=手数料・スワップ込み実測)")
         total = sum(c["pnl"] for c in cycles if c["pnl"] is not None)
         print(f"\n  出口別合計:")
-        for trig in ("stop", "ai-veto", "trend", "other"):
+        for trig in ("stop", "ai-veto", "trend", "external", "cancel", "other"):
             if trig in by_trig:
                 d = by_trig[trig]
                 print(f"    {_TRIGGER_JA[trig]:<6}: {d['n']:>3}回  {d['pnl']:>+12,.0f} 円")

@@ -159,13 +159,15 @@ def main() -> None:
 
     trend_basis = live_pos = None
     liveness = {"missing": False, "age_s": None, "legacy": False}
-    bars_age = None
+    bars_age = bars_count = bars_need = None
     if args.kind == "fx":
         cfg = Settings(granularity=args.granularity, trend_sma=args.sma)
         trend_basis = _current_strategy_signal(cfg, args.instrument, args.history)
         live_pos = _live_position()
         liveness = _bridge_liveness()
-        bars_age = _bars_age_h(bridge.read_bars(args.instrument, args.granularity))
+        _bars = bridge.read_bars(args.instrument, args.granularity)
+        bars_age = _bars_age_h(_bars)
+        bars_count, bars_need = len(_bars), args.sma + 5
 
     rep = monitor.build_report(
         initial_balance=run["initial_balance"], equity_values=eq_vals,
@@ -173,7 +175,7 @@ def main() -> None:
         trend_basis=trend_basis, staleness_days=staleness,
         last_ai_binding=_last_ai_binding(rid), ea_build=_ea_build(),
         status_missing=liveness["missing"], ea_status_age_s=liveness["age_s"],
-        bars_age_h=bars_age)
+        bars_age_h=bars_age, bars_count=bars_count, bars_need=bars_need)
 
     bal0 = rep["initial_balance"]; eq = rep["current_equity"]; s = rep["stats"]
     print("=" * 60)

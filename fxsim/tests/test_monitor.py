@@ -149,3 +149,14 @@ def test_live_bridge_keeps_the_old_verdict():
                 ea_status_age_s=20.0, bars_age_h=1.0)
     assert not any(c["name"] in ("EA稼働", "バー鮮度", "時計") for c in r["checks"])
     assert any(c["name"] == "執行一致" and c["flag"] == monitor.GREEN for c in r["checks"])
+
+
+def test_short_or_missing_bars_are_red_and_block_the_match():
+    for n in (0, 1000, 2404):
+        r = _report(actions=["LONG"], live_position="LONG", trend_basis=None,
+                    bars_count=n, bars_need=2405, bars_age_h=1.0 if n else None)
+        assert any(c["name"] == "バー本数" and c["flag"] == monitor.RED for c in r["checks"]), n
+        assert not any(c["name"] == "執行一致" and c["flag"] == monitor.GREEN for c in r["checks"]), n
+    r = _report(actions=["LONG"], live_position="LONG", trend_basis="LONG",
+                bars_count=2500, bars_need=2405, bars_age_h=1.0)
+    assert not any(c["name"] == "バー本数" for c in r["checks"])

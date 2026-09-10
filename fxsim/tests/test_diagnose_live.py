@@ -317,3 +317,35 @@ def test_cancelled_unfilled_order_is_not_a_cycle():
     ]
     cycles, _ = D.build_cycles(sigs)
     assert [c["trigger"] for c in cycles] == ["stop"]        # the cancelled one never existed
+
+
+def test_spike_through_the_stop_that_snapped_back_is_still_a_stop_out():
+    sig = {"reason": "external close detected at 159.400 (was LONG 0.09, stop 159.0)",
+           "comp": {"action": "FLAT", "trigger": "external-close", "stop_price": 159.0,
+                    "price": 159.4, "low": 158.95}}          # bar traded through the stop
+    assert D.classify_exit(sig) == "stop"
+    sig["comp"]["low"] = 159.2                                # never reached the stop
+    assert D.classify_exit(sig) == "external"
+
+
+def test_exit_breakdown_covers_every_label_and_counts_external_stops():
+    from datetime import datetime, timezone, timedelta
+    t0 = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    sigs = [
+        {"direction": 1, "dt": t0, "reason": "trend-up",
+         "comp": {"action": "LONG", "trigger": "gate-entry", "target_lots": 0.09, "stop_price": 150.0}},
+        {"direction": 0, "dt": t0 + timedelta(hours=5), "reason": "external close detected at 152.000 (was LONG 0.09, stop 150.0)",
+         "comp": {"action": "FLAT", "trigger": "external-close", "stop_price": 150.0, "price": 152.0, "low": 151.5}},
+        {"direction": 1, "dt": t0 + timedelta(hours=30), "reason": "trend-up",
+         "comp": {"action": "LONG", "trigger": "gate-entry", "target_lots": 0.09, "stop_price": 151.0}},
+        {"direction": 0, "dt": t0 + timedelta(hours=60), "reason": "external close detected at 150.900 (was LONG 0.09, stop 151.0)",
+         "comp": {"action": "FLAT", "trigger": "external-close", "stop_price": 151.0, "price": 150.9}},
+    ]
+    cycles, _ = D.build_cycles(sigs)
+    assert [c["trigger"] for c in cycles] == ["external", "stop"]
+    for c in cycles:
+        c["pnl"] = 1000.0
+    by = D.pnl_by_trigger(cycles)
+    assert set(by) == {"external", "stop"} and all(k in D._TRIGGER_JA for k in by)
+    n = D.count_consults(sigs)
+    assert n["stop_records"] == 1                          # the external stop-out counts

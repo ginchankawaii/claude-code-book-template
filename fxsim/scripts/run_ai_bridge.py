@@ -419,6 +419,10 @@ def _trend_gate(instrument: str, granularity: str, sma_n: int,
     closes = [c.close for c in candles]
     price = float(closes[-1])
     ma = sum(closes[-sma_n:]) / float(sma_n)
+    # The lowest low of the last two bars rides along for the exit record: a
+    # broker stop that filled on a spike and snapped back is still a stop-out,
+    # which the detection-time close alone cannot show (round-6g).
+    status["_low2"] = float(min(c.low for c in candles[-2:]))
     return price > ma, price, float(status.get("position_lots") or 0.0), status
 
 
@@ -922,6 +926,15 @@ def main() -> None:
                     intent_lots = pos      # after a restart: adopt the book's size
                     # (dust below FLAT_EPS is NOT adopted: heartbeating "LONG 0.00"
                     # reads to the EA as close-everything — Round-4 chaos (c))
+                if (intent == "LONG" and not seen_long and pos < FLAT_EPS
+                        and order_seq > 0 and ea_exec_seq >= order_seq):
+                    # The EA attests it executed (or adopted) this very order,
+                    # and the book is empty: the position was filled and then
+                    # closed while this brain was not watching (restart, or a
+                    # fill-then-crash inside one EA tick). Treat it as seen so
+                    # the external-close branch records the exit instead of a
+                    # silent fresh re-entry with no FLAT row between (round-6g).
+                    seen_long = True
                 if intent == "LONG" and not seen_long and pos < FLAT_EPS and not trend_up:
                     # An order the EA never filled (outage, algo trading off)
                     # whose premise is gone: the gate cannot see it (flat book
@@ -978,7 +991,8 @@ def main() -> None:
                                              f"external close detected at {price:.3f} "
                                              f"(was LONG {intent_lots:.2f}, stop {stop_price})",
                                              {"action": "FLAT", "trigger": "external-close",
-                                              "stop_price": stop_price, "price": price})
+                                              "stop_price": stop_price, "price": price,
+                                              "low": st.get("_low2")})
                     except Exception as exc:
                         print(f"[ai] external-close DB record failed: {exc}", flush=True)
                     intent, intent_lots, stop_price = "FLAT", 0.0, None

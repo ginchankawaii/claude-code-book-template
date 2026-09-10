@@ -83,7 +83,9 @@ def build_report(*, initial_balance: float, equity_values: list[float],
                  ea_build: str | None = None,
                  status_missing: bool = False,
                  ea_status_age_s: float | None = None,
-                 bars_age_h: float | None = None) -> dict:
+                 bars_age_h: float | None = None,
+                 bars_count: int | None = None,
+                 bars_need: int | None = None) -> dict:
     """Assemble the health report + per-check flags + an overall verdict."""
     st = equity_stats(equity_values)
     years = max(span_days, 0.0) / 365.25
@@ -170,7 +172,17 @@ def build_report(*, initial_balance: float, equity_values: list[float],
         checks.append({"name": "時計", "flag": RED,
                        "msg": f"MT5の時計がコンテナより{-ea_status_age_s:.0f}秒進んでいる：WSL2の時計ズレ → "
                               f"`wsl --shutdown` してDocker Desktopを再起動"})
-    if bars_age_h is not None and bars_age_h > MAX_BAR_AGE_H:
+    if bars_count is not None and bars_need is not None and bars_count < bars_need:
+        # The brain cannot decide on fewer bars than SMA+5 and goes blind
+        # (heartbeat withheld, EA flattens at EXP). A missing or short feed
+        # is a documented setup hazard (terminal history not downloaded,
+        # InpBars too small) and was reported 🟢 (round-6g).
+        bridge_stale = True
+        checks.append({"name": "バー本数", "flag": RED,
+                       "msg": f"バーが{bars_count}本（{bars_need}本必要）：脳はこのフィードで判断できず盲目→"
+                              f"心拍停止→EAがEXPで決済する状態 → MT5でUSDJPYのH1チャートを開いてHomeで履歴を"
+                              f"遡る／EAの InpBars≥2500 を確認（docs/AI_TRADER.md）"})
+    elif bars_age_h is not None and bars_age_h > MAX_BAR_AGE_H:
         bridge_stale = True
         checks.append({"name": "バー鮮度", "flag": RED,
                        "msg": f"バーが{bars_age_h:.0f}時間前で止まっている（>{MAX_BAR_AGE_H:.0f}h）：脳はこの"
