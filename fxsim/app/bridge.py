@@ -27,7 +27,7 @@ SIGNAL_FILE = "steady_signal.txt"
 # The EA build this brain's protocol assumes (mt5_ea/SteadyBridge.mq5 EA_BUILD).
 # The EA reports its build in the status file; anything else means a fix that
 # lives in the EA is not actually running on the chart.
-EA_BUILD_EXPECTED = "r6d-status"
+EA_BUILD_EXPECTED = "r6e-status"
 
 
 def common_files_dir() -> Path:

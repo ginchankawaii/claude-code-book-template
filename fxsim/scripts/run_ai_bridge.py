@@ -320,18 +320,27 @@ def _touch_lock(lock: Optional[Path], poll: int) -> None:
 MAX_SKEW_TRUST_S = 24 * 3600.0
 
 
-def _skew_from(ea_time, now: float, last_ea_time) -> Optional[float]:
+def _skew_from(ea_time, now: float, last_ea_time, prev_raw: Optional[float] = None
+               ) -> Optional[float]:
     """MT5 clock minus container clock from one status sample, or None when the
     sample cannot be trusted: absent, going BACKWARDS (torn row / clock reset),
     or absurdly far from now (a truncated number). An untrusted sample must not
     correct EXP: one bad read would otherwise write an EXP already in the past
-    and the EA would flatten a healthy long within 30s (round-6c)."""
+    and the EA would flatten a healthy long within 30s (round-6c).
+
+    A skew beyond MAX_SKEW_TRUST_S is accepted only when it is the SAME skew as
+    the previous sample (`prev_raw`, within 60s): a torn number cannot repeat
+    across two polls, a real multi-day WSL2 lag after a long sleep does — and
+    refusing it forever left the brain permanently blind, never reconciling
+    the fail-safe close nor re-entering, until wsl --shutdown (round-6e)."""
     if ea_time is None:
         return None
     if last_ea_time is not None and ea_time < last_ea_time:
         return None
     skew = float(ea_time) - now
     if abs(skew) > MAX_SKEW_TRUST_S:
+        if prev_raw is not None and abs(skew - prev_raw) < 60.0:
+            return skew
         return None
     return skew
 
@@ -782,6 +791,9 @@ def main() -> None:
     frozen_status = False
     skew_samples = 0         # consecutive trusted, advancing clock samples
     prev_skew = 0.0
+    prev_raw_skew = None     # last raw (possibly untrusted) skew, for the stability test
+    ea_build_seen = False    # a six-column EA has reported on this bridge
+    torn_row = False
     ttl_s = int(args.signal_ttl_min * 60)
 
     while True:
@@ -807,11 +819,26 @@ def main() -> None:
                 # is NOT refreshed, so the stop-liveness heartbeat withholding
                 # engages after the grace and the EA fail-safe can act.
                 ea_now = st.get("ea_time")
+                if st.get("build"):
+                    ea_build_seen = True
+                elif ea_build_seen:
+                    # A six-column EA is on this bridge, yet this row has no
+                    # build: the row is torn (a cut inside position_lots reads
+                    # "0.0" = empty book -> a false external close). Blind.
+                    ea_now = None
+                    torn_row = True
+                else:
+                    torn_row = False
                 frozen_status = _status_frozen(ea_now, last_ea_time)
-                sk = None if frozen_status else _skew_from(ea_now, _time.time(), last_ea_time)
-                if frozen_status or (ea_now is not None and sk is None):
+                raw_now = (float(ea_now) - _time.time()) if ea_now is not None else None
+                sk = None if frozen_status else _skew_from(ea_now, _time.time(), last_ea_time,
+                                                           prev_raw_skew)
+                prev_raw_skew = raw_now if (ea_now is not None and not frozen_status) else prev_raw_skew
+                if frozen_status or torn_row or (ea_now is not None and sk is None):
                     why = ("unchanged since last poll — the EA is not exporting" if frozen_status
-                           else "not a plausible clock (torn row or reset)")
+                           else "row has no build column — torn read" if torn_row
+                           else f"not a plausible clock ({raw_now:+.0f}s off; if this repeats "
+                                f"next poll it is a real lag: run `wsl --shutdown`)")
                     print(f"[ai] EA status untrusted (ea_time {ea_now} {why}); treating this "
                           f"probe as blind and skipping scheduled decisions", flush=True)
                     probe = None
@@ -873,6 +900,17 @@ def main() -> None:
                     intent_lots = pos      # after a restart: adopt the book's size
                     # (dust below FLAT_EPS is NOT adopted: heartbeating "LONG 0.00"
                     # reads to the EA as close-everything — Round-4 chaos (c))
+                if intent == "LONG" and not seen_long and pos < FLAT_EPS and not trend_up:
+                    # An order the EA never filled (outage, algo trading off)
+                    # whose premise is gone: the gate cannot see it (flat book
+                    # == trend down), so the heartbeat would re-arm a stale
+                    # entry with a fresh EXP and the EA would buy it on return,
+                    # in a downtrend, with a stop above the bid (round-6e).
+                    print(f"[ai] cancelling UNFILLED order {order_seq}: trend turned down before "
+                          f"the EA executed it", flush=True)
+                    intent, intent_lots, stop_price = "FLAT", 0.0, None
+                    order_seq = _next_seq(order_seq, ea_exec_seq)
+                    last_gate = _time.time()
                 if intent == "LONG" and pos >= FLAT_EPS:
                     seen_long = True              # the order was really filled
                     if pos < intent_lots - FLAT_EPS:

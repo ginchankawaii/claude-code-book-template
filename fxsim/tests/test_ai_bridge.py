@@ -650,3 +650,11 @@ def test_skew_sample_is_trusted_only_when_plausible_and_advancing():
     assert R._skew_from(1800, now, 1799999400) is None              # torn: decades off
     assert R._skew_from(1799999000, now, 1799999400) is None        # clock went backwards
     assert R._skew_from(1800000000 - 5 * 3600, now, None) == -5 * 3600.0   # a real lag
+
+
+def test_large_but_stable_skew_is_a_real_lag_not_a_torn_row():
+    now = 1800000000.0
+    lag = -30 * 3600                                           # PC slept 30h
+    assert R._skew_from(now + lag, now, None) is None           # first sample: refuse
+    assert R._skew_from(now + lag + 600, now + 600, now + lag, prev_raw=lag) == lag   # stable: accept
+    assert R._skew_from(1800, now, None, prev_raw=lag) is None  # torn: not stable

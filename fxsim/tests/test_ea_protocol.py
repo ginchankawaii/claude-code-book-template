@@ -23,12 +23,16 @@ from app import bridge
 class FakeEA:
     """ProcessSignal(), transcribed. `lots` is the broker's actual book."""
 
-    def __init__(self, lots=0.0, exec_seq=0):
+    def __init__(self, lots=0.0, exec_seq=0, bid=160.0):
         self.lots = lots               # what the broker holds
         self.exec_seq = exec_seq       # persisted in a terminal GlobalVariable
         self.exec_key = ""
         self.sl = 0.0
+        self.bid = bid                 # ValidLongSL: a stop must sit below the bid
         self.actions: list[str] = []
+
+    def _valid_sl(self, sl):
+        return sl if (sl > 0 and sl < self.bid - 0.001) else 0.0
 
     def _is_new_order(self, seq, key):
         return seq > self.exec_seq if seq else key != self.exec_key   # r6: strictly greater
@@ -60,7 +64,7 @@ class FakeEA:
                 self.actions.append("expire-closeall")
             return
         target = sig["lots"] if sig["action"] == "LONG" else 0.0
-        if self.lots > 0 and sl_px > 0:            # ApplyStopLoss
+        if self.lots > 0 and self._valid_sl(sl_px) > 0:   # ApplyStopLoss
             self.sl = sl_px
         if target == 0.0:                          # closing is never gated
             if self.lots:
@@ -70,6 +74,9 @@ class FakeEA:
         if self.lots == 0.0:
             if not self._is_new_order(seq, key):
                 self.actions.append("held-flat")
+                return
+            if sl_px > 0 and self._valid_sl(sl_px) <= 0:      # r6e: never open stop-less
+                self.actions.append("refused-stop-through-market")
                 return
             self.lots, self.sl = target, sl_px
             self.actions.append(f"buy {target:.2f}")
@@ -285,3 +292,17 @@ def test_hard_crash_after_an_entry_does_not_lose_the_executed_id(tmp_path):
     _heartbeat(tmp_path, 0.09, seq=1800000000)       # the standing line, still live
     ea.tick(tmp_path)
     assert ea.lots == 0.0, "re-bought after a crash: the executed id was not flushed"
+
+
+def test_entry_whose_stop_is_already_through_the_market_is_refused(tmp_path):
+    # Opening it would create a position with NO broker stop whose exit
+    # condition is already true; the brain re-decides on its next gate tick.
+    ea = FakeEA(lots=0.0, exec_seq=0, bid=149.0)
+    _heartbeat(tmp_path, 0.09, seq=1800000000, sl=149.5)     # stop above bid
+    ea.tick(tmp_path)
+    assert ea.lots == 0.0 and ea.actions == ["refused-stop-through-market"]
+    assert ea.exec_seq == 0                                    # id stays unexecuted
+    ea.bid = 150.2                                             # market recovers
+    _heartbeat(tmp_path, 0.09, seq=1800000000, sl=149.5)
+    ea.tick(tmp_path)
+    assert ea.lots == 0.09 and ea.sl == 149.5

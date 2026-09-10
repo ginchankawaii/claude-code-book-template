@@ -30,7 +30,7 @@ input double InpResizePct     = 0.20;    // ... or >= this fraction of current s
 
 // Bumped whenever the EA's execution behaviour changes, so the operator can
 // tell a recompiled EA from a stale one at a glance — the input dialog cannot.
-#define EA_BUILD "r6d-status"
+#define EA_BUILD "r6e-status"
 
 CTrade trade;
 datetime g_expiry = 0;   // last EXP token seen on the signal (0 = heartbeat-less)
@@ -169,7 +169,12 @@ void ExportAll()
          FileClose(h);
       }
    }
-   int hs = FileOpen(InpStatusFile, FILE_WRITE|FILE_CSV|FILE_ANSI|FILE_COMMON, ',');
+   // Written to a temp name and MOVED into place: FileOpen(FILE_WRITE)
+   // truncates first, so a reader on the Docker share could see an empty or
+   // half-written row — "0.0" for a 0.090 book read as an empty book, and the
+   // brain flattened a healthy long as an "external close" (round-6e).
+   string tmp_status = InpStatusFile + ".tmp";
+   int hs = FileOpen(tmp_status, FILE_WRITE|FILE_CSV|FILE_ANSI|FILE_COMMON, ',');
    if(hs != INVALID_HANDLE)
    {
       // Columns 4-6 (round-6b) let the brain stop GUESSING: which id this EA
@@ -190,6 +195,8 @@ void ExportAll()
          (string)(long)TimeGMT(),
          EA_BUILD);
       FileClose(hs);
+      if(!FileMove(tmp_status, FILE_COMMON, InpStatusFile, FILE_COMMON|FILE_REWRITE))
+         Print("SteadyBridge: FileMove of the status file failed, error ", GetLastError());
    }
 }
 
@@ -372,6 +379,17 @@ void ProcessSignal()
          return;
       }
       g_held_ticks = 0;
+      // The brain's stop is already at/through the market (a fast move in the
+      // <=60s between its bar read and this tick): opening now would create a
+      // position with NO broker stop whose exit condition is already true.
+      // Refuse — the id stays unexecuted, and the brain re-decides on its next
+      // gate tick with a stop from the current price (round-6e).
+      if(sl_px > 0 && ValidLongSL(sl_px) <= 0)
+      {
+         Print("SteadyBridge: order ", seq, " has stop ", DoubleToString(sl_px, 3),
+               " at/through the market — not opening without a stop; waiting for a new decision.");
+         return;
+      }
       if(trade.Buy(MathAbs(target), InpSymbol, 0.0, ValidLongSL(sl_px), 0.0))
          CommitExec(seq, order_key);
       return;
