@@ -120,6 +120,58 @@ def _bridge_liveness() -> dict:
     return out
 
 
+def _brain_liveness() -> dict:
+    """The brain's own heartbeat, read the way the EA's is: from the file it
+    writes. Nothing read this before round-7 — the only brain signal was the
+    age of the newest DB row, and a brain wedged before the resident loop
+    writes no rows at all, so a 68-hour outage looked like a quiet market."""
+    out = {"signal_age_s": None, "expired": None}
+    try:
+        path = bridge.common_files_dir() / bridge.SIGNAL_FILE
+        out["signal_age_s"] = datetime.now(timezone.utc).timestamp() - path.stat().st_mtime
+        sig = bridge.read_signal()
+        if sig and sig.get("expires_at"):
+            out["expired"] = datetime.now(timezone.utc).timestamp() > float(sig["expires_at"])
+    except OSError:
+        pass
+    return out
+
+
+def _last_decision_age_s(rid: int) -> float | None:
+    """Age of the newest real decision. A brain that is up but blocked writes
+    only blocked-on-lock rows; those must not read as a decision."""
+    for s in reversed(db.load_signals(rid)):
+        if s.get("source") != "combined":
+            continue
+        try:
+            comp = json.loads(s["components"]) if s.get("components") else {}
+        except (json.JSONDecodeError, TypeError):
+            comp = {}
+        if comp.get("trigger") == "blocked-on-lock":
+            continue
+        try:
+            t = datetime.fromisoformat(str(s.get("time")))
+        except ValueError:
+            return None
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - t).total_seconds()
+    return None
+
+
+def _blocked_on_lock(rid: int) -> str | None:
+    """The newest row, if the brain is reporting itself blocked."""
+    for s in reversed(db.load_signals(rid)):
+        if s.get("source") != "combined":
+            continue
+        try:
+            comp = json.loads(s["components"]) if s.get("components") else {}
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return str(s.get("reason") or "") if comp.get("trigger") == "blocked-on-lock" else None
+    return None
+
+
 def _live_position() -> str | None:
     try:
         s = bridge.read_status()
@@ -159,12 +211,14 @@ def main() -> None:
 
     trend_basis = live_pos = None
     liveness = {"missing": False, "age_s": None, "legacy": False}
+    brain = {"signal_age_s": None, "expired": None}
     bars_age = bars_count = bars_need = None
     if args.kind == "fx":
         cfg = Settings(granularity=args.granularity, trend_sma=args.sma)
         trend_basis = _current_strategy_signal(cfg, args.instrument, args.history)
         live_pos = _live_position()
         liveness = _bridge_liveness()
+        brain = _brain_liveness()
         _bars = bridge.read_bars(args.instrument, args.granularity)
         bars_age = _bars_age_h(_bars)
         bars_count, bars_need = len(_bars), args.sma + 5
@@ -175,7 +229,9 @@ def main() -> None:
         trend_basis=trend_basis, staleness_days=staleness,
         last_ai_binding=_last_ai_binding(rid), ea_build=_ea_build(),
         status_missing=liveness["missing"], ea_status_age_s=liveness["age_s"],
-        bars_age_h=bars_age, bars_count=bars_count, bars_need=bars_need)
+        bars_age_h=bars_age, bars_count=bars_count, bars_need=bars_need,
+        brain_signal_age_s=brain["signal_age_s"], signal_expired=brain["expired"],
+        last_decision_age_s=_last_decision_age_s(rid), blocked_on_lock=_blocked_on_lock(rid))
 
     bal0 = rep["initial_balance"]; eq = rep["current_equity"]; s = rep["stats"]
     print("=" * 60)

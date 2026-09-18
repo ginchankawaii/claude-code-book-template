@@ -67,3 +67,28 @@ def test_backtest_bars_are_clamped(monkeypatch):
     monkeypatch.setattr(srv, "get_provider", lambda name=None: _P())
     r = client.post("/api/backtest", json={"provider": "sample", "bars": 10_000_000})
     assert seen["bars"] == srv.MAX_BACKTEST_BARS and r.status_code == 400   # 400: no candles
+
+
+# ---- round-7: the phone page must not show a green dot for a dead brain ----
+
+def test_api_live_reports_stalled_when_the_brain_heartbeat_is_old(monkeypatch, tmp_path):
+    monkeypatch.setattr(srv, "_DASH_PASS", ""); monkeypatch.setattr(srv, "_TUNNEL_TOKEN", "")
+    import time
+    from app import bridge
+    monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
+    (tmp_path / bridge.SIGNAL_FILE).write_text("FLAT 0.00 SEQ 1 EXP 2\n")
+    old = time.time() - 68 * 3600
+    import os
+    os.utime(tmp_path / bridge.SIGNAL_FILE, (old, old))
+    monkeypatch.setattr(srv.db, "latest_live_run_id", lambda kind=None: 1)
+    monkeypatch.setattr(srv.db, "get_run", lambda rid: {"id": 1, "instrument": "USD_JPY",
+                                                        "granularity": "H1", "ended_at": None,
+                                                        "initial_balance": 272000.0})
+    for fn in ("load_equity", "list_trades", "load_adjustments"):
+        monkeypatch.setattr(srv.db, fn, lambda *a, **k: [])
+    monkeypatch.setattr(srv, "_recent_decisions", lambda rid: [])
+    monkeypatch.setattr(srv, "_latest_holdings", lambda rid: [])
+    monkeypatch.setattr(bridge, "read_status", lambda *a, **k: None)
+    d = client.get("/api/live?kind=fx").json()
+    assert d["status"] == "stalled"
+    assert d["health"]["healthy"] is False and "脳の心拍" in d["health"]["why"]

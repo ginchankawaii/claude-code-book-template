@@ -58,9 +58,11 @@ def test_legit_opus_veto_is_not_drift():
 
 
 def test_staleness_flags_yellow():
+    # Thresholds follow the loop's own cadence (round-7): one daily gap (20h)
+    # yellow, 1.5 gaps red. 1.0 day is one missed decision — yellow.
     rep = monitor.build_report(initial_balance=500000, equity_values=[500000, 500000],
                                span_days=120, actions=["LONG"], live_position="LONG",
-                               staleness_days=3.0)
+                               staleness_days=1.0)
     st = next(c for c in rep["checks"] if c["name"] == "稼働鮮度")
     assert st["flag"] == YELLOW
 
@@ -86,7 +88,11 @@ def test_dead_brain_is_red_not_yellow():
     r = _report(staleness_days=13.0)
     assert r["worst"] == monitor.RED
     assert any(c["name"] == "稼働鮮度" and c["flag"] == monitor.RED for c in r["checks"])
-    assert _report(staleness_days=2.0)["worst"] != monitor.RED       # a long weekend
+    # Round-7: the real outage was 2.82 days and the old 3-day threshold rated
+    # it 🟡. The brain decides at least every 20h, so 1.5 cycles is already red.
+    assert any(c["name"] == "稼働鮮度" and c["flag"] == monitor.RED
+               for c in _report(staleness_days=2.82)["checks"])
+    assert _report(staleness_days=0.5)["worst"] != monitor.RED       # a weekend
 
 
 def test_old_ea_build_is_red():
@@ -160,3 +166,41 @@ def test_short_or_missing_bars_are_red_and_block_the_match():
     r = _report(actions=["LONG"], live_position="LONG", trend_basis="LONG",
                 bars_count=2500, bars_need=2405, bars_age_h=1.0)
     assert not any(c["name"] == "バー本数" for c in r["checks"])
+
+
+# ---- round-7: the brain must be judged by its own heartbeat ---------------
+
+def test_brain_heartbeat_stale_is_red_and_blocks_the_match():
+    r = _report(actions=["FLAT"], live_position="FLAT", brain_signal_age_s=68 * 3600.0)
+    assert any(c["name"] == "脳稼働" and c["flag"] == monitor.RED for c in r["checks"])
+    assert r["worst"] == monitor.RED
+    # the exact 67.7h outage shape: brain dead, book flat, decision matches
+    assert not any(c["name"] == "執行一致" and c["flag"] == monitor.GREEN for c in r["checks"])
+
+
+def test_blocked_on_lock_is_named_with_its_remedy():
+    r = _report(actions=["FLAT"], live_position="FLAT", brain_signal_age_s=10.0,
+                blocked_on_lock="BLOCKED on the brain lock for 4065 min: unreadable")
+    c = next(c for c in r["checks"] if c["name"] == "脳稼働")
+    assert c["flag"] == monitor.RED and "steady_brain.lock" in c["msg"]
+
+
+def test_a_decision_older_than_a_daily_gap_cannot_be_a_green_match():
+    r = _report(actions=["FLAT"], live_position="FLAT", brain_signal_age_s=10.0,
+                last_decision_age_s=30 * 3600.0)
+    assert not any(c["name"] == "執行一致" and c["flag"] == monitor.GREEN for c in r["checks"])
+    r = _report(actions=["FLAT"], live_position="FLAT", brain_signal_age_s=10.0,
+                last_decision_age_s=2 * 3600.0)
+    assert any(c["name"] == "執行一致" and c["flag"] == monitor.GREEN for c in r["checks"])
+
+
+def test_live_brain_still_reads_green():
+    r = _report(actions=["LONG"], live_position="LONG", trend_basis="LONG",
+                brain_signal_age_s=45.0, ea_status_age_s=20.0, bars_age_h=1.0,
+                bars_count=2500, bars_need=2405, last_decision_age_s=3600.0,
+                staleness_days=0.1)
+    assert r["worst"] != monitor.RED          # only the data-insufficiency yellow
+    assert any(c["name"] == "脳稼働" and c["flag"] == monitor.GREEN for c in r["checks"])
+    assert any(c["name"] == "執行一致" and c["flag"] == monitor.GREEN for c in r["checks"])
+    assert not any(c["name"] in ("EA稼働", "バー鮮度", "バー本数", "時計", "稼働鮮度")
+                   for c in r["checks"])

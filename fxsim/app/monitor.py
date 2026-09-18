@@ -17,7 +17,8 @@ scripts/run_monitor.py CLI feeds them data from the DB + the live bar feed.
 """
 from __future__ import annotations
 
-from .bridge import EA_BUILD_EXPECTED, EA_STATUS_STALE_S, MAX_BAR_AGE_H
+from .bridge import (BRAIN_SIGNAL_STALE_S, EA_BUILD_EXPECTED,
+                     EA_STATUS_STALE_S, MAX_BAR_AGE_H)
 
 from datetime import datetime
 
@@ -85,7 +86,12 @@ def build_report(*, initial_balance: float, equity_values: list[float],
                  ea_status_age_s: float | None = None,
                  bars_age_h: float | None = None,
                  bars_count: int | None = None,
-                 bars_need: int | None = None) -> dict:
+                 bars_need: int | None = None,
+                 brain_signal_age_s: float | None = None,
+                 signal_expired: bool | None = None,
+                 last_decision_age_s: float | None = None,
+                 blocked_on_lock: str | None = None,
+                 daily_gap_h: float = 20.0) -> dict:
     """Assemble the health report + per-check flags + an overall verdict."""
     st = equity_stats(equity_values)
     years = max(span_days, 0.0) / 365.25
@@ -145,13 +151,39 @@ def build_report(*, initial_balance: float, equity_values: list[float],
     #     records equity on every decision and decides at least every 20h, so
     #     >3 days is never normal — before round-6 this could only ever be
     #     YELLOW, and a brain dead for weeks reported "観察" (I10). ---
-    if staleness_days is not None and staleness_days > 3.0:
+    stale_red_d = max(1.0, daily_gap_h * 1.5 / 24.0)     # 1.5 decision cycles
+    if staleness_days is not None and staleness_days > stale_red_d:
         checks.append({"name": "稼働鮮度", "flag": RED,
                        "msg": f"最終更新が{staleness_days:.1f}日前：脳（fxコンテナ）が停止している疑い → "
                               f"`docker compose ps` / `docker compose logs fx` を確認し `docker compose up -d fx`"})
-    elif staleness_days is not None and staleness_days > 1.5:
+    elif staleness_days is not None and staleness_days > daily_gap_h / 24.0:
         checks.append({"name": "稼働鮮度", "flag": YELLOW,
                        "msg": f"最終更新が{staleness_days:.1f}日前（週末以外なら run_ai_bridge の稼働を確認）"})
+
+    # --- brain liveness (round-7): judge the brain by its own heartbeat, the
+    #     way the EA is judged by its status file. Before this the only brain
+    #     signal was the age of the newest DB row, so the 67.7-hour outage —
+    #     during which the brain wrote NOTHING — was rated 🟡「観察（想定内）」. ---
+    brain_dead = False
+    if blocked_on_lock:
+        brain_dead = True
+        checks.append({"name": "脳稼働", "flag": RED,
+                       "msg": f"脳がロック待ちで止まっています（取引していません）: {blocked_on_lock} → "
+                              f"`docker compose ps` で二重起動を確認し、無ければ "
+                              f"Common\\Files の steady_brain.lock を削除して "
+                              f"`docker compose restart fx`"})
+    elif brain_signal_age_s is not None and brain_signal_age_s > BRAIN_SIGNAL_STALE_S:
+        brain_dead = True
+        checks.append({"name": "脳稼働", "flag": RED,
+                       "msg": f"脳の心拍が{brain_signal_age_s / 60:.0f}分前で止まっています "
+                              f"（>{BRAIN_SIGNAL_STALE_S / 60:.0f}分）→ `docker compose logs fx` を"
+                              f"確認し `docker compose restart fx`"})
+    elif brain_signal_age_s is not None:
+        checks.append({"name": "脳稼働", "flag": GREEN,
+                       "msg": f"心拍 {brain_signal_age_s:.0f}秒前"})
+    elif blocked_on_lock is None and brain_signal_age_s is None:
+        checks.append({"name": "脳稼働", "flag": YELLOW,
+                       "msg": "シグナルファイルが読めず脳の生存を判定できません（共有フォルダを確認）"})
 
     # --- bridge liveness (round-6f): a status file the EA stopped writing,
     #     a missing file, or bars the brain refuses all made 執行一致 read
@@ -199,7 +231,17 @@ def build_report(*, initial_balance: float, equity_values: list[float],
     #     trend — the live system has an Opus veto layer, so a legitimate FLAT
     #     decision must not be mis-flagged as drift). ---
     last_decision = actions[-1].upper() if actions else None
-    if bridge_stale and live_position:
+    stale_decision = (last_decision_age_s is not None
+                      and last_decision_age_s > daily_gap_h * 3600)
+    if (bridge_stale or brain_dead or stale_decision) and live_position:
+        # A match computed from a frozen file, or against a decision the brain
+        # made days ago, is not a match — and this 🟢 is the documented
+        # criterion for going live and for increasing size (round-7).
+        why = ("脳が停止" if brain_dead else
+               "判断が古い" if stale_decision else "ブリッジ（status/バー）が古い")
+        checks.append({"name": "執行一致", "flag": YELLOW,
+                       "msg": f"判定不能：{why}ため、建玉の一致は凍結した状態との一致にすぎません"})
+    elif bridge_stale and live_position:
         # A match against a frozen file is not a match (round-6f).
         checks.append({"name": "執行一致", "flag": YELLOW,
                        "msg": "判定不能：ブリッジ（status/バー）が古いため、建玉の一致は凍結ファイルとの一致"})

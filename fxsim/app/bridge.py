@@ -35,6 +35,11 @@ MAX_BAR_AGE_H = 75.0
 # the EA is not exporting (the brain's own liveness rule is "ea_time advances
 # between polls"; a one-shot instrument can only use age).
 EA_STATUS_STALE_S = 1500.0
+# The brain heartbeats steady_signal.txt every poll (600s). Judge it by the
+# same kind of rule it judges the EA by: round-7 found the EA was held to 25
+# minutes while the brain was held to 1.5 DAYS, so a 68-hour brain outage was
+# rated "within expectations".
+BRAIN_SIGNAL_STALE_S = 1800.0
 
 
 def common_files_dir() -> Path:

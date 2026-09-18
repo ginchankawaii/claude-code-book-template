@@ -6,6 +6,7 @@ code path works for offline backtests and live OANDA paper trading.
 from __future__ import annotations
 
 import os
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,13 +26,25 @@ except Exception:
 DEFAULT_DB_PATH = DATA_DIR / "fxsim.db"
 
 
+def _norm(raw: str) -> str:
+    """NFKC so a full-width '２．５' left by a Japanese IME parses as 2.5, and
+    strip stray quotes/spaces. The owner edits .env on a Japanese keyboard."""
+    return unicodedata.normalize("NFKC", raw).strip().strip('"').strip("'")
+
+
 def _get_float(name: str, default: float) -> float:
+    """Read a float from the environment. A value that does not parse is LOUD,
+    never silent: round-7 found that a typo in FXSIM_MAX_LEVERAGE silently
+    restored the shipped MAXIMUM of 5.0 — the dial the owner reached for to
+    reduce risk failed OPEN."""
     raw = os.getenv(name)
     if raw is None or raw == "":
         return default
     try:
-        return float(raw)
+        return float(_norm(raw))
     except ValueError:
+        print(f"[cfg] WARNING: {name}={raw!r} is not a number — using the default "
+              f"{default}. Fix .env: this is NOT the value you set.", flush=True)
         return default
 
 

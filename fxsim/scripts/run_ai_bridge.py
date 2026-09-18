@@ -777,10 +777,16 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--instrument", default="USD_JPY")
-    ap.add_argument("--max-risk", type=float, default=0.04)
+    # Defaults come from the config the docs tell the owner to edit, so
+    # FXSIM_RISK / FXSIM_TREND_SMA in .env actually bind on the live account.
+    # Round-7: they were inert — argparse defaults won and the decision log
+    # printed a risk the owner had never set.
+    _cfg0 = Settings()
+    ap.add_argument("--max-risk", type=float, default=_cfg0.risk_per_trade)
     ap.add_argument("--max-lots", type=float, default=5.0)
     ap.add_argument("--granularity", default="H1", help="bars the EA publishes (H1 = best; D also ok)")
-    ap.add_argument("--sma", type=int, default=2400, help="trend-filter SMA (H1 2400; daily 90)")
+    ap.add_argument("--sma", type=int, default=_cfg0.trend_sma,
+                    help="trend-filter SMA (H1 2400; daily 90)")
     ap.add_argument("--model", default=None, help="default claude-opus-4-8")
     ap.add_argument("--history", default="data/USD_JPY_H1.csv",
                     help="warmup/fallback history matching --granularity")
@@ -826,6 +832,9 @@ def main() -> None:
                     seq=int((live or {}).get("seq") or 0))
         return
 
+    print(f"[ai] dials in force: max_risk={args.max_risk} sma={args.sma} "
+          f"max_leverage={cfg.max_leverage} dyn_lev={cfg.dyn_leverage} "
+          f"dd_brake={cfg.dd_brake} authority={cfg.ai_authority}", flush=True)
     print(f"[ai] resident. model={trader.model} max_risk={args.max_risk} "
           f"daily_gap={args.daily_gap_h}h event_window={args.event_window_min}m "
           f"poll={args.poll}s gate_cd={args.gate_cooldown_min}m veto_ttl={args.veto_ttl_h}h "
@@ -899,6 +908,7 @@ def main() -> None:
     blind_grace_s = max(3 * args.poll, 60)
     entry_attempts = 0
     entry_backoff_until = 0.0
+    entry_backoff_streak = 0     # 1h, 2h, 4h, 8h — reset only when the book moves
     ea_exec_seq = 0          # id the EA reports as last executed (0 = unknown)
     clock_skew = 0.0         # MT5 clock minus container clock, seconds
     last_ea_time = None      # EA clock at the previous poll (liveness check)
@@ -994,6 +1004,7 @@ def main() -> None:
                           f"re-attach.", flush=True)
                 if pos > 0:
                     entry_attempts = 0            # the book moved; breaker resets
+                    entry_backoff_streak = 0
                 if settle_pending:
                     settle_pending = False
                     intent, intent_lots, stop_price, order_seq, seen_long = \
@@ -1179,14 +1190,20 @@ def main() -> None:
                     if trigger == "gate-entry" and res["action"] == "LONG":
                         entry_attempts += 1
                         if entry_attempts >= 3:
-                            entry_backoff_until = _time.time() + 3600
+                            # Escalate: the old fixed 1h renewed forever and cut
+                            # the paid-AI retry rate by only a third, so a wedged
+                            # EA billed ~47 consults a day indefinitely (round-7).
+                            entry_backoff_streak = min(entry_backoff_streak + 1, 4)
+                            entry_backoff_until = _time.time() + 3600 * (2 ** (entry_backoff_streak - 1))
                             entry_attempts = 0
                             hint = (f"EA's last executed id {ea_exec_seq} vs ours {order_seq}"
                                     if ea_exec_seq else "EA reports no executed id (pre-r6b build?)")
+                            hrs = 2 ** (entry_backoff_streak - 1)
                             print(f"[ai] WARNING: 3 entry orders did not move the book — "
-                                  f"backing off 1h. {hint}. Check in MT5: Algo trading ON? "
-                                  f"EA attached and build {bridge.EA_BUILD_EXPECTED}? broker "
-                                  f"lot min/step?", flush=True)
+                                  f"backing off {hrs}h (escalation {entry_backoff_streak}/4). "
+                                  f"{hint}. Check in MT5: Algo trading ON? EA attached and "
+                                  f"build {bridge.EA_BUILD_EXPECTED}? broker lot min/step? "
+                                  f"Journal for a rejected order?", flush=True)
 
             # Heartbeat: atomically re-assert the current order with a fresh
             # expiry AND the protective stop (a broker-SL-aware EA mirrors it as

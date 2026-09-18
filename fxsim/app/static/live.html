@@ -87,7 +87,9 @@ async function tick(){
 
   const running = d.status==='running';
   document.getElementById('dot').className = 'dot'+(running?'':' off');
-  document.getElementById('meta').textContent = `run #${d.run.id} · ${d.run.instrument} ${d.run.granularity} · ${d.status}`;
+  const h = d.health || {};
+  const why = h.why ? ' · ' + h.why : '';
+  document.getElementById('meta').textContent = `run #${d.run.id} · ${d.run.instrument} ${d.run.granularity} · ${d.status}${why}`;
   document.getElementById('updated').textContent = '更新 '+new Date().toLocaleTimeString();
 
   const retCls = d.return_pct>=0?'pos':'neg';

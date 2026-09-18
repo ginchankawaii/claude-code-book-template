@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 
+from . import bridge as bridge_mod
 from . import db
 from .backtest import compute_stats, run_backtest, stats_dict
 from .config import settings
@@ -181,6 +182,11 @@ def get_fundamental() -> list[dict]:
 # A request may drive an OFFLINE backtest only: never the live broker adapter
 # (credentials, rate limits), never an unbounded bar count, and never by
 # mutating the process-wide settings that every other route reports from.
+def _now_ts() -> float:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).timestamp()
+
+
 _BACKTEST_PROVIDERS = {"csv", "sample"}
 MAX_BACKTEST_BARS = 20_000
 
@@ -278,9 +284,40 @@ def get_live(run_id: int | None = None, kind: str | None = None) -> dict:
     if open_pos is None and open_db:
         open_pos = open_db[0]
 
+    # LIVENESS, not "the run row has no end date" (round-7). The steady-ai run
+    # is never ended, so this said "running" forever — a permanently green dot
+    # on the only instrument the owner can see from a phone, while the brain
+    # had been wedged for 68 hours. Judge it the way run_monitor does.
+    health: dict = {"brain_signal_age_s": None, "ea_status_age_s": None,
+                    "status_missing": live is None and is_fx, "healthy": None,
+                    "why": None}
+    if is_fx:
+        try:
+            from . import bridge as _b
+            sp = _b.common_files_dir() / _b.SIGNAL_FILE
+            health["brain_signal_age_s"] = _now_ts() - sp.stat().st_mtime
+        except OSError:
+            pass
+        if live and live.get("ea_time"):
+            health["ea_status_age_s"] = _now_ts() - float(live["ea_time"])
+        bad = []
+        ba, ea = health["brain_signal_age_s"], health["ea_status_age_s"]
+        if ba is None:
+            bad.append("脳の心拍が読めません")
+        elif ba > bridge_mod.BRAIN_SIGNAL_STALE_S:
+            bad.append(f"脳の心拍が{ba / 60:.0f}分前で停止")
+        if health["status_missing"]:
+            bad.append("EAのstatusが読めません")
+        elif ea is not None and ea > bridge_mod.EA_STATUS_STALE_S:
+            bad.append(f"EAのstatusが{ea / 60:.0f}分前で停止")
+        health["healthy"] = not bad
+        health["why"] = "／".join(bad) if bad else "稼働中"
+
     return {
         "run": run,
-        "status": "running" if run and not run.get("ended_at") else "finished",
+        "status": ("running" if health.get("healthy") is not False else "stalled")
+                  if is_fx else ("running" if run and not run.get("ended_at") else "finished"),
+        "health": health,
         "current_equity": cur_eq,
         "initial_balance": run["initial_balance"] if run else 0,
         "return_pct": (cur_eq / run["initial_balance"] - 1) * 100 if run else 0,
