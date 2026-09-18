@@ -1,0 +1,8 @@
+{
+  "USD_JPY": {
+    "bias": 0.35,
+    "reason": "サンプル: 日米金利差拡大観測でドル円に上昇バイアス（FXSIM_FUND_MODE=anthropic で実ニュースに置換）",
+    "asof": "2026-06-02T00:00:00+00:00",
+    "half_life_hours": 24.0
+  }
+}

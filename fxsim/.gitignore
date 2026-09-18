@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+package-lock.json
+data/*.db
+data/*.db-journal
+data/*.png
+.env
+.pytest_cache/
+*.log
+
+# docker bind-mount placeholder
+.mt5common/*
+!.mt5common/.gitkeep
