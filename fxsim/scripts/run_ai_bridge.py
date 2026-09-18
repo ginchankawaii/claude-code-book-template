@@ -715,9 +715,10 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
         # exactly like the backtest engine.
         lots = pos_lots
     else:
+        sizing_why: dict = {}
         lots = size_lots("long" if action == "LONG" else "flat", conviction, balance,
                          atr_now, pip, max_risk, max_lots, brake,
-                         price=price, max_leverage=eff_leverage)
+                         price=price, max_leverage=eff_leverage, explain=sizing_why)
     if lots <= 0:
         action = "FLAT"
     direction = 1 if action == "LONG" else 0   # long-or-flat; never short
@@ -750,6 +751,12 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
                           # veto skill before authority is (re)granted
                           **ai_view})
     stop_txt = f" stop {stop_price:.3f}" if stop_price else ""
+    binder = (locals().get("sizing_why") or {}).get("binder")
+    if binder == "leverage":
+        stop_txt += (f" [size set by the {eff_leverage:.1f}x leverage cap; risk%/brake/"
+                     f"conviction do not change it at this balance]")
+    elif binder:
+        stop_txt += f" [size set by {binder}]"
     print(f"[ai] decision: {action} {lots:.2f} lots | conviction {conviction:.2f} "
           f"risk {risk_used:.3f} (brake {brake:.2f}) lev {eff_leverage:.1f}x{stop_txt} | {reason}",
           flush=True)

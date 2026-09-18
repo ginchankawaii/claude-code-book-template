@@ -139,7 +139,7 @@ UNITS_PER_LOT = 100_000.0
 def size_lots(action: str, conviction: float, balance: float, atr: float, pip: float,
               max_risk: float, max_lots: float, brake: float = 1.0,
               min_lot: float = 0.01, price: float = 0.0,
-              max_leverage: float = 0.0) -> float:
+              max_leverage: float = 0.0, explain: dict | None = None) -> float:
     """Convert an AI decision into MT5 lots within the hard risk cap.
 
     risk_used = max_risk * conviction * brake   (brake<1 after drawdowns)
@@ -153,9 +153,18 @@ def size_lots(action: str, conviction: float, balance: float, atr: float, pip: f
     stop = max(atr * 1.5, pip * 5)
     risk_used = max_risk * max(0.0, min(1.0, conviction)) * max(0.0, min(1.0, brake))
     units = (balance * risk_used) / stop
-    lots = min(units / UNITS_PER_LOT, max_lots)
-    if max_leverage > 0 and price > 0:
-        lots = min(lots, max_leverage * balance / (price * UNITS_PER_LOT))
+    risk_lots = units / UNITS_PER_LOT
+    lev_lots = (max_leverage * balance / (price * UNITS_PER_LOT)
+                if (max_leverage > 0 and price > 0) else float("inf"))
+    lots = min(risk_lots, max_lots, lev_lots)
+    if explain is not None:
+        # Which constraint actually set the size. At a small balance the
+        # leverage cap binds by a wide margin, so risk% / the DD brake / the
+        # AI's conviction cannot move the order at all — yet the decision log
+        # printed them as if they had (round-7 ledger).
+        explain.update(risk_lots=risk_lots, lev_lots=lev_lots, cap_lots=max_lots,
+                       binder=("leverage" if lev_lots <= min(risk_lots, max_lots)
+                               else "max_lots" if max_lots <= risk_lots else "risk"))
     # TRUNCATE to the lot step, never round. Rounding to nearest pushed the
     # order back OVER the leverage cap that was just applied — up to half a lot
     # step of unauthorised notional on every entry, which the backtest (which

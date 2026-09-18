@@ -35,3 +35,5 @@ docker compose run --rm app python -m scripts.run_monitor     # PDCA健康診断
 
 MT5側はチャート左上の `brain OK (heartbeat valid Xm)` が生存確認
 （`!! BRAIN SILENT !!` が出ていたらDockerが死んでいる → DOCKER.md参照）。
+
+| - | COVERAGE.md | カバレッジ台帳（component × 不変条件 × 最後に攻撃したパス）。監査のたびに更新 | 🔎 現行 |

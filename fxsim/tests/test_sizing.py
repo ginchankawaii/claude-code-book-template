@@ -116,3 +116,18 @@ def test_sizing_truncates_to_the_lot_step_without_float_drift():
     lots = size_lots("long", 1.0, 500_000, 0.1, 0.01, 0.04, 5.0,
                      price=100.0, max_leverage=5.8)
     assert abs(lots - 0.29) < 1e-9, lots
+
+
+def test_sizing_names_the_constraint_that_actually_bound():
+    # At the owner's balance the leverage cap binds by a wide margin, so risk%,
+    # the DD brake and the AI's conviction cannot move the order — the log must
+    # not imply otherwise (round-7 ledger).
+    from app.ai_trader import size_lots
+    why = {}
+    size_lots("long", 1.0, 272_000, 0.30, 0.01, 0.04, 5.0, price=150.0,
+              max_leverage=5.0, explain=why)
+    assert why["binder"] == "leverage" and why["lev_lots"] < why["risk_lots"]
+    why = {}
+    size_lots("long", 1.0, 272_000, 5.0, 0.01, 0.04, 5.0, price=150.0,
+              max_leverage=5.0, explain=why)          # a very wide stop: risk binds
+    assert why["binder"] == "risk"
