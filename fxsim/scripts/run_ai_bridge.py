@@ -192,15 +192,38 @@ def _lock_verdict(lock: Path, poll: int) -> tuple[str, str]:
     only the fallback for holders we cannot see (another container's PID
     namespace) — a dead predecessor's lock still looks fresh."""
     try:
-        age = _time.time() - lock.stat().st_mtime
+        mtime_age = _time.time() - lock.stat().st_mtime
     except FileNotFoundError:
         return "take", "lock released by its holder"
+    if mtime_age < -5.0:
+        # mtime is stamped by the FILESYSTEM (a Windows share through the bind
+        # mount); our clock is the container's, and WSL2's stops across a PC
+        # sleep. A lock from the "future" is evidence of that skew, not of a
+        # fresh holder — and every escape hatch below is age-based, so an
+        # unclamped negative age pushes them all back by the skew (round-7).
+        print(f"[ai] CRITICAL: the brain lock is stamped {-mtime_age:.0f}s in the FUTURE — "
+              f"this container's clock is behind the filesystem's. Fix it: `wsl --shutdown` "
+              f"then restart Docker Desktop.", flush=True)
+    mtime_age = max(0.0, mtime_age)
+    age = mtime_age
     pid, holder_poll, host, parsed = 0, poll, "", False
     try:
         parts = lock.read_text().split()
         if len(parts) >= 1:
             pid = int(parts[0])
             parsed = True
+        if len(parts) >= 2:
+            # Field 2 is the holder's own stamp, taken with the SAME container
+            # clock we read now — the one clock-consistent piece of evidence in
+            # the file. Prefer it over mtime, which crosses the filesystem's.
+            # But VALIDATE it: a stamp cut mid-number by a torn read ("1 1789")
+            # reads as 56 years old and evicted a live holder instantly
+            # (round-7). An implausible stamp means the whole line is torn.
+            stamped = _time.time() - int(parts[1])
+            if -60.0 <= stamped <= 365 * 86400.0:
+                age = stamped
+            else:
+                raise ValueError(f"implausible lock stamp {parts[1]!r}")
         if len(parts) >= 3:
             holder_poll = max(1, int(float(parts[2])))
         if len(parts) >= 4:
@@ -237,17 +260,40 @@ def _lock_verdict(lock: Path, poll: int) -> tuple[str, str]:
         return "take", (f"brain lock is stale ({age:.0f}s old > {stale_after:.0f}s) and "
                         f"its holder is unreachable — taking over")
     if not host:
-        # Pre-upgrade lock format (no host field). Those were only ever written
-        # from inside this container, so the PID is meaningful here even though
-        # the lock does not say so — check it before adopting, rather than
-        # assuming the writer has exited (round-5: that assumption evicted a
-        # live incumbent still running the previous release).
-        if _holder_is_alive(pid, socket.gethostname()) is True:
-            return "wait", (f"legacy brain lock whose pid {pid} is LIVE here — standing "
-                            f"by until it stops")
-        return "take", f"legacy brain lock (no host field, {age:.0f}s old) — taking over"
+        # A lock that does not name a host cannot be attributed to any
+        # container, so it gets the unknowable-holder treatment: wait out the
+        # heartbeat, never take at age 0. Round-5 tried to save it with an
+        # own-PID check, but EVERY containerised brain is PID 1, so
+        # `pid == os.getpid()` was always true and the guard always answered
+        # "gone": 17 of the 31 truncation points of a LIVE lock line evicted
+        # the incumbent instantly (round-7).
+        return "wait", (f"brain lock names no host ({age:.0f}s old) — cannot attribute it; "
+                        f"standing by until its heartbeat lapses (~{stale_after - age:.0f}s)")
     return "wait", (f"lock held by {pid}@{host}, liveness unknowable — standing by until "
                     f"its heartbeat lapses (~{stale_after - age:.0f}s)")
+
+
+# Signal rows the brain writes while it is NOT trading, so run_monitor and the
+# /live page can tell "up but blocked" from "quietly standing aside".
+BLOCKED_TRIGGER = "blocked-on-lock"
+
+
+def _record_blocked(waited: float, why: str) -> None:
+    """A brain waiting on the lock writes no equity rows, so every instrument
+    the owner has just watched the last row get older — for 68 hours, rated
+    "within expectations" (round-7). Leave a row that says what is happening."""
+    try:
+        st = bridge.read_status()
+        bal = float((st or {}).get("balance") or 0.0)
+        if bal <= 0:
+            return
+        rid = _ongoing_run(bal, "n/a", 0.0, "H1")
+        db.record_signal(rid, datetime.now(timezone.utc), "USD_JPY", "combined", 0, 0.0,
+                         f"BLOCKED on the brain lock for {waited / 60:.0f} min: {why}",
+                         {"action": "FLAT", "trigger": BLOCKED_TRIGGER,
+                          "blocked_s": int(waited)})
+    except Exception:
+        pass
 
 
 def _acquire_brain_lock(poll: int) -> Optional[Path]:
@@ -256,30 +302,54 @@ def _acquire_brain_lock(poll: int) -> Optional[Path]:
     Two resident brains on one bridge ping-pong LONG/FLAT (Round-4 chaos:
     21 spurious round trips in 45s), so only one may hold the lock. This
     function never terminates the process to enforce that: it waits, re-judging
-    every LOCK_WAIT_TICK_S, and acquires as soon as the incumbent is gone."""
-    try:
+    every LOCK_WAIT_TICK_S, and acquires as soon as the incumbent is gone.
+    It also never gives up: returning None on a transient error disabled both
+    single-writer protections for the life of the process after one log line
+    (round-7), so an unevaluable lock is waited on, not ignored."""
+    waited, last_log, blocked_logged = 0.0, -LOCK_WAIT_LOG_EVERY_S, False
+    while True:
+      try:
         d = bridge.common_files_dir()
         d.mkdir(parents=True, exist_ok=True)
         lock = d / "steady_brain.lock"
-        waited, last_log = 0.0, -LOCK_WAIT_LOG_EVERY_S
         while lock.exists():
             verdict, msg = _lock_verdict(lock, poll)
             if verdict == "take":
                 print(f"[ai] {msg}", flush=True)
                 break
             if waited - last_log >= LOCK_WAIT_LOG_EVERY_S:
-                print(f"[ai] {msg}. Waiting, not exiting (waited {waited:.0f}s).",
+                tail = ""
+                if waited >= 1800:
+                    # Past half an hour this is not normal operation; say so in
+                    # words the operator can act on (round-7: the same calm line
+                    # repeated for 68 hours and read as healthy).
+                    tail = (f" >>> BLOCKED {waited / 60:.0f} MINUTES — THE SYSTEM IS NOT "
+                            f"TRADING. Check `docker compose ps` for a second brain, then "
+                            f"delete {lock} if no other brain is running. <<<")
+                print(f"[ai] {msg}. Waiting, not exiting (waited {waited:.0f}s).{tail}",
                       flush=True)
                 last_log = waited
+                _record_blocked(waited, msg)
             _time.sleep(LOCK_WAIT_TICK_S)
             waited += LOCK_WAIT_TICK_S
-        _touch_lock(lock, poll)
+        if not _touch_lock(lock, poll):
+            # We could not prove the lock is ours: do not return a phantom.
+            # Keep waiting — this loop never exits, and an unwritable bridge
+            # dir is the same dir the signal file lives in.
+            print(f"[ai] CRITICAL: could not write the brain lock at {lock} — the bridge "
+                  f"directory is not writable. NOT trading until it is; check the MT5 "
+                  f"Common\\Files mount and free disk space.", flush=True)
+            _time.sleep(LOCK_WAIT_TICK_S)
+            continue
         _arm_lock_release(lock)
         return lock
-    except Exception as exc:
-        print(f"[ai] brain lock unavailable ({exc}); continuing WITHOUT single-writer "
-              f"protection", flush=True)
-        return None
+      except Exception as exc:
+        if not blocked_logged:
+            print(f"[ai] brain lock could not be evaluated ({exc}); retrying — NOT "
+                  f"continuing without single-writer protection", flush=True)
+            blocked_logged = True
+        _time.sleep(LOCK_WAIT_TICK_S)
+        waited += LOCK_WAIT_TICK_S
 
 
 def _release_lock(lock: Optional[Path]) -> None:
@@ -292,9 +362,10 @@ def _release_lock(lock: Optional[Path]) -> None:
         return
     try:
         parts = lock.read_text().split()
-        mine = int(parts[0]) == os.getpid()
-        same_host = len(parts) < 4 or parts[3] == socket.gethostname()
-        if mine and same_host:
+        # Four fields required: a short line cannot be proven ours, and every
+        # containerised brain is PID 1 so the pid alone proves nothing.
+        if (len(parts) >= 4 and int(parts[0]) == os.getpid()
+                and parts[3] == socket.gethostname()):
             lock.unlink()
     except Exception:
         pass
@@ -311,17 +382,26 @@ def _arm_lock_release(lock: Path) -> None:
             pass
 
 
-def _touch_lock(lock: Optional[Path], poll: int) -> None:
-    """Heartbeat the lock. Atomic tmp+rename: an in-place rewrite gave readers
-    a torn line, and a torn line used to be adopted as a free lock."""
+def _touch_lock(lock: Optional[Path], poll: int) -> bool:
+    """Heartbeat the lock and CONFIRM we still hold it. True = ours right now.
+
+    Atomic tmp+rename (an in-place rewrite gave readers a torn line). The write
+    used to be wrapped in a bare except and the result discarded, so a brain
+    whose writes failed — read-only share, full disk, a sharing violation on
+    the Windows mount — ran forever believing it was the single writer while
+    its lock aged out under it (round-7)."""
     if lock is None:
-        return
+        return False
     try:
         tmp = lock.with_name(lock.name + f".{os.getpid()}.tmp")
         tmp.write_text(_lock_line(poll))
         os.replace(tmp, lock)
-    except Exception:
-        pass
+        parts = lock.read_text().split()          # read back: did it land?
+        return (len(parts) >= 4 and int(parts[0]) == os.getpid()
+                and parts[3] == socket.gethostname())
+    except Exception as exc:
+        print(f"[ai] brain lock heartbeat FAILED ({exc})", flush=True)
+        return False
 
 
 # A clock skew beyond this is not a skew: WSL2 lag is minutes to hours, so a
@@ -828,6 +908,7 @@ def main() -> None:
     prev_raw_skew = None     # last raw (possibly untrusted) skew, for the stability test
     ea_build_seen = False    # a six-column EA has reported on this bridge
     torn_row = False
+    lock_fail = 0            # consecutive unproven lock heartbeats
     buildless_streak = 0     # consecutive build-less rows after a six-column EA
     ttl_s = int(args.signal_ttl_min * 60)
 
@@ -1124,6 +1205,8 @@ def main() -> None:
                     print(f"[ai] BLIND {blind_s / 60:.0f}m while LONG (no trusted feed) — "
                           f"withholding heartbeat so the EA fail-safe flattens at EXP; "
                           f"stop enforcement is DOWN", flush=True)
+            if lock_fail:
+                hb_ok = False        # not provably the single writer: stop attesting
             if (not args.dry and intent is not None and hb_ok
                     and (intent == "FLAT" or intent_lots >= FLAT_EPS)):
                 bridge.write_signal(intent, intent_lots if intent == "LONG" else 0.0,
@@ -1137,8 +1220,20 @@ def main() -> None:
             # process is alive and still owns the bridge. Heartbeating only on
             # success let a recurring error age the lock out from under a
             # running brain, inviting the second writer the lock exists to
-            # prevent (round-5).
-            _touch_lock(brain_lock, args.poll)
+            # prevent (round-5). The write is now CHECKED: if we can no longer
+            # prove the lock is ours, we are not the single writer, and the
+            # safe move is to stop attesting liveness so the EA's fail-safe
+            # closes the book (round-7).
+            if brain_lock is not None and not _touch_lock(brain_lock, args.poll):
+                lock_fail += 1
+                if lock_fail == 1 or lock_fail % 10 == 0:
+                    print(f"[ai] CRITICAL: lost the brain lock ({lock_fail} failed "
+                          f"heartbeats) — another brain may be writing this bridge, or "
+                          f"the mount is unwritable. Withholding the heartbeat so the EA "
+                          f"fail-safe closes the book.", flush=True)
+                    _record_blocked(lock_fail * args.poll, "lock heartbeat failing")
+            else:
+                lock_fail = 0
         _time.sleep(args.poll)
 
 

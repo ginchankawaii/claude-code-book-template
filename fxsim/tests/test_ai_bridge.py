@@ -426,10 +426,12 @@ def test_unknowable_holder_is_waited_out_not_crash_looped(tmp_path, monkeypatch)
         ticks["n"] += 1
         assert ticks["n"] < 20, "never re-judged the lock"
         if ticks["n"] < 4:
-            lock.touch()                                 # holder heartbeat
+            # A real heartbeat rewrites the whole line (see _touch_lock), so
+            # the holder's own stamp advances with the mtime. Touching only the
+            # mtime is not a heartbeat any holder performs.
+            _write_lock(tmp_path, 4242, 1, "other-container")
         else:
-            old = _t.time() - 300                        # holder stopped; window lapsed
-            _os.utime(lock, (old, old))
+            _write_lock(tmp_path, 4242, 1, "other-container", age_s=300)
     monkeypatch.setattr(R._time, "sleep", holder_beats_then_dies)
 
     assert R._acquire_brain_lock(1) is not None          # waited, then acquired
@@ -532,17 +534,27 @@ def test_unreadable_lock_is_waited_on_not_adopted(tmp_path):
     assert R._lock_verdict(lock, 600)[0] == "wait"
 
 
-def test_legacy_lock_with_a_live_local_pid_is_not_stolen(tmp_path, monkeypatch):
-    # Legacy locks carry no host, but they were only ever written from inside
-    # this container — so the pid IS checkable, and must be checked.
-    import scripts.run_ai_bridge as _R
+def test_a_lock_naming_no_host_is_never_taken_at_age_zero(tmp_path):
+    # Round-7: the own-PID guard that used to protect this branch is a no-op —
+    # EVERY containerised brain is PID 1, so `pid == os.getpid()` was always
+    # true and the branch answered "gone" and took the lock at age 0. Seventeen
+    # of the 31 truncation points of a LIVE lock line evicted the incumbent.
+    import time as _t
     lock = tmp_path / "steady_brain.lock"
-    lock.write_text("4242 1786947797 600\n")
-    monkeypatch.setattr(_R, "_holder_is_alive",
-                        lambda pid, host: True if host else None)
-    assert _R._lock_verdict(lock, 600)[0] == "wait"
-    monkeypatch.setattr(_R, "_holder_is_alive", lambda pid, host: None)
-    assert _R._lock_verdict(lock, 600)[0] == "take"
+    live_line = f"1 {int(_t.time())} 600 some-other-container\n"
+    for cut in range(1, len(live_line)):
+        lock.write_text(live_line[:cut])
+        assert R._lock_verdict(lock, 600)[0] == "wait", f"took a torn live lock at cut {cut}"
+
+
+def test_a_no_host_lock_still_ages_out(tmp_path):
+    # ...but it must not wait forever either (I11): once the holder's stamp is
+    # older than one missed heartbeat, take it.
+    import time as _t
+    lock = tmp_path / "steady_brain.lock"
+    lock.write_text(f"4242 {int(_t.time()) - 800} 600\n")
+    verdict, msg = R._lock_verdict(lock, 600)
+    assert verdict == "take" and "stale" in msg
 
 
 def test_lock_is_not_released_by_a_foreign_host_with_the_same_pid(tmp_path):
