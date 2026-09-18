@@ -672,3 +672,44 @@ def test_torn_row_is_judged_per_row_and_a_downgrade_falls_back_to_legacy():
     torn, seen, streak, note = R._row_trust(three, seen, streak)      # second in a row
     assert not torn and not seen and streak == 0 and "older EA" in note
     assert R._row_trust(three, False, 0)[0] is False                  # old EA from the start
+
+
+# ---- round-7: an unreadable lock must AGE OUT, not trap the brain ----------
+
+def test_empty_lock_file_is_taken_over_once_it_ages(tmp_path, monkeypatch):
+    # A zero-byte lock parses to no fields and raises nothing, so it fell into
+    # the "unreadable" branch — which sat BEFORE the age check and returned
+    # "wait" unconditionally. Live consequence: the brain waited 68 hours in
+    # _acquire_brain_lock with the account out of the market.
+    import os as _os, time as _t
+    lock = tmp_path / "steady_brain.lock"
+    lock.write_text("")
+    assert R._lock_verdict(lock, 600)[0] == "wait"        # fresh: a torn write may heal
+    old = _t.time() - 800                                  # older than poll + 120
+    _os.utime(lock, (old, old))
+    verdict, msg = R._lock_verdict(lock, 600)
+    assert verdict == "take" and "unreadable" in msg
+
+    lock.write_text("garbage not a pid\n")                 # same for real garbage
+    _os.utime(lock, (old, old))
+    assert R._lock_verdict(lock, 600)[0] == "take"
+
+
+def test_an_unreadable_lock_never_blocks_acquisition_forever(tmp_path, monkeypatch):
+    # End to end: _acquire_brain_lock must return, not spin. Bounded fake sleep.
+    import os, time as _t
+    _os = os
+    monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
+    lock = tmp_path / "steady_brain.lock"
+    lock.write_text("")
+    ticks = {"n": 0}
+
+    def fake_sleep(_s):
+        ticks["n"] += 1
+        assert ticks["n"] < 50, "brain is stuck waiting on an unreadable lock"
+        if ticks["n"] == 3:                                # it stays unreadable and ages
+            old = _t.time() - 800
+            _os.utime(lock, (old, old))
+    monkeypatch.setattr(R._time, "sleep", fake_sleep)
+    got = R._acquire_brain_lock(600)
+    assert got is not None and str(os.getpid()) in got.read_text()

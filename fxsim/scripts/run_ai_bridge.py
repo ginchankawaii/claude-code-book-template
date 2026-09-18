@@ -208,10 +208,19 @@ def _lock_verdict(lock: Path, poll: int) -> tuple[str, str]:
     except Exception:
         parsed = False
     if not parsed:
-        # Unreadable/torn/garbage lock. Adopting it unconditionally let a torn
-        # read pre-empt a LIVE incumbent (round-5). Wait one tick instead: a
-        # torn read heals on the next write, a truly corrupt lock ages out.
-        return "wait", f"brain lock is unreadable ({age:.0f}s old) — re-reading"
+        # Unreadable/torn/garbage lock (an EMPTY file parses to no fields and
+        # raises nothing). Adopting it instantly would let a torn read pre-empt
+        # a LIVE incumbent (round-5), so wait — but BOUND the wait. Round-6
+        # shipped this branch ahead of the age check with a comment claiming a
+        # corrupt lock "ages out"; it never reached that check, and a zero-byte
+        # lock held the brain in _acquire_brain_lock for 68 hours with the
+        # account out of the market (round-7). An unreadable lock names no
+        # holder, so age is the only evidence there is.
+        if age >= poll + 120:
+            return "take", (f"brain lock is unreadable and {age:.0f}s old (> {poll + 120}s) — "
+                            f"no holder can be identified in it; taking over")
+        return "wait", (f"brain lock is unreadable ({age:.0f}s old) — re-reading; taking over "
+                        f"in {poll + 120 - age:.0f}s if it stays unreadable")
     # LIVENESS BEFORE AGE. The age fallback exists only for holders we cannot
     # see; applying it to a holder we CAN see evicts a brain that is provably
     # running the moment it misses one heartbeat (round-5: a single slow tick
