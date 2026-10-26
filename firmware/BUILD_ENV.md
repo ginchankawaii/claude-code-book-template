@@ -50,3 +50,19 @@ mindclip/
   settings.cpp/.h  rtcclock.cpp/.h  led.cpp/.h  provision.cpp/.h
   config.h       ← ピン・定数・NVS構造体
 ```
+
+## 環境の再構築
+
+コンテナが作り直されて `$SP/arduino-cli` や `$SP/acli-data` が消えた場合は、次を実行するだけでよい
+（冪等。既にある部分はスキップされる。初回は toolchain 約1.5GB をダウンロードするため数分かかる）。
+```sh
+firmware/tools/setup_build_env.sh
+```
+- arduino-cli 1.2.2 本体・esp32 インデックスは GitHub（raw.githubusercontent.com）から取得する。
+  downloads.arduino.cc / espressif.com はプロキシで遮断されているため。
+- 遮断ホスト上にしか無いがコンパイルに不要なツール（`builtin:serial-discovery` / `mdns-discovery` /
+  `serial-monitor`、`arduino:dfu-util`）は、スクリプトが localhost の一時 HTTP サーバから配るスタブで置き換える。
+  そのため **この環境はコンパイル専用**（`board list` は常に空、シリアルモニタ・dfu-util は起動しない）。
+- `builtin:ctags` は apt の universal-ctags へのラッパーに置き換わる（上記「.ino に関数定義を書かない」の原因）。
+- 一時サーバはスクリプト終了時に停止する。`compile` はサーバ無しで動く（確認済み）。
+- `core update-index` は downloads.arduino.cc への取得失敗を必ず表示するが想定どおり（esp32 側は更新される）。
