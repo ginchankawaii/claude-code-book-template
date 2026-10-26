@@ -66,6 +66,12 @@ static const uint32_t RETRY_BACKOFF_MS[FILE_RETRY_MAX] = {0, 1000, 3000};
 // ---- スイッチのデバウンス（SPEC §2.2）--------------------------------------
 static const uint32_t DEBOUNCE_STEP_MS = 20;
 static const int      DEBOUNCE_COUNT   = 3;
+// SYNCING に入ってから無線を起こすまでの猶予。この間にスイッチが ON に戻れば WiFi を一切
+// 使わずに録音へ戻る（E8）。「OFF→ON で録音中か確認する」操作と誤操作の両方を救う。
+static const uint32_t SYNC_GRACE_MS = 1500;
+// cfg.led_mode: dark = 録音中は完全消灯（既定）/ normal = SPEC §2.1 の全パターンを表示
+static const uint8_t LED_MODE_DARK   = 0;
+static const uint8_t LED_MODE_NORMAL = 1;
 
 // ---- NVS 設定値（SPEC §10.1）----------------------------------------------
 // 秘密はここに既定値を持たない。空なら「未プロビジョニング」(E11)。
@@ -81,6 +87,7 @@ struct Settings {
   bool     hmacSet;
 
   uint8_t  ledDuty;       // cfg.led_duty   既定15 (10〜20)
+  uint8_t  ledMode;       // cfg.led_mode   既定 dark (LED_MODE_DARK / LED_MODE_NORMAL)
   uint16_t splitSec;      // cfg.split_sec  既定600
   uint8_t  gapSec;        // cfg.gap_sec    既定3
   uint8_t  bufSec;        // cfg.buf_sec    既定60 (30〜60)

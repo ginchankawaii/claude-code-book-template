@@ -34,7 +34,8 @@ static T clampv(T v, T lo, T hi) { return v < lo ? lo : (v > hi ? hi : v); }
 void settingsLoad() {
   Preferences p;
   if (!p.begin(NS, true)) {   // 読み取り専用。無ければ既定値のまま
-    g_cfg.ledDuty = 15; g_cfg.splitSec = 600; g_cfg.gapSec = 3; g_cfg.bufSec = 60;
+    g_cfg.ledDuty = 15; g_cfg.ledMode = LED_MODE_DARK;
+    g_cfg.splitSec = 600; g_cfg.gapSec = 3; g_cfg.bufSec = 60;
     g_cfg.vadMargin = 9; g_cfg.vadHang = 800; g_cfg.vadHardclamp = 0; g_cfg.wifiToS = 30;
     g_cfg.devId = "mindclip-01"; g_cfg.hmacSet = false;
     return;
@@ -52,6 +53,7 @@ void settingsLoad() {
   if (g_cfg.hmacSet) p.getBytes("hmac.key", g_cfg.hmacKey, 32);
 
   g_cfg.ledDuty      = clampv<uint8_t>(p.getUChar("cfg.led_duty", 15), 10, 20);
+  g_cfg.ledMode      = p.getUChar("cfg.led_mode", LED_MODE_DARK) ? LED_MODE_NORMAL : LED_MODE_DARK;
   g_cfg.splitSec     = clampv<uint16_t>(p.getUShort("cfg.split_sec", 600), 30, 600);
   g_cfg.gapSec       = clampv<uint8_t>(p.getUChar("cfg.gap_sec", 3), 1, 30);
   g_cfg.bufSec       = clampv<uint8_t>(p.getUChar("cfg.buf_sec", 60), 30, 60);
@@ -88,6 +90,12 @@ bool settingsSetString(const String &key, const String &val) {
       while (v.length() && v.charAt(v.length() - 1) == '/') v.remove(v.length() - 1);
     }
     ok = p.putString(key.c_str(), v) > 0 || v.length() == 0;
+  } else if (key == "cfg.led_mode") {
+    // 数値ではなく名前で受ける（toInt() だと "dark"/"normal" がどちらも 0 になる）
+    String v = val; v.trim(); v.toLowerCase();
+    if      (v == "dark"   || v == "0") ok = p.putUChar(key.c_str(), LED_MODE_DARK) > 0;
+    else if (v == "normal" || v == "1") ok = p.putUChar(key.c_str(), LED_MODE_NORMAL) > 0;
+    else ok = false;
   } else if (key.startsWith("cfg.")) {
     long v = val.toInt();
     if (key == "cfg.split_sec" || key == "cfg.vad_hang") ok = p.putUShort(key.c_str(), (uint16_t)v) > 0;
@@ -161,6 +169,7 @@ void settingsDump(Stream &out) {
              (unsigned)g_cfg.devKey.length());
   out.printf("hmac.key         = %s\n", g_cfg.hmacSet ? "**** (32 bytes)" : "(unset)");
   out.printf("cfg.led_duty     = %u %%\n", g_cfg.ledDuty);
+  out.printf("cfg.led_mode     = %s\n", g_cfg.ledMode == LED_MODE_DARK ? "dark" : "normal");
   out.printf("cfg.split_sec    = %u\n", g_cfg.splitSec);
   out.printf("cfg.gap_sec      = %u\n", g_cfg.gapSec);
   out.printf("cfg.buf_sec      = %u\n", g_cfg.bufSec);

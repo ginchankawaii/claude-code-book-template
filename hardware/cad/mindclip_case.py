@@ -249,8 +249,33 @@ LED_CLR_X = 0.8                                 # JST 嵌合体と LED リード
 LED_WIN_R = LED_D / 2 + LED_WIN_FIT / 2         # 窓半径 1.7 (LED 本体は φ3.0)
 LED_POS = (harness_jst_x1 + LED_CLR_X + (LED_D / 2 + 0.1),
            bat[3] + (8.8 if PCB == "carrier" else 7.8))     # (9.8, 36.0)
+# v1.7: LED を沈めてリッド外面とほぼ面一にする (目立たない・襟や布に引っ掛からない)。
+#   標準の 3mm 砲弾型はツバをリッド内面に当てるとドームが約 2.7mm 突出していた (README §9.4)。
+#   リッド内面からスリーブを降ろし、ツバの座を LED_RECESS だけ下げてドーム先端を外面の
+#   LED_SINK 内側に置く。沈めた分だけ LED 本体と 90度曲げのリード帯も深くなるため、
+#   リード帯の下端が床 (WALL) から 0.3mm 以上残る範囲で沈め量を打ち切る
+#   (slim は奥行きが浅く満額は入らない → ドームが少しだけ残る)。
+#   副次効果: 穴の奥に光源があるので、正面以外の角度からは光がほぼ見えなくなる。
+LED_PROTRUDE_STD = 2.7      # 標準3mm LED のドーム突出量 (ツバをリッド内面に当てた場合)
+LED_SINK = 0.2              # 面一化後にドーム先端を外面から沈める量
+LED_FLANGE_R, LED_FLANGE_T = 1.95, 1.0          # ツバ φ3.9 x 1.0 (一般的な3mm LED)
+_LED_LEAD_BOTTOM_STD = BODY_D - 4.0 - LED_LEAD_DROP
+#   基板構成 (sense/carrier, v2・発注禁止の検討用) は LED の真下に J1 / 0805 部品が来るため
+#   沈められない (沈めると led_flange<->pcb_j1 / led_leads<->pcb_smd_vbus が干渉する)。
+#   v2 を実際に作る段階で基板側レイアウトと一緒に再検討する。
+LED_RECESS = (round(max(0.0, min(LED_PROTRUDE_STD + LED_SINK,
+                                 _LED_LEAD_BOTTOM_STD - WALL - 0.3)), 2)
+              if PCB == "none" else 0.0)
+LED_DOME_PROTRUDE = round(LED_PROTRUDE_STD - LED_RECESS, 2)   # 負 = 外面より内側
+LED_SLEEVE_R = LED_WIN_R + 0.8                  # スリーブ外半径 2.5 (肉厚0.8 = 0.4ノズル2周)
 led = (LED_POS[0] - 1.6, LED_POS[1] - 1.6, LED_POS[0] + 1.6, LED_POS[1] + 1.6,
-       BODY_D - 4.0, BODY_D)                    # 本体 φ3.0 + 0.1、内側へ 4mm 侵入
+       BODY_D - 4.0 - LED_RECESS, BODY_D)       # 本体 φ3.0 + 0.1、リッド内面から下
+led_flange = (LED_POS[0] - LED_FLANGE_R, LED_POS[1] - LED_FLANGE_R,
+              LED_POS[0] + LED_FLANGE_R, LED_POS[1] + LED_FLANGE_R,
+              BODY_D - LED_RECESS - LED_FLANGE_T, BODY_D - LED_RECESS)
+led_sleeve = ((LED_POS[0] - LED_SLEEVE_R, LED_POS[1] - LED_SLEEVE_R,
+               LED_POS[0] + LED_SLEEVE_R, LED_POS[1] + LED_SLEEVE_R,
+               BODY_D - LED_RECESS, BODY_D) if LED_RECESS > 0 else None)
 # LED のリード帯 (90度に曲げたリード + 220Ω + はんだ継ぎ目 + 熱収縮の包絡)
 #   none    : リードは -y (電池側) へ曲げ、電池上端 +0.4mm の線まで下ろしてよい。
 #   sense/carrier: 基板上の J1・実装部品があるため -y へは下ろせない (LED の帯だけ)。
@@ -486,6 +511,7 @@ def check_layout():
                WALL - 1.2, WALL + BOSS_H) for mx in MAG_XS]
     parts = {
         "battery": bat, "xiao": xiao, "switch": sw, "led": led,
+        "led_flange": led_flange,
         # v1.5 rev2: 「箱にならない部品」も AABB で持つ (これが無いと組立時にしか
         # 分からない干渉がすり抜ける)。sw_terms = スイッチ端子 + はんだ + 熱収縮、
         # led_leads = 90度に曲げた LED リード + 220Ω + 継ぎ目 + 熱収縮。
@@ -528,12 +554,15 @@ def check_layout():
         parts[f"bstop_b{i}"] = b
     for i, b in enumerate(lid_bat_ribs):
         parts[f"lidrib{i}"] = b
+    if led_sleeve is not None:
+        parts["led_sleeve"] = led_sleeve
     # 意図的に接触/内包している組み合わせは除外
     allowed = {frozenset(p) for p in [
         ("battery", "boss_L"), ("battery", "boss_R"),   # ボス上面=バッテリー底 (接触)
         ("lip_left", "lip_bottom"), ("lip_bottom", "lip_right"),  # コーナー共有
         ("lip_left", "lip_top"),                                  # コーナー共有
         ("switch", "sw_terms"), ("led", "led_leads"),   # 部品と自分の端子/リード (連続)
+        ("led", "led_flange"), ("led", "led_sleeve"),   # LED はツバと一体、スリーブを貫通
     ] + [(f"pcb_boss{i}", t) for i in range(len(pcb_bosses))
          for t in (["pcb"] + [f"pcb_shelf{j}" for j in range(len(pcb_shelf))])]}
     # ↑ 取付ボスは基板の φ2.2 穴を貫通し、シェルフと一体成型される (意図した内包)
@@ -795,6 +824,15 @@ def check_layout():
         f"assumption (XIAO_STACK_T={XIAO_STACK_T} / BAT_T={BAT_T} / "
         f"J1_BODY_Z={J1_BODY_Z}) を変えたなら MECHANICAL.md §1・§11.1 と "
         f"README §6 の寸法を更新してから GOLDEN_OUTER を書き換えること")
+    # v1.7: LED を沈めたぶん深くなったリード帯が床に届かないこと (沈め量の打ち切り条件そのもの)
+    assert led_leads[4] >= WALL + 0.3 - 1e-6, (
+        f"LED lead band bottom z={led_leads[4]:.2f} < floor+0.3 ({WALL + 0.3:.2f}); "
+        f"LED_RECESS={LED_RECESS} が深すぎる")
+    print(f"[layout] LED recess {LED_RECESS:.2f} mm -> dome "
+          + (f"{-LED_DOME_PROTRUDE:.2f} mm below lid face" if LED_DOME_PROTRUDE <= 0
+             else f"protrudes {LED_DOME_PROTRUDE:.2f} mm ("
+                  + ("variant depth limit" if PCB == "none" else "PCB config: not recessed")
+                  + ")"))
     print("[layout] all interference checks passed")
     print(f"[layout] outer: {W:.1f} x {H:.1f} x {TOTAL_D:.1f} mm (W x H x D, lid込み) "
           f"= published value")
@@ -940,10 +978,17 @@ def build_lid():
         obj=cq.Solid.makeCylinder(SNAP_R_RIDGE, 6.0,
                                   cq.Vector(SNAP_AXR, SNAP_SYR - 3.0, SNAP_AZ),
                                   cq.Vector(0, 1, 0))))
-    # LED 窓 (φ3.4 = LED_D + LED_WIN_FIT の貫通。LEDは内側から挿してドームを覗かせる)
+    # LED スリーブ (v1.7): ツバの座をリッド内面から LED_RECESS 下げる筒。
+    #   外面を下にして印刷するので筒はベッドから真上に立ち、サポート不要。
+    if LED_RECESS > 0:
+        lid = lid.union(cq.Workplane(obj=cq.Solid.makeCylinder(
+            LED_SLEEVE_R, LED_RECESS + 0.5,
+            cq.Vector(LED_POS[0], LED_POS[1], BODY_D - LED_RECESS))))
+    # LED 窓 (φ3.4 = LED_D + LED_WIN_FIT の貫通。LEDは内側から挿してツバをスリーブ下端に当てる)
     lid = lid.cut(cq.Workplane(
-        obj=cq.Solid.makeCylinder(LED_WIN_R, LID_T + 1.0,
-                                  cq.Vector(LED_POS[0], LED_POS[1], BODY_D - 0.5))))
+        obj=cq.Solid.makeCylinder(LED_WIN_R, LID_T + LED_RECESS + 1.0,
+                                  cq.Vector(LED_POS[0], LED_POS[1],
+                                            BODY_D - LED_RECESS - 0.5))))
     return lid
 
 
@@ -966,6 +1011,130 @@ def build_backplate():
 
 
 # ---------------------------------------------------------------------------
+# strapplate (v1.7: カバンのショルダーストラップ用マウント)
+# ---------------------------------------------------------------------------
+# 磁石クランプ (body + backplate で布を挟む) は布越しの磁力で保持するため、厚さ 3〜5mm の
+# ストラップでは磁石間距離が開きすぎて留まらない (README §9.7)。そこで:
+#   - ストラップは板の 2 本のスロットに「編み込む」(トライグライド = コキカン と同じ原理)。
+#     チェスト側 → 上スロット → 中央バーの上 (本体側のポケット内) → 下スロット → チェスト側。
+#     S 字の摩擦で位置が固定され、ストラップ上をずり落ちない。
+#   - 本体は板のリム (周囲の低い壁) に嵌まり、横方向の力はリムが受ける。
+#   - 本体と板の間に布が無いので磁力は最大 (磁石間 = 本体ウェブ 0.8 + 板側の沈み 0.2)。
+#     板はストラップに付けたまま、本体だけ磁石で着脱する (夜の充電時に外す)。
+# 座標: 板中心 = 原点 (backplate と同じ流儀)。z=0 がチェスト側 (ベッド面)、z=SP_T が本体側。
+# ストラップ寸法は環境変数で上書きできる (MEASUREMENTS.md の M7 で実測した値を入れる)。
+STRAP_W = float(os.environ.get("MINDCLIP_STRAP_W", "38.0"))  # 通せる最大ストラップ幅
+STRAP_T = float(os.environ.get("MINDCLIP_STRAP_T", "2.5"))   # 通せる最大ストラップ厚
+SP_RIM_CLR = 0.3            # 本体外形とリム内面の片側すきま (FDM 公差)
+SP_RIM_W = 1.2              # リム肉厚 (0.4 ノズル 3 周)
+SP_RIM_H = 2.5              # リム高さ。本体背面の R1.0 を越えて直線部に 1.5mm 掛かる
+SP_BAR_T = 2.2              # 中央バー (ラダー層) の厚さ
+SP_POCKET_D = round(STRAP_T + 0.4, 2)          # 本体側ポケットの深さ (ストラップが本体を押さない)
+SP_T = round(SP_BAR_T + SP_POCKET_D, 2)        # 板厚 (リム除く)
+SP_SLOT_H = round(STRAP_T + 1.5, 2)            # スロット幅 (y)。ストラップが曲がって通る代
+SP_CBAR_H = 5.0             # 中央バーの幅 (y)
+SP_SLOT_L = round(STRAP_W + 1.0, 2)            # スロット長 (x)
+SP_END_WALL = 1.5           # スロット端の残し肉
+SP_MAG_MARGIN = 2.0         # 磁石ポケットと編み込み帯の間の残し肉
+SP_OUT_W = W + 2 * (SP_RIM_CLR + SP_RIM_W)     # リム外形 (= 本体 + 3.0)
+SP_OUT_H = H + 2 * (SP_RIM_CLR + SP_RIM_W)
+SP_W = max(SP_OUT_W, SP_SLOT_L + 2 * SP_END_WALL)
+SP_H = SP_OUT_H
+SP_R = R_OUT + SP_RIM_CLR + SP_RIM_W
+_SP_MAG_R = MAG_D / 2 + MAG_FIT / 2
+SP_MAGS = [(mx - CX, MAG_Y - H / 2) for mx in MAG_XS]       # 本体の磁石と同軸
+# 編み込み帯 (下スロット / 中央バー / 上スロット) は磁石の上に置く
+SP_YB0 = round(max(my for _, my in SP_MAGS) + _SP_MAG_R + SP_MAG_MARGIN, 2)
+SP_YA1 = round(SP_YB0 + 2 * SP_SLOT_H + SP_CBAR_H, 2)
+SP_SLOTS = [(SP_YB0, SP_YB0 + SP_SLOT_H), (SP_YA1 - SP_SLOT_H, SP_YA1)]
+# USB-C 座ぐりの前でリムを切り欠く (板に付けたままでも充電ケーブルが挿さる)
+SP_USB_NOTCH = (USB_CY - H / 2 - USB_CB_W / 2 - 0.5, USB_CY - H / 2 + USB_CB_W / 2 + 0.5)
+
+
+def check_strapplate():
+    """strapplate の寸法整合。ストラップ寸法を変えたときに壊れる箇所を全部ここで止める。"""
+    if STRAP_W > W - 1.0 + 2 * SP_RIM_CLR + 1e-6:
+        raise SystemExit(
+            f"MINDCLIP_STRAP_W={STRAP_W} は本体幅 {W:.1f}mm を超えるため、ポケットが本体で"
+            f"覆えずリムも切れる。{W - 1.0 + 2 * SP_RIM_CLR:.1f}mm までのストラップ用の設計です "
+            f"(幅広・クッション入りのリュック肩ベルトは別形状が必要)")
+    assert 1.0 <= STRAP_T <= 4.0, f"MINDCLIP_STRAP_T={STRAP_T} は想定範囲 (1.0〜4.0mm) 外"
+    # スロット端の肉 (ラダーのバーを両端で支える)
+    assert (SP_W - SP_SLOT_L) / 2 >= SP_END_WALL - 1e-6, "strap slot end wall too thin"
+    # ポケットは本体の外形内 (本体が蓋になる) かつリム内面より内側
+    assert SP_SLOT_L / 2 <= W / 2 + SP_RIM_CLR + 1e-6, "strap pocket wider than rim opening"
+    # 磁石ポケットと編み込み帯が重ならない
+    for mx, my in SP_MAGS:
+        assert my + _SP_MAG_R + SP_MAG_MARGIN <= SP_YB0 + 1e-6, "magnet pocket overlaps strap band"
+        assert my - _SP_MAG_R >= -H / 2 + 1.0, "magnet pocket too close to plate edge"
+    # 本体を支える上側の当たり面 (外側バーを兼ねる) が十分に残る
+    top_land = H / 2 - SP_YA1
+    assert top_land >= 6.0 - 1e-6, f"top support land only {top_land:.1f}mm (<6.0)"
+    # 帯が本体の直線部 (コーナーR の外) に収まり、ポケットの上を本体の平面が完全に覆う
+    assert SP_YA1 <= H / 2 - R_OUT + 1e-6 and SP_YB0 >= -H / 2 + R_OUT - 1e-6, \
+        "strap band reaches the body's corner radius"
+    # 磁石の下に残る肉 (チェスト側)
+    assert SP_T - (MAG_T + 0.2) >= 1.6 - 1e-6, "too little material under strap-plate magnets"
+    # リム高さは本体背面側の開口 (USB 座ぐり下端) / スイッチより下
+    usb_cb_z0 = USB_Z0 + USB_OPEN_H / 2.0 - USB_CB_H / 2
+    assert SP_RIM_H <= sw[4] - 1.0 + 1e-6, "rim reaches the switch band"
+    assert SP_USB_NOTCH[0] < USB_CY - H / 2 - USB_CB_W / 2 and \
+        SP_USB_NOTCH[1] > USB_CY - H / 2 + USB_CB_W / 2, "USB notch does not clear counterbore"
+    print(f"[strap] plate {SP_W:.1f} x {SP_H:.1f} x {SP_T:.1f} mm (+rim {SP_RIM_H}) | "
+          f"strap <= {STRAP_W:.0f} x {STRAP_T:.1f} mm | band y {SP_YB0:.1f}..{SP_YA1:.1f} | "
+          f"top land {top_land:.1f} mm | USB counterbore z0 {usb_cb_z0:.1f} vs rim {SP_RIM_H}")
+
+
+def check_strapplate_fit(body, sp):
+    """本体を板に載せた実形状で検査する (AABB ではなくソリッドのブーリアン)。
+    陰性対照だけだと「リムが存在しない」場合も通ってしまうため、横にずらした本体が
+    リムに当たること (陽性対照) も必ず確かめる。"""
+    def overlap(dx, dy):
+        r = body.translate(cq.Vector(-CX + dx, -H / 2 + dy, SP_T)).intersect(sp)
+        return sum(s.Volume() for s in r.solids().vals())
+    seated = overlap(0.0, 0.0)
+    assert seated < 1e-3, f"body interferes with strap plate when seated ({seated:.3f} mm3)"
+    shift = SP_RIM_CLR + 0.3        # すきまを超える横ずれ → リムに当たらなければならない
+    for dx, dy in ((shift, 0), (-shift, 0), (0, shift), (0, -shift)):
+        v = overlap(dx, dy)
+        assert v > 1e-3, f"rim does not stop a {shift:.1f}mm shift at ({dx:+.1f},{dy:+.1f})"
+    print(f"[strap] fit: seated overlap 0, rim stops a {shift:.1f} mm shift in all 4 directions")
+
+
+def build_strapplate():
+    sp = rounded_slab(SP_W, SP_H, SP_R, SP_T, 0, 0, 0)
+    sp = sp.edges("<Z").fillet(1.0)                 # チェスト側の縁 (ストラップ・服に当たる)
+    # リム: 本体外形 + すきま の内側を抜いたリング。USB 前を切り欠いてから結合する
+    ring = rounded_slab(SP_OUT_W, SP_OUT_H, SP_R, SP_RIM_H, 0, 0, SP_T)
+    ring = ring.cut(rounded_slab(W + 2 * SP_RIM_CLR, H + 2 * SP_RIM_CLR,
+                                 R_OUT + SP_RIM_CLR, SP_RIM_H + 1.0, 0, 0, SP_T - 0.5))
+    # 上端の面取りは切り欠き前の単純なリングにだけ掛ける (切り欠き後に掛けると OCC が
+    # 不正なソリッドを返し、union で黙ってリムが消える。v1.7 開発時に実際に起きた)
+    ring = ring.edges(">Z").fillet(0.4)
+    ring = ring.cut(cq.Workplane(obj=bbox_solid(
+        (W / 2 - 1.0, SP_USB_NOTCH[0], SP_OUT_W / 2 + 1.0, SP_USB_NOTCH[1],
+         SP_T - 0.5, SP_T + SP_RIM_H + 0.5))))
+    assert ring.val().isValid(), "strap-plate rim solid is invalid"
+    sp = sp.union(ring)
+    _bb = sp.val().BoundingBox()
+    assert sp.val().isValid() and abs(_bb.zmax - (SP_T + SP_RIM_H)) < 1e-3, (
+        f"strap-plate rim missing after union (top z={_bb.zmax:.2f}, "
+        f"expected {SP_T + SP_RIM_H:.2f})")
+    # 本体側ポケット (ストラップが中央バーの上を通る空間。本体が蓋になる)
+    sp = sp.cut(cq.Workplane(obj=bbox_solid(
+        (-SP_SLOT_L / 2, SP_YB0, SP_SLOT_L / 2, SP_YA1, SP_BAR_T, SP_T + 0.5))))
+    # スロット 2 本 (ラダー層を貫通)
+    for y0, y1 in SP_SLOTS:
+        sp = sp.cut(cq.Workplane(obj=bbox_solid(
+            (-SP_SLOT_L / 2, y0, SP_SLOT_L / 2, y1, -0.5, SP_BAR_T + 0.5))))
+    # 磁石ポケット (本体側から圧入、上面から 0.2 沈める。backplate と同じ深さ)
+    for mx, my in SP_MAGS:
+        sp = sp.cut(cq.Workplane(obj=cq.Solid.makeCylinder(
+            _SP_MAG_R, MAG_T + 0.2 + 0.5, cq.Vector(mx, my, SP_T - MAG_T - 0.2))))
+    return sp
+
+
+# ---------------------------------------------------------------------------
 # 出力
 # ---------------------------------------------------------------------------
 def export_all():
@@ -979,9 +1148,14 @@ def export_all():
     lid = build_lid()
     print("[build] backplate ...")
     backplate = build_backplate()
+    check_strapplate()
+    print("[build] strapplate ...")
+    strapplate = build_strapplate()
+    check_strapplate_fit(body, strapplate)
 
     paths = {}
-    for name, wp in (("body", body), ("lid", lid), ("backplate", backplate)):
+    for name, wp in (("body", body), ("lid", lid), ("backplate", backplate),
+                     ("strapplate", strapplate)):
         p = os.path.join(STL_DIR, f"mindclip_{name}.stl")
         cq.exporters.export(wp, p, tolerance=0.05, angularTolerance=0.2)
         paths[name] = p
@@ -1005,7 +1179,8 @@ def verify_and_render(paths):
         m = trimesh.load_mesh(p)
         meshes[name] = m
         mass = m.volume * PETG_RHO
-        total_print_mass += mass
+        if name != "strapplate":        # backplate と差し替えて使う別マウント (合算しない)
+            total_print_mass += mass
         print(f"[verify] {name}: watertight={m.is_watertight}  "
               f"volume={m.volume/1000.0:.2f} cm3  mass(PETG)={mass:.1f} g  "
               f"tris={len(m.faces)}")
@@ -1199,7 +1374,7 @@ def verify_and_render(paths):
     comp.append(("switch terminals + shrink", sw_terms, (0.85, 0.55, 0.45)))
     comp.append(("LED leads + 220R + shrink", led_leads, (0.90, 0.62, 0.62)))
     ledm = trimesh.creation.cylinder(radius=1.5, height=4.0, sections=24)
-    ledm.apply_transform(tf(LED_POS[0], LED_POS[1], BODY_D - 2.0))
+    ledm.apply_transform(tf(LED_POS[0], LED_POS[1], BODY_D - 2.0 - LED_RECESS))
     items = [(body_m, C_BODY, 0.45)]
     items += [(boxmesh(b), c, 1.0) for _t, b, c in comp]
     items += [(ledm, C_LED, 1.0)]
@@ -1365,6 +1540,61 @@ def verify_and_render(paths):
     fig.savefig(os.path.join(REN_DIR, "pcb_pocket.png"), bbox_inches="tight")
     plt.close(fig)
     print("[render] pcb_pocket.png")
+
+    # ---- strapplate.png (v1.7: ストラップ板の外観 + ストラップの通し方の断面) ----
+    #   断面図はパラメータから描く。一致は開発時に STL のスライスで 0.1mm 刻みで確認済み
+    #   (スロット / 中央バー / ポケット / リムの y 区間)。
+    from matplotlib.patches import Rectangle
+    spm = meshes["strapplate"]
+    fig = plt.figure(figsize=(13, 6.6), dpi=140)
+    ax3 = fig.add_subplot(1, 2, 1, projection="3d")
+    draw_scene(ax3, [(spm, C_BP, 1.0)])
+    finish(ax3, spm.vertices, elev=48, azim=-58, zoom=1.15)
+    ax3.set_title(f"strap plate {SP_W:.1f} x {SP_H:.1f} x {SP_T:.1f} mm (+rim {SP_RIM_H})\n"
+                  f"2 slots for straps up to {STRAP_W:.0f} mm wide / {STRAP_T:.1f} mm thick",
+                  fontsize=10)
+    axs2 = fig.add_subplot(1, 2, 2)
+    C_PL, C_BD, C_ST = "#8c8c94", "#4d73a0", "#d08a2a"
+    def rect(y0, y1, z0, z1, fc, ec="none", **kw):
+        axs2.add_patch(Rectangle((z0, y0), z1 - z0, y1 - y0, fc=fc, ec=ec, **kw))
+    (bya, byb), (aya, ayb) = SP_SLOTS
+    rect(-SP_H / 2, bya, 0, SP_T, C_PL)                       # 下側 (磁石を含む)
+    rect(byb, aya, 0, SP_BAR_T, C_PL)                         # 中央バー
+    rect(ayb, SP_H / 2, 0, SP_T, C_PL)                        # 上側の当たり面
+    for s in (1, -1):                                         # リム
+        y_in = s * (H / 2 + SP_RIM_CLR)
+        rect(min(y_in, s * SP_H / 2), max(y_in, s * SP_H / 2), SP_T, SP_T + SP_RIM_H, C_PL)
+    for _, my in SP_MAGS[:1]:                                 # 磁石 (x=±9 にあるので破線)
+        for zz, lab in ((SP_T - MAG_T - 0.2, "magnet (plate)"), (SP_T + MAG_WEB, "magnet (body)")):
+            rect(my - MAG_D / 2, my + MAG_D / 2, zz, zz + MAG_T, "none", ec="#333", ls="--", lw=0.8)
+        axs2.text(-4.0, my, "magnets\n(x=±9, 1.0 mm apart)", fontsize=7, ha="right", va="center")
+    rect(-H / 2, H / 2, SP_T, SP_T + BODY_D, C_BD, alpha=0.30)   # 本体 + リッド
+    rect(-H / 2, H / 2, SP_T + BODY_D, SP_T + TOTAL_D, C_BD, alpha=0.45)
+    axs2.text(SP_T + TOTAL_D / 2, H / 2 - 4, "body + lid\n(snaps on with magnets)",
+              fontsize=8, ha="center", va="top")
+    zb, zp = -STRAP_T / 2 - 0.3, SP_BAR_T + STRAP_T / 2 + 0.1
+    ya, yb = (aya + ayb) / 2, (bya + byb) / 2
+    path_y = [SP_H / 2 + 7, ya, ya, yb, yb, -SP_H / 2 - 7]
+    path_z = [zb, zb, zp, zp, zb, zb]
+    axs2.plot(path_z, path_y, color=C_ST, lw=5.5, solid_capstyle="butt", alpha=0.9)
+    axs2.annotate("", xy=(zb, SP_H / 2 + 1), xytext=(zb, SP_H / 2 + 7),
+                  arrowprops=dict(arrowstyle="->", color=C_ST, lw=1.5))
+    axs2.text(zb + 1.2, SP_H / 2 + 5, "strap (from shoulder)", fontsize=8, ha="left", color="#8a5a10")
+    axs2.text(zp + 0.6, (ya + yb) / 2, "strap runs over\nthe centre bar\ninside the pocket",
+              fontsize=7, va="center", color="#8a5a10")
+    axs2.text(-4.0, -SP_H / 2 - 4, "chest side", fontsize=8, ha="right")
+    axs2.set_aspect("equal")
+    axs2.set_xlim(-24, SP_T + TOTAL_D + 4)
+    axs2.set_ylim(-SP_H / 2 - 9, SP_H / 2 + 9)
+    axs2.set_xlabel("depth z (mm)")
+    axs2.set_ylabel("height y (mm, worn: up)")
+    axs2.set_title("section x=0: weave the strap  behind → up through top slot → over bar\n"
+                   "→ down through bottom slot → behind (tri-glide grip, does not slide)",
+                   fontsize=9)
+    fig.tight_layout()
+    fig.savefig(os.path.join(REN_DIR, "strapplate.png"), bbox_inches="tight")
+    plt.close(fig)
+    print("[render] strapplate.png")
 
 
 if __name__ == "__main__":

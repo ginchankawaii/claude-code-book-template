@@ -145,14 +145,20 @@ static void tlsSetup() {
   s_tls.setTimeout(HTTP_IO_MS);      // Stream::setTimeout の単位は ms（秒ではない）
 }
 
-static bool wifiConnect() {
+// 戻り値: 1 = 接続 / 0 = タイムアウト / -1 = スイッチ ON で中断 (E8)
+// 接続待ちは最大 cfg.wifi_to_s (既定30秒) かかるので、ここでも中断を見る。見ないと外出先で
+// スイッチを戻しても 30 秒点滅し続け、その後 ERR2 → sleep → 再起動まで録音が止まる。
+static int wifiConnect(bool (*abortCb)()) {
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(true);
   WiFi.begin(g_cfg.wifiSsid.c_str(), g_cfg.wifiPass.c_str());
   uint32_t t0 = millis(), to = (uint32_t)g_cfg.wifiToS * 1000;
-  while (WiFi.status() != WL_CONNECTED && (millis() - t0) < to) { ledTick(); delay(50); }
-  return WiFi.status() == WL_CONNECTED;
+  while (WiFi.status() != WL_CONNECTED && (millis() - t0) < to) {
+    if (abortCb && abortCb()) return -1;
+    ledTick(); delay(50);
+  }
+  return WiFi.status() == WL_CONNECTED ? 1 : 0;
 }
 
 static void wifiOff() {
@@ -293,7 +299,9 @@ SyncResult syncRun(bool (*abortCb)()) {
   if (!g_cfg.srvUrl.startsWith("https://")) return SYNC_NOT_PROVISIONED;
 
   clockMarkPreSync();          // settimeofday する前に「未同期クロック」の基準を取る
-  if (!wifiConnect()) { wifiOff(); return SYNC_NO_WIFI; }      // E4: リトライしない
+  int wc = wifiConnect(abortCb);
+  if (wc < 0)  { wifiOff(); return SYNC_ABORT_SWITCH; }       // E8: 接続待ち中にスイッチ ON
+  if (wc == 0) { wifiOff(); return SYNC_NO_WIFI; }            // E4: リトライしない
   tlsSetup();
 
   uint32_t sess0 = millis();

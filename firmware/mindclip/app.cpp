@@ -182,10 +182,17 @@ static void stateBoot() {
 // 状態: RECORDING（内部で LISTEN⇄CAPTURE、書込中は FLUSHING 相当）
 // ---------------------------------------------------------------------------
 static void stateRecording() {
-  // 表示: CAPTURE=連続微灯 / LISTEN=4秒ごとのパルス。
-  // RTC未同期(E9)のときは10秒ごとに2回点滅を割り込ませる。
-  bool unsyncHint = !clockValid() && ((millis() % 10000) < 900);
-  ledSetPattern(unsyncHint ? LEDP_ERR2 : (recorderIsCapturing() ? LEDP_CAPTURE : LEDP_LISTEN));
+  // 表示 (cfg.led_mode):
+  //   dark (既定) … 録音中は完全消灯。「光らない = 正常に録音中」。録音が止まる異常は
+  //                 FAULT が点滅で知らせるので、ここで黙っても見落としにはならない。
+  //                 E9 (RTC未同期) は録音自体は正常で、時刻はサーバが Age-Ms で補正するため出さない。
+  //   normal       … CAPTURE=連続微灯 / LISTEN=4秒ごとのパルス / E9 は10秒ごとに2回点滅。
+  if (g_cfg.ledMode == LED_MODE_DARK) {
+    ledSetPattern(LEDP_OFF);
+  } else {
+    bool unsyncHint = !clockValid() && ((millis() % 10000) < 900);
+    ledSetPattern(unsyncHint ? LEDP_ERR2 : (recorderIsCapturing() ? LEDP_CAPTURE : LEDP_LISTEN));
+  }
 
   recorderPump();          // ここで i2s_read がブロックし、CPUは WFI に入る
 
@@ -223,7 +230,9 @@ static void stateRecording() {
 
   swPollNonBlocking();
   if (!s_swLow) {                              // E7: スイッチOFF
-    ledSetPattern(LEDP_SYNC);
+    // SYNC 表示は無線を起こす時点 (stateSyncing の猶予明け) から。ここで点けると
+    // 「OFF→すぐ ON」の確認操作で一瞬光ってしまい、応答の1回点滅と区別できない。
+    ledSetPattern(LEDP_OFF);
     recorderFinishAndClose();                  // 最終フラッシュ→ヘッダ更新→クローズ→.wav
     recorderDeinitI2S();
     recorderFreeBuffers();                     // 縮退構成(バッファがDRAM)でのmbedTLS圧迫を避ける
@@ -235,7 +244,31 @@ static void stateRecording() {
 // ---------------------------------------------------------------------------
 // 状態: SYNCING
 // ---------------------------------------------------------------------------
+// スイッチが ON に戻った (E8) ので録音を再開する。SYNCING のどの段階から来ても同じ手順。
+static void resumeRecording() {
+  // 「OFF→ON」は録音中かを確かめる操作でもある。起動時と同じ 0.2s×1回 で応答する。
+  // I2S はまだ止まっているので、ブロッキング点滅でも DMA を溢れさせない。
+  ledSetPattern(LEDP_OFF);
+  ledBlinkBlocking(1, 200, 0);
+  recorderAllocBuffers();                      // SYNCING 前に返したぶんを取り直す
+  if (recorderBufferSeconds() == 0 || !recorderInitI2S()) {
+    s_state = ST_FAULT; s_faultT = millis(); return;
+  }
+  recorderEnterRecording();
+  s_state = ST_RECORDING;
+  mcLogf("[SYNC] switch back ON -> RECORDING");
+}
+
 static void stateSyncing() {
+  // 猶予: 無線を起こす前に SYNC_GRACE_MS だけスイッチを見る。LED は消したまま。
+  // ここで ON に戻れば WiFi を一切使わずに録音へ戻る (外出先での確認操作・誤操作)。
+  ledSetPattern(LEDP_OFF);
+  ledTick();
+  uint32_t g0 = millis();
+  while (millis() - g0 < SYNC_GRACE_MS) {
+    if (swReadBlocking()) { resumeRecording(); return; }
+    delay(20);
+  }
   ledSetPattern(LEDP_SYNC);
   SyncResult r = syncRun(syncAbortCb);
   recorderRefreshFreeSpace();
@@ -243,12 +276,7 @@ static void stateSyncing() {
 
   switch (r) {
     case SYNC_ABORT_SWITCH:                        // E8: 録音へ復帰
-      recorderAllocBuffers();                      // SYNCING 前に返したぶんを取り直す
-      if (recorderBufferSeconds() == 0 || !recorderInitI2S()) {
-        s_state = ST_FAULT; s_faultT = millis(); return;
-      }
-      recorderEnterRecording();
-      s_state = ST_RECORDING;
+      resumeRecording();
       return;
     case SYNC_AUTH_FAIL:                           // E6
       blinkThenSleep(LEDP_ERR5);
