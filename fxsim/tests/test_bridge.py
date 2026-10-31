@@ -1,0 +1,73 @@
+from pathlib import Path
+
+from app import bridge
+
+
+def test_write_and_read_signal(tmp_path):
+    bridge.write_signal("LONG", 0.3, base=tmp_path)
+    assert (tmp_path / bridge.SIGNAL_FILE).read_text().strip() == "LONG 0.30"
+    bridge.write_signal("FLAT", 0, base=tmp_path)
+    assert (tmp_path / bridge.SIGNAL_FILE).read_text().strip() == "FLAT 0.00"
+
+
+def test_write_signal_heartbeat_expiry_and_atomicity(tmp_path):
+    # EXP token: "<ACTION> <lots> EXP <epoch>" — heartbeat-aware EAs fail safe
+    # to FLAT when it lapses; old EAs only parse the first two tokens.
+    bridge.write_signal("LONG", 0.09, base=tmp_path, expires_at=1782950000)
+    assert (tmp_path / bridge.SIGNAL_FILE).read_text().strip() == "LONG 0.09 EXP 1782950000"
+    # atomic tmp+rename: no half-written temp file left behind
+    assert not (tmp_path / (bridge.SIGNAL_FILE + ".tmp")).exists()
+
+
+def test_read_status(tmp_path):
+    (tmp_path / bridge.STATUS_FILE).write_text(
+        "balance,equity,position_lots\n3000000.00,3001234.50,0.30\n")
+    s = bridge.read_status(base=tmp_path)
+    assert s["balance"] == 3000000.0 and s["equity"] == 3001234.5 and s["position_lots"] == 0.30
+
+
+def test_read_status_missing_returns_none(tmp_path):
+    assert bridge.read_status(base=tmp_path) is None
+
+
+def test_read_bars_parses_ea_export(tmp_path):
+    # mirrors the EA's TimeToString(TIME_DATE|TIME_SECONDS) "YYYY.MM.DD HH:MM:SS"
+    (tmp_path / bridge.BARS_FILE).write_text(
+        "time,open,high,low,close\n"
+        "2026.06.01 00:00:00,158.10,158.90,157.80,158.50\n"
+        "2026.06.02 00:00:00,158.50,159.20,158.30,159.00\n")
+    bars = bridge.read_bars("USD_JPY", "D", base=tmp_path)
+    assert len(bars) == 2
+    assert bars[0].open == 158.10 and bars[1].close == 159.00
+    assert bars[0].time.year == 2026 and bars[0].time.month == 6
+
+
+def test_write_signal_sl_token(tmp_path):
+    # Round-4: the brain's protective stop rides the signal so an SL-aware EA
+    # can mirror it as a real broker stop order.
+    bridge.write_signal("LONG", 0.09, base=tmp_path, expires_at=1782950000, sl=149.805)
+    assert (tmp_path / bridge.SIGNAL_FILE).read_text().strip() == \
+        "LONG 0.09 EXP 1782950000 SL 149.805"
+    bridge.write_signal("FLAT", 0, base=tmp_path, sl=None)
+    assert (tmp_path / bridge.SIGNAL_FILE).read_text().strip() == "FLAT 0.00"
+
+
+def test_read_status_parses_round6b_columns_and_tolerates_old_ones(tmp_path):
+    p = tmp_path / bridge.STATUS_FILE
+    p.write_text("balance,equity,position_lots,exec_seq,ea_time,build\n"
+                 "272164.00,272164.00,0.090,1800000000,1800001234,r6b-status\n")
+    s = bridge.read_status(base=tmp_path)
+    assert s["position_lots"] == 0.09 and s["exec_seq"] == 1800000000
+    assert s["ea_time"] == 1800001234 and s["build"] == "r6b-status"
+    p.write_text("balance,equity,position_lots\n272164.00,272164.00,0.090\n")   # old EA
+    s = bridge.read_status(base=tmp_path)
+    assert s["position_lots"] == 0.09 and "exec_seq" not in s and "build" not in s
+
+
+def test_read_status_rejects_a_torn_extended_row_as_a_whole(tmp_path):
+    # A row cut inside ea_time must not yield a 1970-era clock (round-6c).
+    p = tmp_path / bridge.STATUS_FILE
+    p.write_text("balance,equity,position_lots,exec_seq,ea_time,build\n"
+                 "272000.00,272100.00,0.090,1799900000,1800\n")
+    s = bridge.read_status(base=tmp_path)
+    assert s["position_lots"] == 0.09 and "ea_time" not in s and "exec_seq" not in s
