@@ -842,9 +842,14 @@ def test_awaiting_new_bar_helper():
     assert R._awaiting_new_bar("not a time", t1, 0.0) == (False, None)   # unreadable mark: no block
 
 
-@pytest.mark.parametrize("restart_after_poll", [None, 2, 4])
+@pytest.mark.parametrize("restart_after_poll,fault", [
+    (None, None), (2, None), (4, None),
+    (2, "clock_behind"),      # 3rd review: a restored cooldown in the future held entries back
+    (2, "torn_status"),       # 3rd review: a torn re-read lost the stop row and its mark
+    (2, "lost_stop_row"),     # ...and with no stop row at all, settle must set the mark
+])
 def test_resident_loop_reenters_only_after_the_stop_bar_has_closed(tmp_path, monkeypatch,
-                                                                   restart_after_poll):
+                                                                   restart_after_poll, fault):
     """End to end through main(): a LONG is stopped out by the live price, the
     price recovers INSIDE the same bar (closed-bar trend still up): the brain
     must keep the book flat for every poll of that bar — no gate, no daily —
@@ -920,9 +925,12 @@ def test_resident_loop_reenters_only_after_the_stop_bar_has_closed(tmp_path, mon
             state["forming"] = bar(121, 152.1)
 
     monkeypatch.setattr(bridge, "read_bars", lambda *a, **k: closed + [state["forming"]])
-    monkeypatch.setattr(bridge, "read_status", lambda *a, **k: {
-        "balance": 1_000_000.0, "equity": 1_000_000.0, "position_lots": state["pos"],
-        "exec_seq": state["exec_seq"], "ea_time": int(clock["t"]), "build": bridge.EA_BUILD_EXPECTED})
+    def read_status(*a, **k):
+        if state.pop("torn", False):
+            return None
+        return {"balance": 1_000_000.0, "equity": 1_000_000.0, "position_lots": state["pos"],
+                "exec_seq": state["exec_seq"], "ea_time": int(clock["t"]), "build": bridge.EA_BUILD_EXPECTED}
+    monkeypatch.setattr(bridge, "read_status", read_status)
     standing = {"action": "LONG", "lots": 0.10, "seq": state["exec_seq"], "sl": 151.0}
 
     def write_signal(action, lots, base=None, expires_at=None, sl=None, seq=None):
@@ -930,6 +938,8 @@ def test_resident_loop_reenters_only_after_the_stop_bar_has_closed(tmp_path, mon
         standing.update(action=action, lots=lots, seq=seq, sl=sl)
         if action == "FLAT":
             state["pos"] = 0.0
+            if fault == "torn_status" and state["polls"] == 1:
+                state["torn"] = True          # the very next status read is torn
         elif action == "LONG" and seq and seq > state["exec_seq"] and state["pos"] == 0.0:
             state["pos"], state["exec_seq"] = lots, seq
     monkeypatch.setattr(bridge, "write_signal", write_signal)
@@ -945,10 +955,21 @@ def test_resident_loop_reenters_only_after_the_stop_bar_has_closed(tmp_path, mon
         R.main()
     if restart_after_poll is not None:          # the brain dies inside the stop's bar
         state["limit"] = 14
+        if fault == "clock_behind":
+            clock["t"] -= 3 * 3600                # the container clock reads 3 h behind
+        if fault == "lost_stop_row":
+            import sqlite3
+            con = sqlite3.connect(dbp)
+            con.execute("DELETE FROM signals WHERE components LIKE '%\"trigger\": \"stop\"%'")
+            con.commit(); con.close()
+            standing.update(action="FLAT", seq=0)   # the bridge holds the FLAT, no live order id
         with pytest.raises(_Stop):
             R.main()
 
     longs = [w for w in writes if w[1] == "LONG" and w[3] != 1_789_999_000]
     assert any(w[1] == "FLAT" for w in writes if w[0] == 1), writes          # stopped at poll 1
     assert not [w for w in longs if w[0] < 7], writes                         # no re-entry in the stop bar
-    assert [w for w in longs if w[0] >= 7], writes                            # re-entered after it closed
+    assert [w for w in longs if 7 <= w[0] <= 8], writes                       # re-entered right after it closed
+    if fault in (None, "torn_status"):
+        stops = [r for r in db.load_signals(rid) if '"trigger": "stop"' in str(r.get("components"))]
+        assert stops and '"reentry_bar": "' in str(stops[-1]["components"]), stops   # the mark was kept

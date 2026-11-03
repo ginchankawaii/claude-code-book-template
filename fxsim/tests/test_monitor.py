@@ -400,3 +400,43 @@ def test_blocked_rows_are_not_decisions(monkeypatch):
     acts = run_monitor._actions(1)
     assert acts == ["LONG", "LONG", "FLAT"]                  # a stop IS a position change
     assert monitor.count_position_changes(acts) == 1
+
+
+# ---- round-9 third review ---------------------------------------------------
+
+def test_return_envelope_never_gets_stricter_with_span():
+    # a -26.5% drawdown that merely stayed flat for 25 more days flipped 🟡 to
+    # 🔴 at day 545 when the worst column rose again
+    worsts = [w for _, _, w in monitor.ENVELOPE_RETURN]
+    assert all(b <= a for a, b in zip(worsts, worsts[1:])), worsts
+    def flag(span, ret):
+        rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 1 + ret / 100],
+                                   span_days=float(span), actions=["LONG"])
+        return next(x for x in rep["checks"] if x["name"] == "リターン")["flag"]
+    assert flag(520, -26.5) != RED and flag(545, -26.5) != RED and flag(800, -26.5) != RED
+
+
+def test_pending_wording_distinguishes_recorded_from_absent():
+    one = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 1.0], span_days=100.0,
+                               actions=["LONG"], segment={"pending": "one-row"})
+    none = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 1.0], span_days=100.0,
+                                actions=["LONG"], segment={"pending": True})
+    m1 = next(x for x in one["checks"] if x["name"] == "取引頻度")["msg"]
+    m2 = next(x for x in none["checks"] if x["name"] == "取引頻度")["msg"]
+    assert "記録済み" in m1 and "まだありません" in m2
+
+
+def test_live_page_health_names_a_fresh_lock_wait(monkeypatch):
+    import json as _json
+    from datetime import datetime, timedelta, timezone
+    from app import server
+    from scripts import run_monitor
+    assert server.LOCK_WAIT_FRESH_S == run_monitor.BLOCKED_FRESH_S
+    now = datetime.now(timezone.utc)
+    rows = [{"source": "combined", "time": (now - timedelta(seconds=90)).isoformat(),
+             "reason": "BLOCKED on the brain lock for 5 min: lock held by 1@old",
+             "components": _json.dumps({"action": "FLAT", "trigger": "blocked-on-lock"})}]
+    monkeypatch.setattr(server.db, "load_signals", lambda rid: rows)
+    assert "BLOCKED" in (server._fresh_lock_wait(7) or "")
+    rows[0]["time"] = (now - timedelta(hours=3)).isoformat()          # the wait has ended
+    assert server._fresh_lock_wait(7) is None

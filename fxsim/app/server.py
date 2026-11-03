@@ -306,6 +306,9 @@ def get_live(run_id: int | None = None, kind: str | None = None) -> dict:
             bad.append("脳の心拍が読めません")
         elif ba > bridge_mod.BRAIN_SIGNAL_STALE_S:
             bad.append(f"脳の心拍が{ba / 60:.0f}分前で停止")
+        lock_wait = _fresh_lock_wait(rid)
+        if lock_wait:
+            bad.append(f"脳がロック待ち（取引していません）: {lock_wait}")
         if health["status_missing"]:
             bad.append("EAのstatusが読めません")
         elif ea is not None and ea > bridge_mod.EA_STATUS_STALE_S:
@@ -348,6 +351,36 @@ def _latest_holdings(run_id: int) -> list | None:
         return json.loads(latest["components"]).get("holdings")
     except (json.JSONDecodeError, TypeError):
         return None
+
+
+# The brain writes a blocked-on-lock row every 300 s while it waits (ticks of
+# 30 s); only a fresh one means it is STILL waiting — the same rule as
+# scripts/run_monitor.BLOCKED_FRESH_S (a test pins the two together).
+LOCK_WAIT_FRESH_S = 2 * 300.0 + 2 * 30.0
+
+
+def _fresh_lock_wait(run_id) -> str | None:
+    """The reason of a FRESH blocked-on-lock row, if that is the newest
+    decision-log row: the decision list no longer shows those rows, so the
+    health line must say why the brain is idle."""
+    from datetime import datetime, timezone
+    if not run_id:
+        return None
+    try:
+        for s in reversed(db.load_signals(run_id)):
+            if s.get("source") != "combined":
+                continue
+            comp = json.loads(s["components"]) if s.get("components") else {}
+            if comp.get("trigger") != "blocked-on-lock":
+                return None
+            t = datetime.fromisoformat(str(s.get("time")))
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - t).total_seconds()
+            return str(s.get("reason") or "") if age <= LOCK_WAIT_FRESH_S else None
+    except Exception:
+        return None
+    return None
 
 
 def _recent_decisions(run_id: int, limit: int = 15) -> list[dict]:

@@ -971,9 +971,13 @@ def main() -> None:
     cal_day = datetime.now(timezone.utc).date()
 
     def record_stop_exit(price: float, stop: float, pos: float, now: datetime,
-                         bar_t=None) -> None:
+                         bar_t=None, probe_status: Optional[dict] = None) -> None:
         try:
             status = bridge.read_status()
+            if not (status and (status.get("balance") or 0) > 0):
+                # A torn re-read must not lose the row that carries the
+                # re-entry mark: fall back to the probe's trusted status.
+                status = probe_status
             if status and (status.get("balance") or 0) > 0:
                 run_id = _ongoing_run(status["balance"], trader.model,
                                       args.max_risk, args.granularity)
@@ -996,9 +1000,13 @@ def main() -> None:
     # intent = the brain's last ordered state; the loop's job is to make the
     # book converge to it and never to silently re-adopt a diverging book.
     intent, stop_price, last_decision = _restore_state(args.granularity)
+    # Never in the future: a container clock that reads behind at restart
+    # (the WSL lag) would otherwise hold every gate and the daily decision
+    # back by the whole lag (third review).
+    last_decision = min(last_decision, _time.time())
     reentry_bar, last_exit = _restore_reentry(args.granularity)
     if reentry_bar is not None:
-        last_gate = last_exit                  # the cooldown survives a restart too
+        last_gate = min(last_exit, _time.time())   # the cooldown survives a restart too
         print(f"[ai] restored re-entry block: flat since a stop in the bar after "
               f"{reentry_bar}; no re-entry before a newer closed bar", flush=True)
     intent_lots = 0.0
@@ -1141,6 +1149,12 @@ def main() -> None:
                     settle_pending = False
                     intent, intent_lots, stop_price, order_seq, seen_long = \
                         _settle_adopted_book(pos, stop_price, ea_exec_seq=ea_exec_seq)
+                    if intent == "FLAT":
+                        # A restored LONG over an EMPTY book was closed outside
+                        # this brain (a broker SL while it was down): the same
+                        # re-entry rule as any external close (third review).
+                        reentry_bar = st.get("_bar_t")
+                        last_gate = _time.time()
                     try:                          # visible to diagnose_live / run_monitor
                         st_settle = bridge.read_status()   # never reuse `st`: it is the
                         if st_settle and (st_settle.get("balance") or 0) > 0:   # probe's
@@ -1264,7 +1278,7 @@ def main() -> None:
                         bridge.write_signal("FLAT", 0.0, seq=order_seq)
                         print(f"[ai] STOP hit: last {price:.3f} <= stop {stop_price:.3f} "
                               f"-> FLAT (gate may re-enter if trend holds)", flush=True)
-                        record_stop_exit(price, stop_price, pos, now, st.get("_bar_t"))
+                        record_stop_exit(price, stop_price, pos, now, st.get("_bar_t"), st)
                     intent, intent_lots, stop_price = "FLAT", 0.0, None
                     seen_long = False
                     last_gate = _time.time()          # brief pause before re-entry

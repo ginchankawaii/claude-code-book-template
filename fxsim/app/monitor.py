@@ -57,12 +57,13 @@ ENVELOPE_CHANGES = (     # (from span_days, p90 count, max count)
     (730, 135, 150), (910, 161, 180), (1095, 180, 194), (1280, 194, 202),
     (1460, 194, 202),
 )
-ENVELOPE_RETURN = (      # (from span_days, p10 return %, worst return %), no swap
+ENVELOPE_RETURN = (      # (from span_days, p10 return %, worst return %), no swap;
+    # worst = running minimum over spans: a longer window is never stricter
     (60, -5.4, -15.6), (75, -5.5, -16.4), (90, -5.9, -18.1), (120, -6.5, -19.9),
-    (150, -6.5, -21.5), (180, -6.7, -22.0), (240, -6.9, -19.6), (300, -7.0, -19.6),
-    (365, -8.0, -19.6), (450, -8.1, -27.3), (545, -8.6, -15.9), (640, -9.7, -15.9),
-    (730, -10.4, -19.3), (910, -10.8, -21.2), (1095, -11.1, -23.1),
-    (1280, -2.5, -23.4), (1460, 1.7, -23.4),
+    (150, -6.5, -21.5), (180, -6.7, -22.0), (240, -6.9, -22.0), (300, -7.0, -22.0),
+    (365, -8.0, -22.0), (450, -8.1, -27.3), (545, -8.6, -27.3), (640, -9.7, -27.3),
+    (730, -10.4, -27.3), (910, -10.8, -27.3), (1095, -11.1, -27.3),
+    (1280, -2.5, -27.3), (1460, 1.7, -27.3),
 )
 CHANGES_RED_MARGIN = 1.25        # RED only well beyond the backtest's busiest window
 RETURN_RED_MARGIN_PP = 5.0       # ... or well below its worst (at least 5pp / 25%)
@@ -119,6 +120,13 @@ def envelope_at(table, span_days: float, beyond: str) -> tuple[float, float] | N
         _, a, b = table[-1]
         return a * span_days / w_last, b * span_days / w_last
     return float(min(r[1] for r in table)), float(min(r[2] for r in table))
+
+
+def _pending_msg(state) -> str:
+    if state == "one-row":
+        return "判定保留：確定足方式（2026-11修正）の判断を記録済み。次の記録から判定を始めます"
+    return ("判定保留：このランには確定足方式（2026-11修正）の判断がまだありません。新しい脳なら"
+            "20時間以内に記録されます（修正前の方式だけのランは判定対象外）")
 
 
 def count_position_changes(actions: list[str]) -> int:
@@ -199,8 +207,7 @@ def build_report(*, initial_balance: float, equity_values: list[float],
     if kind != "fx":
         pass                                   # no stock backtest to compare with
     elif pending:
-        checks.append({"name": "取引頻度", "flag": YELLOW,
-                       "msg": "判定保留：確定足方式（2026-11修正）の判断がまだ記録されていません（20時間以内に記録）"})
+        checks.append({"name": "取引頻度", "flag": YELLOW, "msg": _pending_msg(seg["pending"])})
     elif env is None:
         checks.append({"name": "取引頻度", "flag": YELLOW,
                        "msg": f"建玉変化 {s_changes}回{s_from}（観察{s_span:.0f}日・判定は30日以降）"})
@@ -229,8 +236,7 @@ def build_report(*, initial_balance: float, equity_values: list[float],
     if kind != "fx":
         pass                                   # no stock backtest to compare with
     elif pending:
-        checks.append({"name": "リターン", "flag": YELLOW,
-                       "msg": "判定保留：確定足方式（2026-11修正）の判断がまだ記録されていません"})
+        checks.append({"name": "リターン", "flag": YELLOW, "msg": _pending_msg(seg["pending"])})
     elif env is None:
         checks.append({"name": "リターン", "flag": YELLOW,
                        "msg": f"累計 {ret:+.1f}%{s_from}（観察{s_span:.0f}日・判定は60日以降）"})

@@ -241,7 +241,17 @@ def build(rs: list[dict]) -> tuple[tuple, tuple]:
         return (round(float(min(np.percentile(v, 10) for v in vals if len(v))) - 0.05, 1),
                 round(float(min(v.min() for v in vals if len(v))) - 0.05, 1))
 
-    return rows_for(CHANGE_ROWS, window_counts, chg_agg), rows_for(RETURN_ROWS, window_returns, ret_agg)
+    chg = rows_for(CHANGE_ROWS, window_counts, chg_agg)
+    ret = rows_for(RETURN_ROWS, window_returns, ret_agg)
+    # A longer window is never judged more strictly than a shorter one: the
+    # worst over spans up to W is the running minimum (else a -26.5% drawdown
+    # that merely stayed flat for 25 more days flipped 🟡 to 🔴 at day 545 —
+    # third review).
+    run, out = 0.0, []
+    for w, p10, worst in ret:
+        run = min(run, worst)
+        out.append((w, p10, run))
+    return chg, tuple(out)
 
 
 def validate(verbose: bool = True) -> bool:

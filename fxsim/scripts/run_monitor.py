@@ -237,7 +237,7 @@ def _closed_bar_segment(rid: int, equity: list[dict]) -> dict:
     eq = [e for e in equity if str(e["time"]) >= since]
     acts = [a for t, a in _timed_actions(rid) if t >= since]
     if len(eq) < 2:
-        return {"pending": True}
+        return {"pending": "one-row"}
     return {"equity_values": [e["equity"] for e in eq], "actions": acts, "since": since,
             "span_days": monitor.span_days_between(eq[0]["time"], eq[-1]["time"])}
 
@@ -312,15 +312,15 @@ def main() -> None:
     print(f" 稼働 {span:.0f}日 ｜ 初期 ¥{bal0:,.0f} → 現在 ¥{eq:,.0f} ({s['return_pct']:+.1f}%)")
     print(f" 現在DD {s['cur_dd_pct']:.1f}% ｜ 期間中最大DD {s['max_dd_pct']:.1f}%")
     tpy = rep["trades_per_year"]                          # annualised only from 365 days
-    print(f" 建玉変化 {rep['n_position_changes']}回／{span:.0f}日"
+    print(f" 建玉変化（全期間） {rep['n_position_changes']}回／{span:.0f}日"
           + (f"（年率 {tpy:.0f}回）" if tpy is not None else ""))
     print("-" * 60)
     if args.kind == "fx":
         print(" 基準（バックテスト H1 2015-26/SMA2400/線形ランプ5x・スワップ別）: "
               f"年+{monitor.BT_CAGR_PCT:.0f}% / 最大DD {monitor.BT_MAXDD_PCT:.0f}%（警告線{monitor.EXP_MAXDD_PCT:.0f}%）/ "
               f"建玉変化 約{monitor.BT_CHANGES_PER_YEAR:.0f}回/年")
-        print("   ※ 取引頻度・リターンは同じ長さの期間の過去と比較（2026-11修正前の判断方式の期間を含む）。"
-              "円安が続いた好条件の11年なので、相場次第で下回りうる")
+        print("   ※ 取引頻度・リターンは確定足方式（2026-11修正）の判断以降の区間だけを、同じ長さの期間の"
+              "バックテスト／確定足リプレイと比較。円安が続いた好条件の11年なので、相場次第で下回りうる")
     print("-" * 60)
     for c in rep["checks"]:
         print(f"  {c['flag']} {c['name']:<6} {c['msg']}")
