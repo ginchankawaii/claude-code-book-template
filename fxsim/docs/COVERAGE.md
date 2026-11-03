@@ -23,34 +23,35 @@
 | I9 | 公開ダッシュボードから注文・ストップ・シグナル・DBを変更できない |
 | I10 | 運用者の健康信号は、壊れているのに健全と表示しない／健全なのに壊れていると表示しない |
 | **I11** | **システムが入りうるすべての状態に有限の脱出口がある。** 分岐・待機・バックオフ・フラグ・ループが無期限に保持しない。保持が正しい場合（本当に生きた先住）は、計器がそう言い、対処を名指しする（Round-7新設） |
+| **I12** | **ライブの判断タイミングは検証済みバックテストと同じ**：シグナル・確信度ランプ・ATRは確定したH1足のみから取り、現在値は発注・ストップにだけ使う。ストップアウト（ブローカーSL含む）後の再エントリーは、ストップが起きた足が確定するまで待つ（Round-9新設） |
 
-## 台帳（最終更新：Round-7 / 2026-09-18）
+## 台帳（最終更新：Round-9 / 2026-11-03）
 
-P1〜P8 = Round-6の各パス、R2〜R5 = 各ラウンド、**R7 = Round-7**、
+P1〜P8 = Round-6の各パス、R2〜R5 = 各ラウンド、**R7 = Round-7**、**R9 = Round-9**、
 **`never` = どのパスの記述もそのセルを名指ししていない**（「たぶん含まれる」は `never` と書く）、
 `–` = そのコンポーネントに適用されない。
 
-| コンポーネント（ライブ経路） | I1 | I2 | I3 | I4 | I5 | I6 | I7 | I8 | I9 | I10 | I11 |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| run_ai_bridge: 常駐状態機械 | P8 | P8 | P8 | P8 | P8 | P5 | P8 | P1 | – | P8 | R7 |
-| run_ai_bridge: ロック | – | – | – | – | – | P1 | – | **R7** | – | **R7** | **R7** |
-| run_ai_bridge: decide_once/サイジング | P8 | R4 | P8 | – | P8 | – | P8 | – | – | **R7** | `never` |
-| run_ai_bridge: _restore_state/_find_run | – | – | P1 | – | – | – | P1 | – | – | P8 | `never` |
-| mt5_ea/SteadyBridge.mq5 | P4 | P6 | P5 | P6 | – | – | P5 | P6 | – | P3 | P6 |
-| app/bridge.py | – | – | P5 | P5 | P5 | – | P5 | P1 | – | P6 | P6 |
-| app/monitor.py + run_monitor | – | – | – | – | – | – | – | – | – | **R7** | **R7** |
-| scripts/diagnose_live.py | – | R4 | – | – | – | – | – | – | – | P8 | R7 |
-| app/server.py（公開ダッシュボード） | – | – | – | – | – | – | – | P1 | P1 | **R7** | **R7** |
-| app/db.py | – | – | – | – | – | **R7** | – | – | `never` | **R7** | **R7** |
-| app/config.py（env解析） | – | **R7** | – | – | – | `never` | – | – | – | **R7** | `never` |
-| app/sizing.py | – | R4 | – | – | – | – | – | – | – | **R7** | – |
-| app/ai_trader.py | – | R4/**R7** | – | – | – | R4 | – | – | – | **R7** | R4 |
-| app/providers/csv.py（バー解析） | – | – | – | – | R4/**R7** | `never` | – | – | – | `never` | `never` |
-| app/indicators.py（ATR→ストップ/サイズ） | – | `never` | `never` | – | `never` | – | – | – | – | `never` | – |
-| app/events.py（カレンダー→トリガ） | – | – | – | – | `never` | – | `never` | – | – | `never` | **R7** |
-| app/adaptive.py（DDブレーキ・既定OFF） | – | R4 | – | – | – | – | – | – | – | `never` | **R7** |
-| docker-compose / Dockerfile / .env | – | **R7** | – | – | – | **R7** | – | `never` | P1 | **R7** | `never` |
-| app/models.py, providers/base.py | – | – | – | – | – | – | – | – | – | `never` | – |
+| コンポーネント（ライブ経路） | I1 | I2 | I3 | I4 | I5 | I6 | I7 | I8 | I9 | I10 | I11 | I12 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| run_ai_bridge: 常駐状態機械 | P8 | P8 | P8 | P8 | P8 | P5 | P8 | P1 | – | P8 | R7 | **R9** |
+| run_ai_bridge: ロック | – | – | – | – | – | P1 | – | **R7** | – | **R7** | **R7** | – |
+| run_ai_bridge: decide_once/サイジング | P8 | R4 | P8 | – | P8 | – | P8 | – | – | **R7** | `never` | **R9** |
+| run_ai_bridge: _restore_state/_find_run | – | – | P1 | – | – | – | **R9** | – | – | P8 | `never` | – |
+| mt5_ea/SteadyBridge.mq5 | P4 | P6 | P5 | P6 | – | – | P5 | P6 | – | P3 | P6 | R9 |
+| app/bridge.py | – | – | P5 | P5 | P5 | – | P5 | P1 | – | P6 | P6 | R9 |
+| app/monitor.py + run_monitor | – | – | – | – | – | – | – | – | – | **R7** | **R7** | R9 |
+| scripts/diagnose_live.py | – | R4 | – | – | – | – | – | – | – | **R9** | R7 | – |
+| app/server.py（公開ダッシュボード） | – | – | – | – | – | – | – | P1 | P1 | **R7** | **R7** | – |
+| app/db.py | – | – | – | – | – | **R7** | – | – | `never` | **R7** | **R7** | – |
+| app/config.py（env解析） | – | **R7** | – | – | – | `never` | – | – | – | **R7** | `never` | – |
+| app/sizing.py | – | R4 | – | – | – | – | – | – | – | **R7** | – | – |
+| app/ai_trader.py | – | R4/**R7** | – | – | – | R4 | – | – | – | **R7** | R4 | – |
+| app/providers/csv.py（バー解析） | – | – | – | – | R4/**R7** | `never` | – | – | – | `never` | `never` | – |
+| app/indicators.py（ATR→ストップ/サイズ） | – | `never` | `never` | – | `never` | – | – | – | – | `never` | – | – |
+| app/events.py（カレンダー→トリガ） | – | – | – | – | `never` | – | `never` | – | – | `never` | **R7** | `never` |
+| app/adaptive.py（DDブレーキ・既定OFF） | – | R4 | – | – | – | – | – | – | – | `never` | **R7** | – |
+| docker-compose / Dockerfile / .env | – | **R7** | – | – | – | **R7** | – | `never` | P1 | **R7** | `never` | – |
+| app/models.py, providers/base.py | – | – | – | – | – | – | – | – | – | `never` | – | – |
 
 **ライブ経路外**（fx/dashboardコンテナが使わない、または起動を拒否する）：
 `app/live.py` `app/mt5_live.py` `app/steady*.py` `app/backtest.py` `app/strategies/*`
@@ -79,6 +80,7 @@ events に集中している。規律6（最新コードを叩け）だけで回
 - **`app/server.py` I9**：`/api/backtest` はcsv|sampleのみ・20,000本上限・逐次化・設定はリクエスト毎コピー。
 
 ## 次のパスが最初に見るべき空欄（金額リスク順）
+0. **Round-9で見つかった最大の乖離（修正済み・要検証）** — 脳はRound-2以来、EAが出す**形成中のH1足**で10分ごとに判断していた（`CopyRates(start=0)`）。確信度ランプが交差直後の約1倍で建て、そのサイズをトレンド中ずっと保持するため、再現では年3〜9%（確定足なら15%）。確定足判断＋「ストップ後は次の確定足まで再エントリーしない」に修正（I12）。**2026年6月以降のライブ実績は旧方式の結果**。経済指標トリガ（events）のI12は未攻撃。
 1. **実機のMQL5とWindows共有** — EA側の全閉鎖証明はPython転写経由。`os.replace` / `FileMove` が
    Dockerのbind mount上で本当に原子的かは、所有者のPCでしか確かめられない。
 2. **`app/indicators.py`** — ATRがストップ幅とサイズの両方を決めるのに、I2/I3/I5のどれでも未攻撃。

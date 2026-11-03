@@ -319,6 +319,27 @@ def test_cancelled_unfilled_order_is_not_a_cycle():
     assert [c["trigger"] for c in cycles] == ["stop"]        # the cancelled one never existed
 
 
+def test_blocked_on_lock_rows_are_not_exits():
+    # Round-9 review: a brain waiting on the lock writes FLAT blocked-on-lock
+    # rows while the book is still LONG; one holding must stay one cycle.
+    from datetime import datetime, timezone, timedelta
+    t0 = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    blocked = {"action": "FLAT", "trigger": "blocked-on-lock", "blocked_s": 900}
+    sigs = [
+        {"direction": 1, "dt": t0, "reason": "trend-up",
+         "comp": {"action": "LONG", "trigger": "gate-entry", "target_lots": 0.09, "stop_price": 150.0}},
+        {"direction": 0, "dt": t0 + timedelta(hours=5), "reason": "BLOCKED on the brain lock for 15 min",
+         "comp": dict(blocked)},
+        {"direction": 1, "dt": t0 + timedelta(hours=6), "reason": "hold",
+         "comp": {"action": "LONG", "trigger": "daily", "stop_price": 150.0}},
+        {"direction": 0, "dt": t0 + timedelta(hours=60), "reason": "trend-down",
+         "comp": {"action": "FLAT", "trigger": "gate-exit", "trend_up": False}},
+    ]
+    cycles, _ = D.build_cycles(sigs)
+    assert len(cycles) == 1 and cycles[0]["trigger"] == "trend"
+    assert cycles[0]["exit_time"] == t0 + timedelta(hours=60)
+
+
 def test_spike_through_the_stop_that_snapped_back_is_still_a_stop_out():
     sig = {"reason": "external close detected at 159.400 (was LONG 0.09, stop 159.0)",
            "comp": {"action": "FLAT", "trigger": "external-close", "stop_price": 159.0,

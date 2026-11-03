@@ -99,11 +99,21 @@ MAX_BAR_JUMP_PCT = 3.0
 
 
 def _load_bars(instrument: str, granularity: str, sma_n: int, history_csv: str):
-    """Candles for BOTH the poll probe and the decision — ONE threshold, ONE
-    freshness rule, ONE plausibility rule, so the two can never disagree about
-    the data source. Returns None when the feed can't be trusted this tick;
-    callers must skip, never guess (and the resident loop's stop-liveness
-    heartbeat then fails the book safe within the signal TTL)."""
+    """(feed, closed) for BOTH the poll probe and the decision — ONE threshold,
+    ONE freshness rule, ONE plausibility rule, so the two can never disagree
+    about the data source. Returns None when the feed can't be trusted this
+    tick; callers must skip, never guess (and the resident loop's
+    stop-liveness heartbeat then fails the book safe within the signal TTL).
+
+    `feed` ends with the live price; `closed` holds only finished bars, and
+    the trend SIGNAL, the conviction ramp and the ATR come from it alone. The
+    EA exports CopyRates(start=0) (mt5_ea/SteadyBridge.mq5 ExportAll), so its
+    last row is ALWAYS the still-forming bar; the bootstrap CSV is history.
+    Every validated result decides on closed bars. Deciding on the forming bar
+    entered at the first poll after an INTRABAR crossing, where the ramp sizes
+    ~1x, and held that size for the whole trend: the 2021-09 trade that made
+    the decade entered at 1.4x instead of 5x, and the replayed live cadence
+    made 3-9%/yr against 15% (Round-9 review, docs/RESEARCH.md)."""
     need = sma_n + 5
     candles = bridge.read_bars(instrument, granularity)
     src = "ea"
@@ -135,7 +145,11 @@ def _load_bars(instrument: str, granularity: str, sma_n: int, history_csv: str):
         print(f"[ai] bars IMPLAUSIBLE ({jump:.1f}% single-bar jump {prev_c:.3f}->{last_c:.3f} "
               f"> {MAX_BAR_JUMP_PCT}%); quarantining feed", flush=True)
         return None
-    return candles
+    closed = candles[:-1] if src == "ea" else candles
+    if len(closed) < sma_n:
+        print(f"[ai] bars not ready ({len(closed)}/{sma_n} closed bars); skipping", flush=True)
+        return None
+    return candles, closed
 
 
 # A book below this is dust, not a position: it is never adopted as intent,
@@ -502,29 +516,65 @@ def _trend_gate(instrument: str, granularity: str, sma_n: int,
     status = bridge.read_status()
     if status is None or (status.get("equity") or 0) <= 0:
         return None
-    candles = _load_bars(instrument, granularity, sma_n, history_csv)
-    if candles is None:
+    loaded = _load_bars(instrument, granularity, sma_n, history_csv)
+    if loaded is None:
         return None
-    closes = [c.close for c in candles]
-    price = float(closes[-1])
+    feed, closed = loaded
+    price = float(feed[-1].close)                 # live: the protective stop's price
+    closes = [c.close for c in closed]            # the signal: closed bars only
     ma = sum(closes[-sma_n:]) / float(sma_n)
     # The lowest low of the last two bars rides along for the exit record: a
     # broker stop that filled on a spike and snapped back is still a stop-out,
     # which the detection-time close alone cannot show (round-6g).
-    status["_low2"] = float(min(c.low for c in candles[-2:]))
-    return price > ma, price, float(status.get("position_lots") or 0.0), status
+    status["_low2"] = float(min(c.low for c in feed[-2:]))
+    # Which closed bar this signal belongs to: after a stop-out the loop waits
+    # for a NEWER one before re-entering, as the backtest re-enters only at the
+    # close of the bar the stop hit in (Round-9 review).
+    status["_bar_t"] = closed[-1].time
+    return closes[-1] > ma, price, float(status.get("position_lots") or 0.0), status
+
+
+def _awaiting_new_bar(reentry_bar, bar_t, pos: float):
+    """(blocked, reentry_bar') for the re-entry rule. After a stop-out or a
+    broker-side close the book stays flat until a NEWER closed bar exists:
+    the backtest re-enters only at the close of the bar the stop hit in. The
+    mark clears once a newer bar is seen or the book is no longer flat."""
+    if reentry_bar is None:
+        return False, None
+    if pos < FLAT_EPS and bar_t == reentry_bar:
+        return True, reentry_bar
+    return False, None
+
+
+def _is_blocked_row(s: dict) -> bool:
+    """A blocked-on-lock row: written while this process WAITS for the lock,
+    FLAT whatever the book holds — a status report, never a decision."""
+    comp = s.get("components")
+    if isinstance(comp, str):
+        try:
+            comp = json.loads(comp)
+        except (json.JSONDecodeError, TypeError):
+            return False
+    return isinstance(comp, dict) and comp.get("trigger") == BLOCKED_TRIGGER
 
 
 def _restore_state(granularity: str = "H1") -> tuple[Optional[str], Optional[float], float]:
     """After a restart: (intent "LONG"/"FLAT"/None, protective stop, epoch of
     the last decision). The stop is searched backward through the unbroken run
     of long decisions (older records may carry stop_price=null on holds), so a
-    single poisoned hold record can't silently disarm an open position."""
+    single poisoned hold record can't silently disarm an open position.
+
+    Blocked-on-lock rows are skipped. Every takeover after a wait used to take
+    the newest of them as the intent: it restored FLAT and closed a healthy
+    LONG, and re-entered minutes later at a new size (Round-9 review,
+    reproduced end to end); one between LONG rows also broke the stop scan and
+    reset the daily-decision clock to the wait."""
     try:
         rid = _find_run(granularity)
         if rid is None:
             return None, None, 0.0
-        sigs = [s for s in db.load_signals(rid) if s.get("source") == "combined"]
+        sigs = [s for s in db.load_signals(rid)
+                if s.get("source") == "combined" and not _is_blocked_row(s)]
         if not sigs:
             return None, None, 0.0
         last = sigs[-1]
@@ -616,17 +666,26 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
         print("[ai] waiting for EA status (balance/equity). Is SteadyBridge attached & synced?",
               flush=True)
         return None
-    candles = _load_bars(instrument, granularity, sma_n, history_csv)
-    if candles is None:
+    loaded = _load_bars(instrument, granularity, sma_n, history_csv)
+    if loaded is None:
         return None
+    feed, closed = loaded
 
     balance = status["balance"]; equity = status["equity"]
-    ctx = build_context(instrument, candles, status, granularity)
-    # VALIDATED EDGE: long only while price > long SMA, else stand aside.
-    closes = enrich(candles_to_df(candles))["close"]
-    price = float(closes.iloc[-1]); ma = float(closes.iloc[-sma_n:].mean())
-    trend_up = price > ma
-    trend_txt = f"price {price:.3f} {'>' if trend_up else '<'} SMA{sma_n} {ma:.3f}"
+    ctx = build_context(instrument, feed, status, granularity)
+    # VALIDATED EDGE: long only while the last CLOSED bar is above the long
+    # SMA, else stand aside. Signal, ramp and ATR come from closed bars (as
+    # every backtest); the live price only places the order (_load_bars).
+    sig_df = enrich(candles_to_df(closed))
+    closes = sig_df["close"]
+    sig_close = float(closes.iloc[-1]); ma = float(closes.iloc[-sma_n:].mean())
+    sig_atr = float(sig_df["atr"].iloc[-1])
+    if math.isnan(sig_atr) or sig_atr <= 0:
+        sig_atr = sig_close * 0.005
+    price = float(feed[-1].close)
+    trend_up = sig_close > ma
+    trend_txt = (f"close {sig_close:.3f} {'>' if trend_up else '<'} SMA{sma_n} {ma:.3f}"
+                 f" (live {price:.3f})")
 
     factors: list = []; plan = ""
     ai_view: dict = {}
@@ -699,10 +758,10 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
     # toward the floor when price is near the SMA (whipsaw zone), full cap only
     # when the trend is well established. Matches the backtest engine
     # (docs/RESEARCH.md; convex ramp via dyn_lev_pow).
-    atr_now = ctx["technical"]["atr"]
+    atr_now = sig_atr
     eff_leverage = cfg.max_leverage
     if action == "LONG" and getattr(cfg, "dyn_leverage", False):
-        eff_leverage = conviction_leverage(price, ma, atr_now, cfg.max_leverage,
+        eff_leverage = conviction_leverage(sig_close, ma, atr_now, cfg.max_leverage,
                                            cfg.dyn_lev_atr_mult, cfg.dyn_lev_floor,
                                            getattr(cfg, "dyn_lev_pow", 1.0))
     pip = pip_size(instrument)
@@ -847,6 +906,12 @@ def main() -> None:
           f"poll={args.poll}s gate_cd={args.gate_cooldown_min}m veto_ttl={args.veto_ttl_h}h "
           f"signal_ttl={args.signal_ttl_min}m", flush=True)
     last_gate = 0.0
+    # The closed bar during which the book was last stopped or closed outside
+    # a gate decision. No decision may re-open the book until a NEWER closed
+    # bar exists: the backtest re-enters at the close of the bar the stop hit
+    # in, while a 15-minute cooldown re-entered inside it on the previous
+    # bar's signal (Round-9 review).
+    reentry_bar = None
     veto_until = 0.0
     acted_events: set[str] = set()
     cal = get_calendar(args.calendar_mode, args.instrument)
@@ -1107,6 +1172,7 @@ def main() -> None:
                     seen_long = False
                     order_seq = _next_seq(order_seq, ea_exec_seq)   # the standing order is void
                     last_gate = _time.time()      # cooldown before any re-entry
+                    reentry_bar = st.get("_bar_t")
 
                 # Round-4 chaos (d): a restored stop IMPLAUSIBLY far above the
                 # market (stale-era record) must be discarded, not "hit" — else
@@ -1141,6 +1207,7 @@ def main() -> None:
                     intent, intent_lots, stop_price = "FLAT", 0.0, None
                     seen_long = False
                     last_gate = _time.time()          # brief pause before re-entry
+                    reentry_bar = st.get("_bar_t")
                     skip_scheduled = True
                 elif pos > 0 and intent == "LONG" and stop_price is None and gate_ok:
                     # INVARIANT: an open LONG must carry a stop. Heal it now.
@@ -1152,8 +1219,15 @@ def main() -> None:
                     # a cooldown; exits are never suppressed.
                     wants_entry = trend_up and pos <= 0
                     wants_exit = (not trend_up) and pos > 0
+                    awaiting_bar, reentry_bar = _awaiting_new_bar(reentry_bar,
+                                                                  st.get("_bar_t"), pos)
                     if wants_exit and gate_ok:
                         trigger = "gate-exit"
+                    elif awaiting_bar:
+                        # Flat after a stop-out inside the bar this signal came
+                        # from: no gate entry, and no daily/event decision may
+                        # re-open the book either, until that bar has closed.
+                        skip_scheduled = True
                     elif (wants_entry and gate_ok and _time.time() >= veto_until
                           and _time.time() >= entry_backoff_until):
                         trigger = "gate-entry"

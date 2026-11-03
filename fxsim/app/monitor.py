@@ -1,13 +1,15 @@
 """PDCA monitor — is the LIVE run behaving like the BACKTEST said it would?
 
-Compares the live FX run's realized stats against the validated expectation
-envelope (H1 / SMA2400 / 5x / long-only — docs/RESEARCH.md, research_run8) and
-flags four failure modes early:
+Compares the live FX run's realized stats against production's own backtest
+(H1 / SMA2400 / linear ramp to 5x / long-only — docs/RESEARCH.md Round-4/9),
+judged over windows of the SAME length as the run (scripts/monitor_envelope.py),
+and flags four failure modes early:
 
-  * DRAWDOWN BREACH   — live max drawdown exceeds the backtest's ~34% → the edge
-                        may be breaking (or just a deep-but-normal DD; investigate).
-  * OVERTRADING       — far more position changes than the ~20/year expected →
-                        something is whipsawing (wrong bars, bug, regime).
+  * DRAWDOWN BREACH   — live max drawdown beyond the 34% alarm line (the
+                        backtest's worst is ~27%) → outside the tested envelope;
+                        not necessarily broken (a 1995-2014 proxy reached 51%).
+  * OVERTRADING       — far more position changes than the backtest ever made
+                        over the same span → whipsaw beyond history, or a bug.
   * EXECUTION DRIFT   — the strategy says LONG/FLAT but the live book disagrees →
                         EA/bridge problem or slippage.
   * INSUFFICIENT DATA — too few days to judge yet (most of the early life).
@@ -37,20 +39,30 @@ BT_CHANGES_PER_YEAR = 38.3       # entries + exits; a stop-out and its re-entry 
 # envelope — review the size", not necessarily "broken".
 EXP_MAXDD_PCT = 34.0
 
-# Span-aware envelopes from production's own backtest
-# (`python -m scripts.monitor_envelope`; re-run it whenever the production
-# configuration changes). A live run of N days is judged against what the
-# backtest did over windows of the SAME length. Both quantities are bursty —
+# Span-aware envelopes (`python -m scripts.monitor_envelope`; re-run it
+# whenever production changes). A live run of N days is judged against what
+# production did over windows of the SAME length. Both quantities are bursty —
 # a whipsaw week near the SMA is normal — so the single annualised
-# expectations used before Round-9 read normal behaviour 🔴 in 12-25% of
-# trailing windows (trade rate) and 21-23% of 60-90-day windows (return).
-ENVELOPE_CHANGES = (     # (span_days, p90 count, max count)
-    (30, 12, 31), (60, 19, 43), (90, 27, 48), (180, 43, 62),
-    (365, 66, 91), (730, 115, 132), (1460, 190, 198),
+# expectations used before Round-9 read normal behaviour 🔴 in 36-39% of 60-90
+# -day windows. Each row covers the spans up to the next row and holds the
+# EXTREME over every whole-day span in between (a step, never interpolated).
+# The tables cover the backtest AND both live cadences: the closed-bar brain
+# (Round-9, ~38 changes/yr) and the forming-bar brain before it (~85-100/yr,
+# 3-9%/yr replayed) — the live run that began in June holds both.
+ENVELOPE_CHANGES = (     # (from span_days, p90 count, max count)
+    (30, 38, 107), (45, 51, 132), (60, 54, 148), (75, 63, 148), (90, 91, 156),
+    (120, 107, 156), (150, 117, 156), (180, 148, 222), (240, 159, 236),
+    (300, 183, 255), (365, 235, 318), (450, 248, 355), (545, 283, 363),
+    (640, 334, 376), (730, 392, 447), (910, 442, 522), (1095, 509, 551),
+    (1280, 535, 568), (1460, 535, 568),
 )
-ENVELOPE_RETURN = (      # (span_days, p10 return %, worst return %), no swap
-    (60, -5.1, -15.5), (90, -5.2, -16.3), (180, -6.2, -20.2), (365, -6.7, -19.6),
-    (730, -8.8, -15.2), (1460, 3.5, -22.9), (2190, 18.8, -1.3),
+ENVELOPE_RETURN = (      # (from span_days, p10 return %, worst return %), no swap
+    (60, -7.1, -17.7), (75, -7.4, -18.2), (90, -8.2, -19.1), (120, -9.2, -21.8),
+    (150, -10.7, -23.7), (180, -11.5, -23.6), (240, -12.1, -22.1),
+    (300, -13.9, -23.4), (365, -15.5, -23.4), (450, -17.6, -29.9),
+    (545, -16.1, -29.6), (640, -18.0, -31.6), (730, -20.0, -31.7),
+    (910, -21.2, -32.0), (1095, -23.1, -36.2), (1280, -25.4, -36.5),
+    (1460, -25.4, -36.5),
 )
 CHANGES_RED_MARGIN = 1.25        # RED only well beyond the backtest's busiest window
 RETURN_RED_MARGIN_PP = 5.0       # ... or well below its worst (at least 5pp / 25%)
@@ -90,20 +102,23 @@ def annualize(return_pct: float, years: float) -> float:
 
 
 def envelope_at(table, span_days: float, beyond: str) -> tuple[float, float] | None:
-    """(soft, hard) bound of `table` for a span, linear between rows; None below
-    the first row (too little history to judge). Beyond the last row, 'scale'
-    grows both in proportion to the span (counts accumulate), 'hold' keeps the
-    last row (returns)."""
-    if not span_days >= table[0][0]:
+    """(soft, hard) bound of `table` for a span: the row at or below it (each
+    row already holds the extreme of its interval — never interpolate, which
+    understated the worst between sparse rows). None below the first row or
+    for a non-finite span (too little history to judge). From the last row on,
+    'scale' grows both with the span (counts accumulate) and 'loosest' keeps
+    the loosest row (returns: a long run is never judged more strictly than a
+    short one)."""
+    if not (math.isfinite(span_days) and span_days >= table[0][0]):
         return None
-    for (w0, a0, b0), (w1, a1, b1) in zip(table, table[1:]):
-        if span_days <= w1:
-            f = (span_days - w0) / (w1 - w0)
-            return a0 + f * (a1 - a0), b0 + f * (b1 - b0)
-    w, a, b = table[-1]
+    w_last = table[-1][0]
+    if span_days < w_last:
+        row = [r for r in table if r[0] <= span_days][-1]
+        return float(row[1]), float(row[2])
     if beyond == "scale":
-        return a * span_days / w, b * span_days / w
-    return float(a), float(b)
+        _, a, b = table[-1]
+        return a * span_days / w_last, b * span_days / w_last
+    return float(min(r[1] for r in table)), float(min(r[2] for r in table))
 
 
 def count_position_changes(actions: list[str]) -> int:
@@ -135,8 +150,11 @@ def build_report(*, initial_balance: float, equity_values: list[float],
                  signal_expired: bool | None = None,
                  last_decision_age_s: float | None = None,
                  blocked_on_lock: str | None = None,
-                 daily_gap_h: float = 20.0) -> dict:
-    """Assemble the health report + per-check flags + an overall verdict."""
+                 daily_gap_h: float = 20.0,
+                 kind: str = "fx") -> dict:
+    """Assemble the health report + per-check flags + an overall verdict.
+    kind != "fx" (the stock system) has no backtest reference, so the
+    envelope checks (取引頻度, リターン) are not judged for it."""
     st = equity_stats(equity_values)
     years = max(span_days, 0.0) / 365.25
     checks: list[dict] = []
@@ -152,58 +170,72 @@ def build_report(*, initial_balance: float, equity_values: list[float],
                        "msg": f"最大DD {mdd:.1f}%（観察{span_days:.0f}日・判定はもう少し先）"})
     elif mdd > EXP_MAXDD_PCT:
         checks.append({"name": "ドローダウン", "flag": RED,
-                       "msg": f"最大DD {mdd:.1f}% が想定{EXP_MAXDD_PCT:.0f}%を超過。エッジ劣化の疑い → 要確認"})
+                       "msg": f"最大DD {mdd:.1f}% が警告線{EXP_MAXDD_PCT:.0f}%を超過（バックテストの最悪は"
+                              f"{BT_MAXDD_PCT:.0f}%）＝試験済みの範囲外（故障とは限らない）。執行一致とログを確認し、"
+                              f"ルール通りならサイズ（レバ）の見直しを検討（docs/RESEARCH.md Round-9）"})
     elif mdd > EXP_MAXDD_PCT * 0.75:
         checks.append({"name": "ドローダウン", "flag": YELLOW,
-                       "msg": f"最大DD {mdd:.1f}%（想定{EXP_MAXDD_PCT:.0f}%内だが深い）"})
+                       "msg": f"最大DD {mdd:.1f}%（警告線{EXP_MAXDD_PCT:.0f}%内だが深い。バックテストの最悪は"
+                              f"{BT_MAXDD_PCT:.0f}%）"})
     else:
         checks.append({"name": "ドローダウン", "flag": GREEN,
-                       "msg": f"最大DD {mdd:.1f}%（想定{EXP_MAXDD_PCT:.0f}%内）"})
+                       "msg": f"最大DD {mdd:.1f}%（警告線{EXP_MAXDD_PCT:.0f}%内）"})
 
     # --- trade frequency vs production's backtest over the SAME span ---
     n_changes = count_position_changes(actions)
     tpy = n_changes / years if years > 0 else 0.0
-    env = envelope_at(ENVELOPE_CHANGES, span_days, "scale")
-    if env is None:
+    env = envelope_at(ENVELOPE_CHANGES, span_days, "scale") if kind == "fx" else None
+    if kind != "fx":
+        pass                                   # no stock backtest to compare with
+    elif env is None:
         checks.append({"name": "取引頻度", "flag": YELLOW,
                        "msg": f"建玉変化 {n_changes}回（観察{span_days:.0f}日・判定は30日以降）"})
     else:
         p90, most = env
+        ref = f"（同じ長さの期間の過去最多{most:.0f}回・上位10%{p90:.0f}回）"
         if n_changes > math.ceil(most * CHANGES_RED_MARGIN):
             checks.append({"name": "取引頻度", "flag": RED,
-                           "msg": f"建玉変化 {n_changes}回／{span_days:.0f}日：バックテストの同じ長さの期間の"
-                                  f"最多{most:.0f}回を大きく超過 → 過剰売買（ダマシの連続 or 不具合）の疑い。"
-                                  f"`docker compose logs fx` で売買の理由を確認"})
+                           "msg": f"建玉変化 {n_changes}回／{span_days:.0f}日：過去最多を大きく超過{ref} → "
+                                  f"過剰売買（ダマシの連続 or 不具合）の疑い。`docker compose logs fx` で売買の理由を確認"})
+        elif n_changes > most:
+            checks.append({"name": "取引頻度", "flag": YELLOW,
+                           "msg": f"建玉変化 {n_changes}回／{span_days:.0f}日：過去に例のない水準{ref}。"
+                                  f"ログと執行一致を確認"})
         elif n_changes > p90:
             checks.append({"name": "取引頻度", "flag": YELLOW,
-                           "msg": f"建玉変化 {n_changes}回／{span_days:.0f}日（バックテストの同じ長さの期間の"
-                                  f"上位10%＝{p90:.0f}回超。平均線付近でダマシが続く時期はこうなる）"})
+                           "msg": f"建玉変化 {n_changes}回／{span_days:.0f}日（多め{ref}。"
+                                  f"平均線付近でダマシが続く時期はこうなる）"})
         else:
             checks.append({"name": "取引頻度", "flag": GREEN,
-                           "msg": f"建玉変化 {n_changes}回／{span_days:.0f}日（バックテストの同じ長さの期間の"
-                                  f"範囲内・上位10%は{p90:.0f}回）"})
+                           "msg": f"建玉変化 {n_changes}回／{span_days:.0f}日（範囲内{ref}）"})
 
     # --- realized return vs production's backtest over the SAME span ---
     ann = annualize(st["return_pct"], years)
     ret = st["return_pct"]
-    env = envelope_at(ENVELOPE_RETURN, span_days, "hold")
-    if env is None:
+    env = envelope_at(ENVELOPE_RETURN, span_days, "loosest") if kind == "fx" else None
+    if kind != "fx":
+        pass                                   # no stock backtest to compare with
+    elif env is None:
         checks.append({"name": "リターン", "flag": YELLOW,
                        "msg": f"累計 {ret:+.1f}%（観察{span_days:.0f}日・判定は60日以降）"})
     else:
         p10, worst = env
+        ref = f"（同じ長さの期間の過去最悪{worst:+.1f}%・下位10%{p10:+.1f}%、スワップ別）"
         if ret < worst - max(RETURN_RED_MARGIN_PP, 0.25 * abs(worst)):
             checks.append({"name": "リターン", "flag": RED,
-                           "msg": f"累計 {ret:+.1f}%／{span_days:.0f}日：バックテストの同じ長さの期間の最悪"
-                                  f"{worst:+.1f}%を下回る＝試験済みの範囲外（故障とは限らない）。執行一致が🟢なら"
-                                  f"ルール通りの負け → レバの見直しを検討（docs/RESEARCH.md Round-8/9）"})
+                           "msg": f"累計 {ret:+.1f}%／{span_days:.0f}日：過去最悪を大きく下回る{ref}＝試験済みの範囲外"
+                                  f"（故障とは限らない）。ログと執行一致を確認（🟢でもスリッページ等の執行コストは否定できない）。"
+                                  f"ルール通りならサイズ（レバ）の見直しを検討（docs/RESEARCH.md Round-8/9）"})
+        elif ret < worst:
+            checks.append({"name": "リターン", "flag": YELLOW,
+                           "msg": f"累計 {ret:+.1f}%／{span_days:.0f}日：過去に例のない水準{ref}。ログと執行一致を確認"})
         elif ret < p10:
             checks.append({"name": "リターン", "flag": YELLOW,
-                           "msg": f"累計 {ret:+.1f}%／{span_days:.0f}日（バックテストの同じ長さの期間の"
-                                  f"下位10%＝{p10:+.1f}%未満。横ばい・ダマシの時期はこうなる）"})
+                           "msg": f"累計 {ret:+.1f}%／{span_days:.0f}日（低め{ref}。横ばい・ダマシの時期によくある水準。"
+                                  f"執行コストの問題かどうかはこの項目だけでは判別できない）"})
         else:
             checks.append({"name": "リターン", "flag": GREEN,
-                           "msg": f"累計 {ret:+.1f}%／{span_days:.0f}日（バックテストの同じ長さの期間の範囲内）"})
+                           "msg": f"累計 {ret:+.1f}%／{span_days:.0f}日（範囲内{ref}）"})
 
     # --- staleness: has the system actually been updating? A running brain
     #     records equity on every decision and decides at least every 20h, so
@@ -325,7 +357,7 @@ def build_report(*, initial_balance: float, equity_values: list[float],
     order = {GREEN: 0, YELLOW: 1, RED: 2}
     worst = max((c["flag"] for c in checks), key=lambda f: order[f], default=GREEN)
     verdict = {GREEN: "🟢 健全（バックテスト通りの挙動）",
-               YELLOW: "🟡 観察（想定内 or データ不足。継続監視）",
+               YELLOW: "🟡 観察（データ不足、または過去の端に近い項目あり。🟡の項目を確認し継続監視）",
                RED: "🔴 要対応（想定から逸脱。下のRED項目を確認）"}[worst]
 
     return {
@@ -336,7 +368,7 @@ def build_report(*, initial_balance: float, equity_values: list[float],
         "current_equity": equity_values[-1] if equity_values else initial_balance,
         "stats": st,
         "ann_return_pct": ann if enough_ret else None,
-        "trades_per_year": tpy if span_days >= 30 else None,
+        "trades_per_year": tpy if span_days >= 365 else None,   # short spans annualise wildly
         "n_position_changes": n_changes,
         "checks": checks,
     }

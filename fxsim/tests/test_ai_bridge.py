@@ -186,6 +186,71 @@ def test_trend_gate_probe(monkeypatch):
     assert up is False
 
 
+# ---- round-9 review: decide on CLOSED bars, place orders at the live price ----
+# The EA exports CopyRates(start=0): its last row is the still-forming bar. The
+# brain used it for the signal and the conviction ramp, so it entered at the
+# first poll after an INTRABAR crossing at ~1x and held that size for the trend
+# (the 2021-09 trade that made the decade: 1.4x instead of the backtest's 5x).
+
+def _bar(t, o, h, l, c):
+    from app.models import Candle
+    return Candle(instrument="USD_JPY", granularity="D", time=t, open=o, high=h, low=l,
+                  close=c, volume=0.0)
+
+
+def _flat_then(forming_close, n=120, level=100.0):
+    from datetime import timedelta
+    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    bars = [_bar(t0 + timedelta(days=i), level, level + 0.2, level - 0.2, level) for i in range(n)]
+    bars.append(_bar(t0 + timedelta(days=n), level, max(level, forming_close) + 0.1,
+                     min(level, forming_close) - 0.1, forming_close))
+    return bars
+
+
+def test_forming_bar_crossing_is_not_a_signal(wired, monkeypatch):
+    feed = _flat_then(101.0)              # closed bars flat AT the SMA; only the forming bar is above
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: feed)
+    up, price, _, _ = R._trend_gate("USD_JPY", "D", 90, "no-such-file.csv")
+    assert up is False and price == 101.0  # signal from the closed bar, live price kept
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0)
+    res = R.decide_once(cfg, "USD_JPY", 0.04, 5.0, "no-such-file.csv",
+                        _Trader(_Dec(True, "long", 1.0)), dry=False, trigger="test",
+                        granularity="D", sma_n=90)
+    assert res["action"] == "FLAT"
+
+
+def test_ramp_is_sized_from_the_closed_bar_and_the_stop_from_the_live_price(wired, monkeypatch):
+    from datetime import timedelta
+    feed = _flat_then(100.0)[:-1]
+    t = feed[-1].time
+    feed.append(_bar(t + timedelta(days=1), 100.0, 104.2, 100.0, 104.0))   # closed: far above the SMA
+    feed.append(_bar(t + timedelta(days=2), 104.0, 104.0, 100.4, 100.5))   # forming: dipped back near it
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: feed)
+    recs = []
+    monkeypatch.setattr(db, "record_signal", lambda *a, **k: recs.append(a[7]))
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0, dyn_leverage=True)
+    res = R.decide_once(cfg, "USD_JPY", 0.04, 5.0, "no-such-file.csv",
+                        _Trader(_Dec(False, "long", 0.0)), dry=False, trigger="test",
+                        granularity="D", sma_n=90)
+    assert res["action"] == "LONG" and res["fresh"] is True
+    # the closed bar is >1.5 ATR above the SMA: the full 5x cap (the forming
+    # bar, ~0.5 above the SMA, would have given ~3x)
+    assert recs[-1]["eff_leverage"] == 5.0
+    assert res["stop"] < 100.5                                # below the LIVE price
+    assert res["stop"] > 100.5 - 3.0                          # one ATR-scaled distance, not from 104
+
+
+def test_bootstrap_csv_rows_are_all_closed(monkeypatch):
+    monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    monkeypatch.setattr(R, "MAX_BAR_JUMP_PCT", 1e9)
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: [])
+    feed, closed = R._load_bars("USD_JPY", "D", 90, str(DATA_DIR / "USD_JPY_D.csv"))
+    assert closed is feed                                     # history: nothing is forming
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _UP)
+    feed, closed = R._load_bars("USD_JPY", "D", 90, "no-such-file.csv")
+    assert closed == _UP[:-1] and feed[-1] is _UP[-1]         # the EA's last row is forming
+
+
 def test_trend_gate_not_ready_returns_none(monkeypatch):
     monkeypatch.setattr(bridge, "read_status", lambda *a, **k: None)
     assert R._trend_gate("USD_JPY", "D", 90, "no-such-file.csv") is None
@@ -274,6 +339,37 @@ def test_restore_state_scans_back_for_the_stop(monkeypatch):
                  "components": '{"trigger": "stop"}'})
     intent, stop, _ = R._restore_state()
     assert intent == "FLAT" and stop is None
+
+
+def test_restore_state_ignores_blocked_on_lock_rows(monkeypatch):
+    # Round-9 review: a brain that WAITED for the lock writes FLAT
+    # blocked-on-lock rows whatever the book holds. On takeover the newest of
+    # them was restored as the intent: FLAT -> the healthy LONG was closed and
+    # re-entered minutes later (reproduced end to end).
+    def row(day, direction, comp):
+        return {"source": "combined", "direction": direction,
+                "time": f"2026-07-{day:02d}T00:00:00+00:00", "components": comp}
+    blocked = '{"action": "FLAT", "trigger": "blocked-on-lock", "blocked_s": 900}'
+    rows = [row(1, 1, '{"action": "LONG", "stop_price": 158.917}'),
+            row(2, 1, '{"action": "LONG", "stop_price": null}'),
+            row(3, 0, blocked), row(4, 0, blocked)]
+    monkeypatch.setattr(db, "list_runs",
+                        lambda: [{"id": 7, "ended_at": None, "granularity": "H1", "params": '{"system": "steady-ai"}'}])
+    monkeypatch.setattr(db, "load_signals", lambda rid: rows)
+    intent, stop, ts = R._restore_state()
+    assert intent == "LONG" and stop == 158.917
+    assert ts == datetime.fromisoformat("2026-07-02T00:00:00+00:00").timestamp()   # last REAL decision
+    # a blocked row BETWEEN long decisions must not break the stop scan
+    rows[:] = [row(1, 1, '{"action": "LONG", "stop_price": 158.917}'), row(2, 0, blocked),
+               row(3, 1, '{"action": "LONG", "stop_price": null}')]
+    assert R._restore_state()[:2] == ("LONG", 158.917)
+    # a real exit after a wait is still honoured
+    rows[:] = [row(1, 1, '{"action": "LONG", "stop_price": 158.917}'), row(2, 0, blocked),
+               row(3, 0, '{"action": "FLAT", "trigger": "stop"}')]
+    assert R._restore_state()[:2] == ("FLAT", None)
+    # only blocked rows = no decision history at all
+    rows[:] = [row(1, 0, blocked)]
+    assert R._restore_state() == (None, None, 0.0)
 
 
 # ---- round-4 fixes ---------------------------------------------------------
@@ -725,3 +821,116 @@ def test_an_unreadable_lock_never_blocks_acquisition_forever(tmp_path, monkeypat
     monkeypatch.setattr(R._time, "sleep", fake_sleep)
     got = R._acquire_brain_lock(600)
     assert got is not None and str(os.getpid()) in got.read_text()
+
+
+# ---- round-9 review: re-entry after a stop waits for a NEWER closed bar ------
+
+def test_awaiting_new_bar_helper():
+    t1, t2 = datetime(2026, 1, 1, 10, tzinfo=timezone.utc), datetime(2026, 1, 1, 11, tzinfo=timezone.utc)
+    assert R._awaiting_new_bar(None, t1, 0.0) == (False, None)
+    assert R._awaiting_new_bar(t1, t1, 0.0) == (True, t1)        # same bar, still flat: wait
+    assert R._awaiting_new_bar(t1, t2, 0.0) == (False, None)     # a newer closed bar: go
+    assert R._awaiting_new_bar(t1, t1, 0.10) == (False, None)    # not flat: nothing to wait for
+
+
+def test_resident_loop_reenters_only_after_the_stop_bar_has_closed(tmp_path, monkeypatch):
+    """End to end through main(): a LONG is stopped out by the live price, the
+    price recovers INSIDE the same bar (closed-bar trend still up): the brain
+    must keep the book flat for every poll of that bar — no gate, no daily —
+    and re-enter at the first poll after a newer bar has closed."""
+    import sys as _sys
+    from datetime import timedelta
+    from app.models import Candle
+
+    class _Stop(BaseException):
+        pass
+
+    clock = {"t": 1_790_000_000.0}
+
+    class _FakeTime:
+        @staticmethod
+        def time():
+            return clock["t"]
+
+        @staticmethod
+        def sleep(s):
+            clock["t"] += s
+            state["polls"] += 1
+            script(state["polls"])
+            if state["polls"] > 14:
+                raise _Stop()
+
+    class _DT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromtimestamp(clock["t"], tz)
+
+    monkeypatch.setattr(R, "_time", _FakeTime)
+    monkeypatch.setattr(R, "datetime", _DT)
+    monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    monkeypatch.setattr(R, "MAX_BAR_JUMP_PCT", 1e9)
+    monkeypatch.setattr(R, "_acquire_brain_lock", lambda poll: tmp_path / "steady_brain.lock")
+    monkeypatch.setattr(R, "_touch_lock", lambda *a, **k: True)
+    monkeypatch.setattr(R, "_release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(R, "get_calendar", lambda *a, **k: type("C", (), {"for_instrument": lambda self, i: []})())
+
+    class _NoAI:
+        model = "none"
+
+        def __init__(self, *a, **k):
+            pass
+
+        def decide(self, ctx):
+            return _Dec(False, "long", 0.0)
+    monkeypatch.setattr(R, "AITrader", _NoAI)
+    dbp = str(tmp_path / "t.db")
+    monkeypatch.setattr(db.settings, "db_path", dbp)
+    db.init_db()
+
+    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def bar(i, c, lo=None):
+        return Candle(instrument="USD_JPY", granularity="H1", time=t0 + timedelta(hours=i),
+                      open=c, high=c + 0.05, low=(lo if lo is not None else c - 0.05), close=c)
+    closed = [bar(i, 140.0 + i * 0.1) for i in range(120)]          # strong up-trend, ~152 at the end
+    state = {"polls": 0, "forming": bar(120, 151.9), "pos": 0.10, "exec_seq": 1_789_999_000}
+    writes = []
+
+    def script(n):
+        if n == 1:                                   # the live price falls through the stop
+            state["forming"] = bar(120, 150.9, lo=150.8)
+        elif 2 <= n <= 6:                            # and recovers INSIDE the same bar
+            state["forming"] = bar(120, 152.0)
+        elif n == 7:                                 # that bar closes up; a new one forms
+            closed.append(bar(120, 152.0))
+            state["forming"] = bar(121, 152.1)
+
+    monkeypatch.setattr(bridge, "read_bars", lambda *a, **k: closed + [state["forming"]])
+    monkeypatch.setattr(bridge, "read_status", lambda *a, **k: {
+        "balance": 1_000_000.0, "equity": 1_000_000.0, "position_lots": state["pos"],
+        "exec_seq": state["exec_seq"], "ea_time": int(clock["t"]), "build": bridge.EA_BUILD_EXPECTED})
+    standing = {"action": "LONG", "lots": 0.10, "seq": state["exec_seq"], "sl": 151.0}
+
+    def write_signal(action, lots, base=None, expires_at=None, sl=None, seq=None):
+        writes.append((state["polls"], action, round(lots, 2), seq))
+        standing.update(action=action, lots=lots, seq=seq, sl=sl)
+        if action == "FLAT":
+            state["pos"] = 0.0
+        elif action == "LONG" and seq and seq > state["exec_seq"] and state["pos"] == 0.0:
+            state["pos"], state["exec_seq"] = lots, seq
+    monkeypatch.setattr(bridge, "write_signal", write_signal)
+    monkeypatch.setattr(bridge, "read_signal", lambda *a, **k: dict(standing))
+
+    rid = db.create_run(mode="live", instrument="USD_JPY", granularity="H1", initial_balance=1_000_000.0,
+                        params={"system": "steady-ai", "model": "none", "max_risk": 0.04})
+    db.record_signal(rid, datetime.fromtimestamp(clock["t"] - 3600, timezone.utc), "USD_JPY", "combined",
+                     1, 0.0, "entry", {"action": "LONG", "trigger": "gate-entry", "stop_price": 151.0,
+                                       "seq": state["exec_seq"]})
+    monkeypatch.setattr(_sys, "argv", ["run_ai_bridge.py", "--poll", "600", "--sma", "90"])
+    with pytest.raises(_Stop):
+        R.main()
+
+    longs = [w for w in writes if w[1] == "LONG" and w[3] != 1_789_999_000]
+    assert any(w[1] == "FLAT" for w in writes if w[0] == 1), writes          # stopped at poll 1
+    assert not [w for w in longs if w[0] < 7], writes                         # no re-entry in the stop bar
+    assert [w for w in longs if w[0] >= 7], writes                            # re-entered after it closed

@@ -68,7 +68,9 @@ def test_staleness_flags_yellow():
 
 
 def test_overtrading_flags_red():
-    actions = ["LONG", "FLAT"] * 30                    # 59 flips over ~40 days -> ~500/yr
+    # a flip-flopping brain (every few polls) -> far beyond any window of the
+    # same length, in the backtest or in either live cadence
+    actions = ["LONG", "FLAT"] * 300                   # 599 flips over 40 days
     rep = monitor.build_report(initial_balance=500000,
                                equity_values=[500000, 500000], span_days=40, actions=actions)
     tf = next(c for c in rep["checks"] if c["name"] == "取引頻度")
@@ -217,30 +219,34 @@ def _alternating(n_changes: int) -> list[str]:
     return ["LONG" if i % 2 == 0 else "FLAT" for i in range(n_changes + 1)]
 
 
-def test_production_never_reads_red_on_its_own_backtest():
+def test_production_never_reads_red_on_its_own_behaviour():
+    # Every whole-day span from 30 to 1500 days, every window end (daily), for
+    # the backtest, the closed-bar live brain and the forming-bar brain the
+    # current run began with: neither envelope check ever reads RED. YELLOW
+    # for the closed-bar brain stays rare.
     import numpy as np
     from scripts import monitor_envelope as ME
-    st = ME.production_run()
-    tv, eq = st["t"].to_numpy(), st["eq"]
-    ct = ME.change_times(st).to_numpy()
-    # spans ON and BETWEEN the envelope's rows, and beyond its last row
-    for W in (30, 45, 60, 75, 120, 200, 270, 365, 500, 730, 1000, 1460, 1800, 2400):
+    runs = {"close": ME.replay("close"), "closedbar": ME.replay("closedbar", 5),
+            "forming": ME.replay("live", 5)}
+    for name, r in runs.items():
         yellow = n = 0
-        for k in range(0, len(tv), 24 * 7):
-            s = tv[k] - np.timedelta64(W, "D")
-            if s < tv[0]:
-                continue
-            j = int(np.searchsorted(tv, s))
-            n_ch = int(((ct > s) & (ct <= tv[k])).sum())
-            rep = monitor.build_report(initial_balance=eq[j], equity_values=[eq[j], eq[k]],
-                                       span_days=float(W), actions=_alternating(n_ch))
-            for c in rep["checks"]:
-                if c["name"] in ("取引頻度", "リターン"):
-                    assert c["flag"] != RED, (W, str(tv[k])[:10], c["msg"])
-                    yellow += c["flag"] == YELLOW
-            n += 1
-        if W >= 60:                    # both checks judge from 60 days on
-            assert yellow / (2 * n) < 0.15, (W, yellow / (2 * n))
+        for W in range(30, 1501, 7):
+            counts = ME.window_counts(r, W)
+            rets = ME.window_returns(r, W) if W >= 60 else np.array([])
+            for c in np.unique(counts):
+                rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 1.0],
+                                           span_days=float(W), actions=_alternating(int(c)))
+                f = next(x for x in rep["checks"] if x["name"] == "取引頻度")["flag"]
+                assert f != RED, (name, W, int(c))
+                yellow += (f == YELLOW) * int((counts == c).sum())
+            n += len(counts)
+            for v in (rets.min(), np.percentile(rets, 5)) if len(rets) else ():
+                rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 1 + v / 100],
+                                           span_days=float(W), actions=["LONG"])
+                f = next(x for x in rep["checks"] if x["name"] == "リターン")["flag"]
+                assert f != RED, (name, W, float(v))
+        if name != "forming":
+            assert yellow / n < 0.05, (name, yellow / n)
 
 
 def test_real_anomalies_still_read_red():
@@ -258,17 +264,48 @@ def test_real_anomalies_still_read_red():
 
 
 def test_envelope_lookup():
+    import math
     T = monitor.ENVELOPE_CHANGES
     assert monitor.envelope_at(T, 29.9, "scale") is None
     assert monitor.envelope_at(T, float("nan"), "scale") is None
-    assert monitor.envelope_at(T, 30, "scale") == (12, 31)
-    lo, hi = monitor.envelope_at(T, 45, "scale")
-    assert 12 < lo < 19 and 31 < hi < 43                    # linear between rows
-    assert monitor.envelope_at(T, 2920, "scale") == (380.0, 396.0)   # counts scale with span
-    R = monitor.ENVELOPE_RETURN
-    assert monitor.envelope_at(R, 5000, "hold") == (18.8, -1.3)      # returns hold the last row
+    assert monitor.envelope_at(T, float("inf"), "scale") is None       # never raises
+    assert monitor.envelope_at(T, 30, "scale") == (38.0, 107.0)
+    assert monitor.envelope_at(T, 44.9, "scale") == (38.0, 107.0)      # a step, not interpolated
+    assert monitor.envelope_at(T, 45, "scale") == (51.0, 132.0)
+    assert monitor.envelope_at(T, 2920, "scale") == (1070.0, 1136.0)   # counts scale with span
+    R_ = monitor.ENVELOPE_RETURN
+    loosest = (min(r[1] for r in R_), min(r[2] for r in R_))
+    assert monitor.envelope_at(R_, 5000, "loosest") == loosest         # long runs: never stricter
     for (w0, p0, m0), (w1, p1, m1) in zip(T, T[1:]):
-        assert w1 > w0 and p1 >= p0 and m1 >= m0 and m0 >= p0      # sane, monotone table
+        assert w1 > w0 and p1 >= p0 and m1 >= m0 and m0 >= p0
+    for w, p10, worst in R_:
+        assert worst <= p10 and math.isfinite(worst)
+    # a span beyond the table is never judged more strictly than the last row
+    rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 1 + loosest[1] / 100],
+                               span_days=4000.0, actions=["LONG"])
+    assert next(c for c in rep["checks"] if c["name"] == "リターン")["flag"] != RED
+
+
+def test_beyond_history_but_inside_the_margin_says_so():
+    # worse than every window of the same length, not yet RED: the message must
+    # say "例のない水準", never the benign "this is what whipsaw periods look like"
+    p10, worst = monitor.envelope_at(monitor.ENVELOPE_RETURN, 90, "loosest")
+    rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 1 + (worst - 1) / 100],
+                               span_days=90.0, actions=["LONG"])
+    c = next(x for x in rep["checks"] if x["name"] == "リターン")
+    assert c["flag"] == YELLOW and "例のない" in c["msg"] and "よくある" not in c["msg"]
+    p90, most = monitor.envelope_at(monitor.ENVELOPE_CHANGES, 90, "scale")
+    rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 1.0], span_days=90.0,
+                               actions=_alternating(int(most) + 1))
+    c = next(x for x in rep["checks"] if x["name"] == "取引頻度")
+    assert c["flag"] == YELLOW and "例のない" in c["msg"]
+    assert "想定内" not in rep["verdict"]
+
+
+def test_stock_runs_are_not_judged_against_the_fx_backtest():
+    rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 0.5], span_days=200.0,
+                               actions=_alternating(500), kind="stocks")
+    assert not any(c["name"] in ("取引頻度", "リターン") for c in rep["checks"])
 
 
 def test_blocked_rows_are_not_decisions(monkeypatch):

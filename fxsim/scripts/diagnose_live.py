@@ -179,6 +179,11 @@ def build_cycles(signals: list[dict]) -> tuple[list[dict], list[dict]]:
     cur: Optional[dict] = None
     for s in signals:
         comp = s["comp"]
+        if comp.get("trigger") == "blocked-on-lock":
+            # Written while the brain WAITS for the lock, FLAT whatever the
+            # book holds: a status report, not an exit (Round-9 review — it
+            # split one holding into two cycles and misattributed the P&L).
+            continue
         if s["direction"] == 1:
             if cur is None:
                 cur = {

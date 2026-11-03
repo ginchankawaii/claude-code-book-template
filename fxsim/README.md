@@ -158,7 +158,7 @@ Claude Code on the web の実行環境はネットワークポリシーで外部
   `5 × エクイティ` を超えない。攻めのダイヤル兼・安全装置（小ATR時のサイズ暴走を防ぐ）。
   複利の最適点は約5倍で、それ以上はDDだけ増えCAGRは下がる（docs/RESEARCH.md）
 - **攻めの最適レシピ**（11年OOS検証）：`FXSIM_STRATEGY=trend FXSIM_GRANULARITY=H1
-  FXSIM_TREND_SMA=2400 FXSIM_RISK=0.04 FXSIM_USE_TAKE_PROFIT=0`（CAGR≈12% / DD≈34%）。
+  FXSIM_TREND_SMA=2400 FXSIM_RISK=0.04 FXSIM_USE_TAKE_PROFIT=0`（フラット5倍：CAGR≈12% / DD≈34%。本番の線形ランプ `FXSIM_DYN_LEVERAGE=1` では CAGR≈15% / DD≈27%）。
   詳細と検証は `docs/RESEARCH.md`（`scripts/research_run8.py` で再現）
 - ストップ = 1.5 × ATR、利確 = 2 × ストップ（リワード:リスク = 2:1）
 - 口座通貨はペアの**クォート通貨**（USD_JPY なら JPY）と仮定（単一ペアの厳密計算のため）
