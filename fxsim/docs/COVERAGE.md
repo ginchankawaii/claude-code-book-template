@@ -36,12 +36,12 @@ P1〜P8 = Round-6の各パス、R2〜R5 = 各ラウンド、**R7 = Round-7**、*
 | run_ai_bridge: 常駐状態機械 | P8 | P8 | P8 | P8 | P8 | P5 | P8 | P1 | – | P8 | R7 | **R9** |
 | run_ai_bridge: ロック | – | – | – | – | – | P1 | – | **R7** | – | **R7** | **R7** | – |
 | run_ai_bridge: decide_once/サイジング | P8 | R4 | P8 | – | P8 | – | P8 | – | – | **R7** | `never` | **R9** |
-| run_ai_bridge: _restore_state/_find_run | – | – | P1 | – | – | – | **R9** | – | – | P8 | `never` | – |
+| run_ai_bridge: _restore_state/_find_run | – | – | P1 | – | – | – | **R9** | – | – | P8 | `never` | **R9** |
 | mt5_ea/SteadyBridge.mq5 | P4 | P6 | P5 | P6 | – | – | P5 | P6 | – | P3 | P6 | R9 |
 | app/bridge.py | – | – | P5 | P5 | P5 | – | P5 | P1 | – | P6 | P6 | R9 |
 | app/monitor.py + run_monitor | – | – | – | – | – | – | – | – | – | **R7** | **R7** | R9 |
 | scripts/diagnose_live.py | – | R4 | – | – | – | – | – | – | – | **R9** | R7 | – |
-| app/server.py（公開ダッシュボード） | – | – | – | – | – | – | – | P1 | P1 | **R7** | **R7** | – |
+| app/server.py（公開ダッシュボード） | – | – | – | – | – | – | – | P1 | P1 | **R9** | **R7** | – |
 | app/db.py | – | – | – | – | – | **R7** | – | – | `never` | **R7** | **R7** | – |
 | app/config.py（env解析） | – | **R7** | – | – | – | `never` | – | – | – | **R7** | `never` | – |
 | app/sizing.py | – | R4 | – | – | – | – | – | – | – | **R7** | – | – |

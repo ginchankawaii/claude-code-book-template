@@ -54,6 +54,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+_DATETIME = datetime    # the real class, for type checks that must survive a patched name
+
 from app import bridge, db
 from app.adaptive import AdaptiveConfig, AdaptiveController
 from app.ai_trader import AITrader, size_lots
@@ -534,16 +536,66 @@ def _trend_gate(instrument: str, granularity: str, sma_n: int,
     return closes[-1] > ma, price, float(status.get("position_lots") or 0.0), status
 
 
+def _utc(t) -> Optional[datetime]:
+    """A bar time (datetime or ISO string) as tz-aware UTC; naive = UTC, as the
+    CSV loader and _load_bars treat it. None when absent or unreadable."""
+    if isinstance(t, str):
+        try:
+            t = _DATETIME.fromisoformat(t)
+        except ValueError:
+            return None
+    if not isinstance(t, _DATETIME):
+        return None
+    return t if t.tzinfo is not None else t.replace(tzinfo=timezone.utc)
+
+
+def _iso(t) -> Optional[str]:
+    u = _utc(t)
+    return u.isoformat() if u is not None else None
+
+
 def _awaiting_new_bar(reentry_bar, bar_t, pos: float):
     """(blocked, reentry_bar') for the re-entry rule. After a stop-out or a
-    broker-side close the book stays flat until a NEWER closed bar exists:
-    the backtest re-enters only at the close of the bar the stop hit in. The
-    mark clears once a newer bar is seen or the book is no longer flat."""
-    if reentry_bar is None:
+    broker-side close the book stays flat until a STRICTLY NEWER closed bar
+    exists: the backtest re-enters only at the close of the bar the stop hit
+    in. An older or unreadable bar time (a torn bars file) keeps the block —
+    only a newer bar, or a book that is no longer flat, clears it. Finite: a
+    frozen feed goes stale (blind) within MAX_BAR_AGE_H."""
+    mark = _utc(reentry_bar)
+    if mark is None or pos >= FLAT_EPS:
         return False, None
-    if pos < FLAT_EPS and bar_t == reentry_bar:
+    now_bar = _utc(bar_t)
+    if now_bar is None or now_bar <= mark:
         return True, reentry_bar
     return False, None
+
+
+def _restore_reentry(granularity: str = "H1") -> tuple[Optional[str], float]:
+    """(re-entry mark, epoch of that exit) when the newest real row is a stop
+    or a broker-side close that recorded one, else (None, 0.0). The mark lived
+    only in memory: a restart or lock takeover inside the stop's bar
+    re-entered at once on the previous bar's signal (Round-9 second review,
+    reproduced through main())."""
+    try:
+        rid = _find_run(granularity)
+        if rid is None:
+            return None, 0.0
+        sigs = [s for s in db.load_signals(rid)
+                if s.get("source") == "combined" and not _is_blocked_row(s)]
+        if not sigs:
+            return None, 0.0
+        comp = sigs[-1].get("components")
+        comp = json.loads(comp) if isinstance(comp, str) else (comp or {})
+        if comp.get("trigger") not in ("stop", "external-close") or not comp.get("reentry_bar"):
+            return None, 0.0
+        try:
+            ts = datetime.fromisoformat(str(sigs[-1].get("time"))).timestamp()
+        except ValueError:
+            ts = 0.0
+        return str(comp["reentry_bar"]), ts
+    except Exception as exc:
+        print(f"[ai] re-entry mark restore failed: {exc}", flush=True)
+        return None, 0.0
 
 
 def _is_blocked_row(s: dict) -> bool:
@@ -801,6 +853,7 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
         db.record_signal(run_id, now, instrument, "combined", direction,
                          conviction * direction, reason,
                          {"action": action, "conviction": conviction, "trend_up": trend_up,
+                          "cadence": "closed-bar",      # run_monitor judges the run from here (Round-9)
                           "risk_used": risk_used, "brake": round(brake, 3),
                           "eff_leverage": round(eff_leverage, 2), "stop_price": stop_price,
                           "target_lots": lots, "position_lots": status.get("position_lots", 0.0),
@@ -917,7 +970,8 @@ def main() -> None:
     cal = get_calendar(args.calendar_mode, args.instrument)
     cal_day = datetime.now(timezone.utc).date()
 
-    def record_stop_exit(price: float, stop: float, pos: float, now: datetime) -> None:
+    def record_stop_exit(price: float, stop: float, pos: float, now: datetime,
+                         bar_t=None) -> None:
         try:
             status = bridge.read_status()
             if status and (status.get("balance") or 0) > 0:
@@ -926,7 +980,8 @@ def main() -> None:
                 db.record_signal(run_id, now, args.instrument, "combined", 0, 0.0,
                                  f"stop-loss: last {price:.3f} <= stop {stop:.3f}",
                                  {"action": "FLAT", "trigger": "stop",
-                                  "stop_price": stop, "position_lots": pos})
+                                  "stop_price": stop, "position_lots": pos,
+                                  "reentry_bar": _iso(bar_t)})
         except Exception as exc:
             print(f"[ai] stop-exit DB record failed: {exc}", flush=True)
 
@@ -941,6 +996,11 @@ def main() -> None:
     # intent = the brain's last ordered state; the loop's job is to make the
     # book converge to it and never to silently re-adopt a diverging book.
     intent, stop_price, last_decision = _restore_state(args.granularity)
+    reentry_bar, last_exit = _restore_reentry(args.granularity)
+    if reentry_bar is not None:
+        last_gate = last_exit                  # the cooldown survives a restart too
+        print(f"[ai] restored re-entry block: flat since a stop in the bar after "
+              f"{reentry_bar}; no re-entry before a newer closed bar", flush=True)
     intent_lots = 0.0
     # SEQ identifies the order standing on the bridge. It must be REUSED by the
     # heartbeat and only re-minted by a fresh decision, so recover the live
@@ -1082,9 +1142,9 @@ def main() -> None:
                     intent, intent_lots, stop_price, order_seq, seen_long = \
                         _settle_adopted_book(pos, stop_price, ea_exec_seq=ea_exec_seq)
                     try:                          # visible to diagnose_live / run_monitor
-                        st = bridge.read_status()
-                        if st and (st.get("balance") or 0) > 0:
-                            rid = _ongoing_run(st["balance"], trader.model,
+                        st_settle = bridge.read_status()   # never reuse `st`: it is the
+                        if st_settle and (st_settle.get("balance") or 0) > 0:   # probe's
+                            rid = _ongoing_run(st_settle["balance"], trader.model,
                                                args.max_risk, args.granularity)
                             db.record_signal(rid, now, args.instrument, "combined",
                                              1 if intent == "LONG" else 0, 0.0,
@@ -1165,7 +1225,8 @@ def main() -> None:
                                              f"(was LONG {intent_lots:.2f}, stop {stop_price})",
                                              {"action": "FLAT", "trigger": "external-close",
                                               "stop_price": stop_price, "price": price,
-                                              "low": st.get("_low2")})
+                                              "low": st.get("_low2"),
+                                              "reentry_bar": _iso(st.get("_bar_t"))})
                     except Exception as exc:
                         print(f"[ai] external-close DB record failed: {exc}", flush=True)
                     intent, intent_lots, stop_price = "FLAT", 0.0, None
@@ -1203,7 +1264,7 @@ def main() -> None:
                         bridge.write_signal("FLAT", 0.0, seq=order_seq)
                         print(f"[ai] STOP hit: last {price:.3f} <= stop {stop_price:.3f} "
                               f"-> FLAT (gate may re-enter if trend holds)", flush=True)
-                        record_stop_exit(price, stop_price, pos, now)
+                        record_stop_exit(price, stop_price, pos, now, st.get("_bar_t"))
                     intent, intent_lots, stop_price = "FLAT", 0.0, None
                     seen_long = False
                     last_gate = _time.time()          # brief pause before re-entry

@@ -362,6 +362,8 @@ def _recent_decisions(run_id: int, limit: int = 15) -> list[dict]:
                 comp = json.loads(s["components"])
             except (json.JSONDecodeError, TypeError):
                 comp = {}
+        if comp.get("trigger") == "blocked-on-lock":
+            continue        # a waiting brain's status report, never a decision (Round-9)
         out.append({
             "time": s["time"],
             "symbol": s.get("instrument", ""),

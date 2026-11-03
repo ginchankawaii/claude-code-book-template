@@ -6,10 +6,14 @@ and annualised short spans, so normal production behaviour read 🔴 in 36-39%
 of 60-90-day windows (Round-9). A RED that fires on normal behaviour teaches
 the owner to ignore REDs, and REDs are also how a dead brain or EA is reported.
 
-Two cadences are replayed, and every envelope covers BOTH:
+Three cadences are replayed; the envelopes cover the first two:
   * "close" — one look per H1 close, the validated backtest (it must reproduce
     research_harness.sim_ls exactly: trades and final balance);
-  * "live"  — what the live loop actually does (Round-9 review): the EA exports
+  * "closedbar" — the live brain since Round-9: signal, ramp and ATR from the
+    last CLOSED bar at each 600 s poll, the broker SL anywhere in the bar, and
+    no re-entry after a stop until the stop's bar has closed;
+  * "live"  — the live brain BEFORE Round-9 (comparison only, never in the
+    tables): the EA exports
     the FORMING H1 bar (CopyRates start 0) and the brain compares its current
     price with an SMA2400 that includes it on every 600 s poll, acting on a
     mismatch once 15 min have passed since the last gate action, stop or close.
@@ -18,7 +22,9 @@ Two cadences are replayed, and every envelope covers BOTH:
     the bar (O -> L -> H -> C, or O -> H -> L -> C on a down bar), at several
     poll phases. On real May-2026 15-minute data the live-like look logged
     1.89x the changes of one look per close; this replay logs about 2.2x.
-    Its P&L matches the close cadence (CAGR 15.8% both under this model).
+    It made 3.4-8.6%/yr against 15.3% (entries sized ~1x at the crossing and
+    held); on random intrahour paths an independent replay gave a median of
+    2.5-7.0% before the fix and 14.6-14.9% after it.
 
 Position changes are counted the way the live log records them: each entry
 and each exit, so a stop-out and its re-entry are two. Returns are simple
@@ -209,10 +215,12 @@ def window_returns(r: dict, span_days: int) -> np.ndarray:
 
 
 def runs(phases=LIVE_PHASES) -> list[dict]:
-    """Every cadence the live log may contain: the current live run began
-    before the Round-9 closed-bar fix, so its history holds both."""
-    return ([replay("close")] + [replay("closedbar", p) for p in phases]
-            + [replay("live", p) for p in phases])
+    """The cadences the envelopes are built from: the backtest and the live
+    brain since Round-9. NOT the forming-bar brain before it: widening the
+    tables to cover that defect made the monitor blind to the very defect
+    (a regression to ~100 changes/yr read 🟢 — second review). run_monitor
+    judges only the part of a run made by the closed-bar brain instead."""
+    return [replay("close")] + [replay("closedbar", p) for p in phases]
 
 
 def build(rs: list[dict]) -> tuple[tuple, tuple]:
@@ -255,16 +263,16 @@ def main() -> int:
         return 1
     rs = runs()
     yrs = (rs[0]["t"][-1] - rs[0]["t"][0]) / np.timedelta64(1, "D") / 365.25
-    names = (["close"] + [f"closedbar p{p}" for p in LIVE_PHASES]
-             + [f"forming-bar p{p}" for p in LIVE_PHASES])
-    for r, name in zip(rs, names):
+    names = ["close"] + [f"closedbar p{p}" for p in LIVE_PHASES]
+    old = [replay("live", p) for p in LIVE_PHASES]          # comparison only
+    for r, name in zip(rs + old, names + [f"forming-bar p{p} (pre-fix, not in tables)" for p in LIVE_PHASES]):
         cagr = ((r["final"] / 500_000.0) ** (1 / yrs) - 1) * 100
         eq = r["eq"]
         mdd = float(np.max(1 - eq / np.maximum.accumulate(eq)) * 100)
         print(f"# {name:13s}: CAGR {cagr:5.1f}% maxDD {mdd:4.1f}% "
               f"{len(r['changes']) / yrs:5.1f} position changes/yr")
     chg, ret = build(rs)
-    print("ENVELOPE_CHANGES = (   # (from span_days, p90 count, max count), both cadences")
+    print("ENVELOPE_CHANGES = (   # (from span_days, p90 count, max count)")
     for row in chg:
         print(f"    {row},")
     print(")")

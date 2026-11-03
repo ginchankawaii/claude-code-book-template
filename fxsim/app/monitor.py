@@ -46,23 +46,23 @@ EXP_MAXDD_PCT = 34.0
 # expectations used before Round-9 read normal behaviour 🔴 in 36-39% of 60-90
 # -day windows. Each row covers the spans up to the next row and holds the
 # EXTREME over every whole-day span in between (a step, never interpolated).
-# The tables cover the backtest AND both live cadences: the closed-bar brain
-# (Round-9, ~38 changes/yr) and the forming-bar brain before it (~85-100/yr,
-# 3-9%/yr replayed) — the live run that began in June holds both.
+# Built from the backtest and the CLOSED-BAR live brain (Round-9) only — never
+# from the forming-bar brain before it (~85-100 changes/yr, 3-9%/yr replayed):
+# including that defect made the monitor blind to it. A run that began before
+# the fix is judged only from its first closed-bar decision (run_monitor).
 ENVELOPE_CHANGES = (     # (from span_days, p90 count, max count)
-    (30, 38, 107), (45, 51, 132), (60, 54, 148), (75, 63, 148), (90, 91, 156),
-    (120, 107, 156), (150, 117, 156), (180, 148, 222), (240, 159, 236),
-    (300, 183, 255), (365, 235, 318), (450, 248, 355), (545, 283, 363),
-    (640, 334, 376), (730, 392, 447), (910, 442, 522), (1095, 509, 551),
-    (1280, 535, 568), (1460, 535, 568),
+    (30, 16, 32), (45, 19, 45), (60, 21, 48), (75, 27, 48), (90, 31, 64),
+    (120, 39, 64), (150, 45, 64), (180, 51, 77), (240, 64, 88), (300, 68, 93),
+    (365, 85, 110), (450, 98, 123), (545, 103, 127), (640, 119, 136),
+    (730, 135, 150), (910, 161, 180), (1095, 180, 194), (1280, 194, 202),
+    (1460, 194, 202),
 )
 ENVELOPE_RETURN = (      # (from span_days, p10 return %, worst return %), no swap
-    (60, -7.1, -17.7), (75, -7.4, -18.2), (90, -8.2, -19.1), (120, -9.2, -21.8),
-    (150, -10.7, -23.7), (180, -11.5, -23.6), (240, -12.1, -22.1),
-    (300, -13.9, -23.4), (365, -15.5, -23.4), (450, -17.6, -29.9),
-    (545, -16.1, -29.6), (640, -18.0, -31.6), (730, -20.0, -31.7),
-    (910, -21.2, -32.0), (1095, -23.1, -36.2), (1280, -25.4, -36.5),
-    (1460, -25.4, -36.5),
+    (60, -5.4, -15.6), (75, -5.5, -16.4), (90, -5.9, -18.1), (120, -6.5, -19.9),
+    (150, -6.5, -21.5), (180, -6.7, -22.0), (240, -6.9, -19.6), (300, -7.0, -19.6),
+    (365, -8.0, -19.6), (450, -8.1, -27.3), (545, -8.6, -15.9), (640, -9.7, -15.9),
+    (730, -10.4, -19.3), (910, -10.8, -21.2), (1095, -11.1, -23.1),
+    (1280, -2.5, -23.4), (1460, 1.7, -23.4),
 )
 CHANGES_RED_MARGIN = 1.25        # RED only well beyond the backtest's busiest window
 RETURN_RED_MARGIN_PP = 5.0       # ... or well below its worst (at least 5pp / 25%)
@@ -151,10 +151,15 @@ def build_report(*, initial_balance: float, equity_values: list[float],
                  last_decision_age_s: float | None = None,
                  blocked_on_lock: str | None = None,
                  daily_gap_h: float = 20.0,
-                 kind: str = "fx") -> dict:
+                 kind: str = "fx",
+                 segment: dict | None = None) -> dict:
     """Assemble the health report + per-check flags + an overall verdict.
     kind != "fx" (the stock system) has no backtest reference, so the
-    envelope checks (取引頻度, リターン) are not judged for it."""
+    envelope checks (取引頻度, リターン) are not judged for it.
+    segment: the part of the run those two checks judge — {"equity_values",
+    "span_days", "actions", "since"} — or {"pending": True} when the current
+    (closed-bar) brain has not decided yet; None = the whole run. A run that
+    began under the forming-bar brain is outside the envelopes by design."""
     st = equity_stats(equity_values)
     years = max(span_days, 0.0) / 365.25
     checks: list[dict] = []
@@ -169,14 +174,15 @@ def build_report(*, initial_balance: float, equity_values: list[float],
         checks.append({"name": "ドローダウン", "flag": YELLOW,
                        "msg": f"最大DD {mdd:.1f}%（観察{span_days:.0f}日・判定はもう少し先）"})
     elif mdd > EXP_MAXDD_PCT:
+        bt = f"（バックテストの最悪は{BT_MAXDD_PCT:.0f}%）" if kind == "fx" else ""
         checks.append({"name": "ドローダウン", "flag": RED,
-                       "msg": f"最大DD {mdd:.1f}% が警告線{EXP_MAXDD_PCT:.0f}%を超過（バックテストの最悪は"
-                              f"{BT_MAXDD_PCT:.0f}%）＝試験済みの範囲外（故障とは限らない）。執行一致とログを確認し、"
-                              f"ルール通りならサイズ（レバ）の見直しを検討（docs/RESEARCH.md Round-9）"})
+                       "msg": f"最大DD {mdd:.1f}% が警告線{EXP_MAXDD_PCT:.0f}%を超過{bt}＝試験済みの範囲外"
+                              f"（故障とは限らない）。ログを確認し、ルール通りならサイズの見直しを検討"
+                              + ("（docs/RESEARCH.md Round-9）" if kind == "fx" else "")})
     elif mdd > EXP_MAXDD_PCT * 0.75:
+        bt = f"。バックテストの最悪は{BT_MAXDD_PCT:.0f}%" if kind == "fx" else ""
         checks.append({"name": "ドローダウン", "flag": YELLOW,
-                       "msg": f"最大DD {mdd:.1f}%（警告線{EXP_MAXDD_PCT:.0f}%内だが深い。バックテストの最悪は"
-                              f"{BT_MAXDD_PCT:.0f}%）"})
+                       "msg": f"最大DD {mdd:.1f}%（警告線{EXP_MAXDD_PCT:.0f}%内だが深い{bt}）"})
     else:
         checks.append({"name": "ドローダウン", "flag": GREEN,
                        "msg": f"最大DD {mdd:.1f}%（警告線{EXP_MAXDD_PCT:.0f}%内）"})
@@ -184,58 +190,69 @@ def build_report(*, initial_balance: float, equity_values: list[float],
     # --- trade frequency vs production's backtest over the SAME span ---
     n_changes = count_position_changes(actions)
     tpy = n_changes / years if years > 0 else 0.0
-    env = envelope_at(ENVELOPE_CHANGES, span_days, "scale") if kind == "fx" else None
+    seg = segment or {}
+    pending = bool(seg.get("pending"))
+    s_span = float(seg.get("span_days", span_days))
+    s_changes = count_position_changes(seg.get("actions", actions))
+    s_from = f"（{str(seg['since'])[:10]}以降）" if seg.get("since") else ""
+    env = envelope_at(ENVELOPE_CHANGES, s_span, "scale") if kind == "fx" else None
     if kind != "fx":
         pass                                   # no stock backtest to compare with
+    elif pending:
+        checks.append({"name": "取引頻度", "flag": YELLOW,
+                       "msg": "判定保留：確定足方式（2026-11修正）の判断がまだ記録されていません（20時間以内に記録）"})
     elif env is None:
         checks.append({"name": "取引頻度", "flag": YELLOW,
-                       "msg": f"建玉変化 {n_changes}回（観察{span_days:.0f}日・判定は30日以降）"})
+                       "msg": f"建玉変化 {s_changes}回{s_from}（観察{s_span:.0f}日・判定は30日以降）"})
     else:
         p90, most = env
         ref = f"（同じ長さの期間の過去最多{most:.0f}回・上位10%{p90:.0f}回）"
-        if n_changes > math.ceil(most * CHANGES_RED_MARGIN):
+        head = f"建玉変化 {s_changes}回／{s_span:.0f}日{s_from}"
+        if s_changes > math.ceil(most * CHANGES_RED_MARGIN):
             checks.append({"name": "取引頻度", "flag": RED,
-                           "msg": f"建玉変化 {n_changes}回／{span_days:.0f}日：過去最多を大きく超過{ref} → "
+                           "msg": f"{head}：過去最多を大きく超過{ref} → "
                                   f"過剰売買（ダマシの連続 or 不具合）の疑い。`docker compose logs fx` で売買の理由を確認"})
-        elif n_changes > most:
+        elif s_changes > most:
             checks.append({"name": "取引頻度", "flag": YELLOW,
-                           "msg": f"建玉変化 {n_changes}回／{span_days:.0f}日：過去に例のない水準{ref}。"
-                                  f"ログと執行一致を確認"})
-        elif n_changes > p90:
+                           "msg": f"{head}：過去に例のない水準{ref}。ログと執行一致を確認"})
+        elif s_changes > p90:
             checks.append({"name": "取引頻度", "flag": YELLOW,
-                           "msg": f"建玉変化 {n_changes}回／{span_days:.0f}日（多め{ref}。"
-                                  f"平均線付近でダマシが続く時期はこうなる）"})
+                           "msg": f"{head}（多め{ref}。平均線付近でダマシが続く時期はこうなる）"})
         else:
             checks.append({"name": "取引頻度", "flag": GREEN,
-                           "msg": f"建玉変化 {n_changes}回／{span_days:.0f}日（範囲内{ref}）"})
+                           "msg": f"{head}（範囲内{ref}）"})
 
     # --- realized return vs production's backtest over the SAME span ---
     ann = annualize(st["return_pct"], years)
-    ret = st["return_pct"]
-    env = envelope_at(ENVELOPE_RETURN, span_days, "loosest") if kind == "fx" else None
+    ret = equity_stats(seg.get("equity_values", equity_values))["return_pct"]
+    env = envelope_at(ENVELOPE_RETURN, s_span, "loosest") if kind == "fx" else None
     if kind != "fx":
         pass                                   # no stock backtest to compare with
+    elif pending:
+        checks.append({"name": "リターン", "flag": YELLOW,
+                       "msg": "判定保留：確定足方式（2026-11修正）の判断がまだ記録されていません"})
     elif env is None:
         checks.append({"name": "リターン", "flag": YELLOW,
-                       "msg": f"累計 {ret:+.1f}%（観察{span_days:.0f}日・判定は60日以降）"})
+                       "msg": f"累計 {ret:+.1f}%{s_from}（観察{s_span:.0f}日・判定は60日以降）"})
     else:
         p10, worst = env
         ref = f"（同じ長さの期間の過去最悪{worst:+.1f}%・下位10%{p10:+.1f}%、スワップ別）"
+        head = f"累計 {ret:+.1f}%／{s_span:.0f}日{s_from}"
         if ret < worst - max(RETURN_RED_MARGIN_PP, 0.25 * abs(worst)):
             checks.append({"name": "リターン", "flag": RED,
-                           "msg": f"累計 {ret:+.1f}%／{span_days:.0f}日：過去最悪を大きく下回る{ref}＝試験済みの範囲外"
+                           "msg": f"{head}：過去最悪を大きく下回る{ref}＝試験済みの範囲外"
                                   f"（故障とは限らない）。ログと執行一致を確認（🟢でもスリッページ等の執行コストは否定できない）。"
                                   f"ルール通りならサイズ（レバ）の見直しを検討（docs/RESEARCH.md Round-8/9）"})
         elif ret < worst:
             checks.append({"name": "リターン", "flag": YELLOW,
-                           "msg": f"累計 {ret:+.1f}%／{span_days:.0f}日：過去に例のない水準{ref}。ログと執行一致を確認"})
+                           "msg": f"{head}：過去に例のない水準{ref}。ログと執行一致を確認"})
         elif ret < p10:
             checks.append({"name": "リターン", "flag": YELLOW,
-                           "msg": f"累計 {ret:+.1f}%／{span_days:.0f}日（低め{ref}。横ばい・ダマシの時期によくある水準。"
+                           "msg": f"{head}（低め{ref}。横ばい・ダマシの時期によくある水準。"
                                   f"執行コストの問題かどうかはこの項目だけでは判別できない）"})
         else:
             checks.append({"name": "リターン", "flag": GREEN,
-                           "msg": f"累計 {ret:+.1f}%／{span_days:.0f}日（範囲内{ref}）"})
+                           "msg": f"{head}（範囲内{ref}）"})
 
     # --- staleness: has the system actually been updating? A running brain
     #     records equity on every decision and decides at least every 20h, so

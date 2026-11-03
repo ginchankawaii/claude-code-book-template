@@ -220,14 +220,14 @@ def _alternating(n_changes: int) -> list[str]:
 
 
 def test_production_never_reads_red_on_its_own_behaviour():
-    # Every whole-day span from 30 to 1500 days, every window end (daily), for
-    # the backtest, the closed-bar live brain and the forming-bar brain the
-    # current run began with: neither envelope check ever reads RED. YELLOW
-    # for the closed-bar brain stays rare.
+    # Every 7th whole-day span from 30 to 1500 days, every window end (daily),
+    # for the backtest and the closed-bar live brain: neither envelope check
+    # ever reads RED, and YELLOW stays rare. The forming-bar brain the June
+    # run began with is OUTSIDE the envelope by design (second review: covering
+    # it made the monitor blind to that very defect) — it must not read GREEN.
     import numpy as np
     from scripts import monitor_envelope as ME
-    runs = {"close": ME.replay("close"), "closedbar": ME.replay("closedbar", 5),
-            "forming": ME.replay("live", 5)}
+    runs = {"close": ME.replay("close"), "closedbar": ME.replay("closedbar", 5)}
     for name, r in runs.items():
         yellow = n = 0
         for W in range(30, 1501, 7):
@@ -245,8 +245,87 @@ def test_production_never_reads_red_on_its_own_behaviour():
                                            span_days=float(W), actions=["LONG"])
                 f = next(x for x in rep["checks"] if x["name"] == "リターン")["flag"]
                 assert f != RED, (name, W, float(v))
-        if name != "forming":
-            assert yellow / n < 0.05, (name, yellow / n)
+        assert yellow / n < 0.12, (name, yellow / n)
+    forming = ME.replay("live", 5)
+    counts = ME.window_counts(forming, 365)
+    flagged = sum(next(x for x in monitor.build_report(
+        initial_balance=1.0, equity_values=[1.0, 1.0], span_days=365.0,
+        actions=_alternating(int(c)))["checks"] if x["name"] == "取引頻度")["flag"] != GREEN
+        for c in counts)
+    assert flagged / len(counts) > 0.3, flagged / len(counts)   # vs <12% for the fixed brain
+
+
+def test_a_regression_to_the_forming_bar_cadence_is_visible():
+    # second review: ~100 changes/yr (the pre-fix brain) read GREEN when the
+    # tables covered it
+    def flag(span, n):
+        rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 1.0],
+                                   span_days=float(span), actions=_alternating(n))
+        return next(x for x in rep["checks"] if x["name"] == "取引頻度")["flag"]
+    assert flag(365, 100) != GREEN
+    assert flag(90, 70) != GREEN
+    assert flag(180, 100) == RED
+
+
+def test_envelope_checks_judge_only_the_closed_bar_segment():
+    # a run that began under the forming-bar brain: its early whipsaw must not
+    # be judged against the closed-bar envelope; before the first closed-bar
+    # decision both checks wait, after it they judge that segment alone
+    rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 0.70], span_days=150.0,
+                               actions=_alternating(150), segment={"pending": True})
+    for name in ("取引頻度", "リターン"):
+        c = next(x for x in rep["checks"] if x["name"] == name)
+        assert c["flag"] == YELLOW and "判定保留" in c["msg"]
+    seg = {"equity_values": [1.0, 1.01], "actions": _alternating(4), "span_days": 70.0,
+           "since": "2026-11-04T00:00:00+00:00"}
+    rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 0.60], span_days=150.0,
+                               actions=_alternating(150), segment=seg)
+    for name in ("取引頻度", "リターン"):
+        c = next(x for x in rep["checks"] if x["name"] == name)
+        assert c["flag"] == GREEN and "2026-11-04以降" in c["msg"], c
+    assert any(x["name"] == "ドローダウン" and x["flag"] == RED for x in rep["checks"])  # whole run
+
+
+def test_an_ended_lock_wait_is_not_reported_as_blocked(monkeypatch):
+    import json as _json
+    from datetime import datetime, timedelta, timezone
+    from scripts import run_monitor
+    now = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
+    rows = [{"source": "combined", "time": (now - timedelta(hours=4)).isoformat(),
+             "components": _json.dumps({"action": "LONG", "trigger": "daily"})},
+            {"source": "combined", "time": (now - timedelta(seconds=120)).isoformat(),
+             "reason": "BLOCKED on the brain lock for 0 min",
+             "components": _json.dumps({"action": "FLAT", "trigger": "blocked-on-lock"})}]
+    monkeypatch.setattr(run_monitor.db, "load_signals", lambda rid: rows)
+    assert run_monitor._blocked_on_lock(1, now=now)                 # still waiting
+    assert run_monitor._blocked_on_lock(1, now=now + timedelta(hours=5)) is None   # wait ended
+    assert run_monitor.BLOCKED_FRESH_S > 300                        # one log period + slack
+
+
+def test_trend_basis_ignores_the_forming_bar(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from app.config import Settings
+    from app.models import Candle
+    from scripts import run_monitor
+    t0 = datetime.now(timezone.utc) - timedelta(hours=200)
+    bars = [Candle(instrument="USD_JPY", granularity="H1", time=t0 + timedelta(hours=i),
+                   open=100.0, high=100.2, low=99.8, close=100.0) for i in range(120)]
+    bars.append(Candle(instrument="USD_JPY", granularity="H1", time=t0 + timedelta(hours=120),
+                       open=100.0, high=101.1, low=99.9, close=101.0))     # forming: above
+    monkeypatch.setattr(run_monitor.bridge, "read_bars", lambda *a, **k: bars)
+    monkeypatch.setattr(run_monitor.bridge, "MAX_BAR_AGE_H", 1e9)
+    assert run_monitor._current_strategy_signal(Settings(trend_sma=90), "USD_JPY", "x") == "FLAT"
+
+
+def test_live_page_decision_list_skips_blocked_rows(monkeypatch):
+    import json as _json
+    from app import server
+    rows = [{"source": "combined", "time": "2026-11-03T10:00:00+00:00", "reason": "hold",
+             "components": _json.dumps({"action": "LONG", "trigger": "daily"})},
+            {"source": "combined", "time": "2026-11-03T10:05:00+00:00", "reason": "BLOCKED",
+             "components": _json.dumps({"action": "FLAT", "trigger": "blocked-on-lock"})}]
+    monkeypatch.setattr(server.db, "load_signals", lambda rid: rows)
+    assert [d["action"] for d in server._recent_decisions(1)] == ["LONG"]
 
 
 def test_real_anomalies_still_read_red():
@@ -269,10 +348,10 @@ def test_envelope_lookup():
     assert monitor.envelope_at(T, 29.9, "scale") is None
     assert monitor.envelope_at(T, float("nan"), "scale") is None
     assert monitor.envelope_at(T, float("inf"), "scale") is None       # never raises
-    assert monitor.envelope_at(T, 30, "scale") == (38.0, 107.0)
-    assert monitor.envelope_at(T, 44.9, "scale") == (38.0, 107.0)      # a step, not interpolated
-    assert monitor.envelope_at(T, 45, "scale") == (51.0, 132.0)
-    assert monitor.envelope_at(T, 2920, "scale") == (1070.0, 1136.0)   # counts scale with span
+    assert monitor.envelope_at(T, 30, "scale") == (16.0, 32.0)
+    assert monitor.envelope_at(T, 44.9, "scale") == (16.0, 32.0)       # a step, not interpolated
+    assert monitor.envelope_at(T, 45, "scale") == (19.0, 45.0)
+    assert monitor.envelope_at(T, 2920, "scale") == (388.0, 404.0)     # counts scale with span
     R_ = monitor.ENVELOPE_RETURN
     loosest = (min(r[1] for r in R_), min(r[2] for r in R_))
     assert monitor.envelope_at(R_, 5000, "loosest") == loosest         # long runs: never stricter

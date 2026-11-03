@@ -18,10 +18,27 @@ import json
 from datetime import datetime, timezone
 
 from app import bridge, db, monitor
+from scripts.run_ai_bridge import LOCK_WAIT_LOG_EVERY_S, LOCK_WAIT_TICK_S
 from app.config import Settings
 from app.indicators import candles_to_df, enrich
 from app.providers.csv import load_csv_file
 from app.strategies.trend import TrendRegimeStrategy
+
+
+def _timed_actions(run_id: int) -> list[tuple[str, str]]:
+    """(time, action) of the decision log, oldest first, blocked rows skipped."""
+    out = []
+    for s in db.load_signals(run_id):
+        if s.get("source") != "combined":
+            continue
+        try:
+            comp = json.loads(s["components"]) if s.get("components") else {}
+        except (json.JSONDecodeError, TypeError):
+            comp = {}
+        if comp.get("trigger") == "blocked-on-lock":
+            continue
+        out.append((str(s.get("time")), str(comp.get("action", "FLAT"))))
+    return out
 
 
 def _actions(run_id: int) -> list[str]:
@@ -70,7 +87,10 @@ def _current_strategy_signal(cfg: Settings, instrument: str, history_csv: str) -
         print(f"[monitor] bars are {age:.0f}h old (> {bridge.MAX_BAR_AGE_H:.0f}h): the brain "
               f"is blind on this feed — trend basis not computed")
         return None
-    df = enrich(candles_to_df(candles))
+    # The EA's last row is the still-forming bar; the brain decides on closed
+    # bars only (Round-9), so the basis must too — else 執行一致 blames a dead
+    # brain on every intrabar crossing.
+    df = enrich(candles_to_df(candles[:-1]))
     sig = TrendRegimeStrategy(sma=cfg.trend_sma).generate(instrument, df)
     return "LONG" if sig.direction > 0 else "FLAT"
 
@@ -165,8 +185,17 @@ def _last_decision_age_s(rid: int) -> float | None:
     return None
 
 
-def _blocked_on_lock(rid: int) -> str | None:
-    """The newest row, if the brain is reporting itself blocked."""
+# A waiting brain writes a blocked-on-lock row every LOCK_WAIT_LOG_EVERY_S. An
+# older one means the wait has ENDED (a takeover writes nothing until its next
+# decision, up to the 20 h daily slot): it read 🔴「取引していません」 for hours
+# while the brain traded, and the remedy it named could not clear it (Round-9
+# second review). A brain that died while waiting is caught by its heartbeat.
+BLOCKED_FRESH_S = 2 * LOCK_WAIT_LOG_EVERY_S + 2 * LOCK_WAIT_TICK_S
+
+
+def _blocked_on_lock(rid: int, now: datetime | None = None) -> str | None:
+    """The newest row's reason, if the brain is reporting itself blocked NOW."""
+    now = now or datetime.now(timezone.utc)
     for s in reversed(db.load_signals(rid)):
         if s.get("source") != "combined":
             continue
@@ -174,8 +203,43 @@ def _blocked_on_lock(rid: int) -> str | None:
             comp = json.loads(s["components"]) if s.get("components") else {}
         except (json.JSONDecodeError, TypeError):
             return None
-        return str(s.get("reason") or "") if comp.get("trigger") == "blocked-on-lock" else None
+        if comp.get("trigger") != "blocked-on-lock":
+            return None
+        try:
+            t = datetime.fromisoformat(str(s.get("time")))
+        except ValueError:
+            return None
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        if (now - t).total_seconds() > BLOCKED_FRESH_S:
+            return None                     # the wait is over
+        return str(s.get("reason") or "")
     return None
+
+
+def _closed_bar_segment(rid: int, equity: list[dict]) -> dict:
+    """The part of the run the envelope checks judge: from the first decision
+    of the closed-bar brain (Round-9) on. The run that began in June mixes the
+    forming-bar brain, which the envelopes exclude by design."""
+    since = None
+    for s in db.load_signals(rid):
+        if s.get("source") != "combined":
+            continue
+        try:
+            comp = json.loads(s["components"]) if s.get("components") else {}
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if comp.get("cadence") == "closed-bar":
+            since = str(s.get("time"))
+            break
+    if since is None:
+        return {"pending": True}
+    eq = [e for e in equity if str(e["time"]) >= since]
+    acts = [a for t, a in _timed_actions(rid) if t >= since]
+    if len(eq) < 2:
+        return {"pending": True}
+    return {"equity_values": [e["equity"] for e in eq], "actions": acts, "since": since,
+            "span_days": monitor.span_days_between(eq[0]["time"], eq[-1]["time"])}
 
 
 def _live_position() -> str | None:
@@ -238,7 +302,8 @@ def main() -> None:
         bars_age_h=bars_age, bars_count=bars_count, bars_need=bars_need,
         brain_signal_age_s=brain["signal_age_s"], signal_expired=brain["expired"],
         last_decision_age_s=_last_decision_age_s(rid), blocked_on_lock=_blocked_on_lock(rid),
-        kind=args.kind)
+        kind=args.kind,
+        segment=_closed_bar_segment(rid, equity) if args.kind == "fx" else None)
 
     bal0 = rep["initial_balance"]; eq = rep["current_equity"]; s = rep["stats"]
     print("=" * 60)

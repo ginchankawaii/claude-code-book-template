@@ -827,17 +827,30 @@ def test_an_unreadable_lock_never_blocks_acquisition_forever(tmp_path, monkeypat
 
 def test_awaiting_new_bar_helper():
     t1, t2 = datetime(2026, 1, 1, 10, tzinfo=timezone.utc), datetime(2026, 1, 1, 11, tzinfo=timezone.utc)
+    t0 = datetime(2026, 1, 1, 9, tzinfo=timezone.utc)
     assert R._awaiting_new_bar(None, t1, 0.0) == (False, None)
     assert R._awaiting_new_bar(t1, t1, 0.0) == (True, t1)        # same bar, still flat: wait
     assert R._awaiting_new_bar(t1, t2, 0.0) == (False, None)     # a newer closed bar: go
     assert R._awaiting_new_bar(t1, t1, 0.10) == (False, None)    # not flat: nothing to wait for
+    # an OLDER bar (a torn bars file) or none at all keeps the block (2nd review)
+    assert R._awaiting_new_bar(t1, t0, 0.0) == (True, t1)
+    assert R._awaiting_new_bar(t1, None, 0.0) == (True, t1)
+    # a mark restored from the DB is an ISO string; naive bar times are UTC
+    iso = t1.isoformat()
+    assert R._awaiting_new_bar(iso, t1.replace(tzinfo=None), 0.0) == (True, iso)
+    assert R._awaiting_new_bar(iso, t2.replace(tzinfo=None), 0.0) == (False, None)
+    assert R._awaiting_new_bar("not a time", t1, 0.0) == (False, None)   # unreadable mark: no block
 
 
-def test_resident_loop_reenters_only_after_the_stop_bar_has_closed(tmp_path, monkeypatch):
+@pytest.mark.parametrize("restart_after_poll", [None, 2, 4])
+def test_resident_loop_reenters_only_after_the_stop_bar_has_closed(tmp_path, monkeypatch,
+                                                                   restart_after_poll):
     """End to end through main(): a LONG is stopped out by the live price, the
     price recovers INSIDE the same bar (closed-bar trend still up): the brain
     must keep the book flat for every poll of that bar — no gate, no daily —
-    and re-enter at the first poll after a newer bar has closed."""
+    and re-enter at the first poll after a newer bar has closed. With a
+    restart (crash, supervisor, lock takeover) inside the stop's bar the block
+    must survive: before the 2nd review it lived only in memory."""
     import sys as _sys
     from datetime import timedelta
     from app.models import Candle
@@ -857,7 +870,7 @@ def test_resident_loop_reenters_only_after_the_stop_bar_has_closed(tmp_path, mon
             clock["t"] += s
             state["polls"] += 1
             script(state["polls"])
-            if state["polls"] > 14:
+            if state["polls"] > state["limit"]:
                 raise _Stop()
 
     class _DT(datetime):
@@ -893,7 +906,8 @@ def test_resident_loop_reenters_only_after_the_stop_bar_has_closed(tmp_path, mon
         return Candle(instrument="USD_JPY", granularity="H1", time=t0 + timedelta(hours=i),
                       open=c, high=c + 0.05, low=(lo if lo is not None else c - 0.05), close=c)
     closed = [bar(i, 140.0 + i * 0.1) for i in range(120)]          # strong up-trend, ~152 at the end
-    state = {"polls": 0, "forming": bar(120, 151.9), "pos": 0.10, "exec_seq": 1_789_999_000}
+    state = {"polls": 0, "forming": bar(120, 151.9), "pos": 0.10, "exec_seq": 1_789_999_000,
+             "limit": 14 if restart_after_poll is None else restart_after_poll}
     writes = []
 
     def script(n):
@@ -929,6 +943,10 @@ def test_resident_loop_reenters_only_after_the_stop_bar_has_closed(tmp_path, mon
     monkeypatch.setattr(_sys, "argv", ["run_ai_bridge.py", "--poll", "600", "--sma", "90"])
     with pytest.raises(_Stop):
         R.main()
+    if restart_after_poll is not None:          # the brain dies inside the stop's bar
+        state["limit"] = 14
+        with pytest.raises(_Stop):
+            R.main()
 
     longs = [w for w in writes if w[1] == "LONG" and w[3] != 1_789_999_000]
     assert any(w[1] == "FLAT" for w in writes if w[0] == 1), writes          # stopped at poll 1
