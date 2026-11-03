@@ -98,13 +98,14 @@ else:
     # v1.6: 採用品 HXJNLDC 802530 (Amazon B0D4V9NZSH)。メーカー仕様表 (商品画像) は
     # long 31 × width 25 × high 8 mm。公称型番の 30.0 でなく実仕様 31.0 を正とする
     # (BAT_TOL の安全代を食わないため)。
-    BAT_W, BAT_H, BAT_T = 31.0, 25.0, 8.0      # LiPo 802530 (680mAh, 実仕様31mm)
+    # v1.8: 実測 32.0 × 25.0 × 8.0 (MEASUREMENTS.md M3。テープ・保護基板の端を含む全長)。
+    BAT_W, BAT_H, BAT_T = 32.0, 25.0, 8.0      # LiPo 802530 (680mAh, 実測32mm)
     BAT_LABEL, BAT_MAH = "LiPo 802530 (680mAh)", 680
 XIAO_W, XIAO_H = 21.0, 17.8                     # XIAO ESP32S3 基板
-XIAO_STACK_T = 7.5                              # Sense拡張ボード込み総厚 (assumption)
+XIAO_STACK_T = 8.2                              # Sense拡張ボード込み総厚 (v1.8 実測 M1。旧仮定 7.5)
 USB_PROTRUDE = 1.3                              # USB-C の基板端からの突出
-SW_L, SW_W, SW_H = 8.7, 3.7, 3.5                # SS-12D00 本体
-SW_LEVER = 2.0                                  # レバー突出
+SW_L, SW_W, SW_H = 8.7, 3.7, 4.0                # SS-12D00 本体 (高さ v1.8 実測 M6。旧仮定 3.5)
+SW_LEVER = 3.0                                  # レバー突出 (SS-12D00**G3** = レバー 3mm。v1.8 実測 M6)
 LED_D = 3.0                                     # 3mm LED
 MAG_D, MAG_T = 6.0, 2.0                         # ネオジム磁石 φ6 x 2
 MAG_FIT = 0.2                                   # 圧入ポケット径方向余裕 (φ6.2)
@@ -143,7 +144,7 @@ PCB_LEDGE_OVH = 0.6    # 抜け止め爪の張り出し量
 # v1.4: 34.0 では電池右端と右lip内面の隙間が 0.45mm しかなく、LiPo の寸法公差
 # (±0.5mm) と保護回路(PCM)端の膨らみで干渉し得た。左側と同じ 1.25mm を確保する
 # 34.8 に拡大 (下の BAT_TOL assert で恒久的に担保する)。
-IW = 35.8   # v1.6: 電池実仕様 31.0mm に合わせ 34.8→35.8 (電池両脇の隙間は従来と同一)
+IW = 36.8   # v1.8: 電池実測 32.0mm に合わせ 35.8→36.8 (電池両脇の隙間は従来と同一)
 BAT_TOL = 1.0                                   # 電池の寸法公差+PCM膨らみの許容代
 # XIAO基板下面リフト。none/sense は裏面はんだ+AWG28+カプトンの突出 (1.0-1.5mm) の
 # 逃げ空間、carrier では「シェルフ0.8 + キャリア基板0.8」がそのままリフトになる。
@@ -284,7 +285,9 @@ led_leads = (led[0], (bat[3] + 0.4) if PCB == "none" else led[1],
 # USB-C 開口: 右側面、XIAO 中央 (z は XIAO_LIFT に追従)
 USB_CY = (xiao[1] + xiao[3]) / 2.0              # 38.3
 USB_OPEN_W, USB_OPEN_H = 10.5, 4.8              # y方向 x z方向
-USB_Z0 = 2.4 + XIAO_LIFT                        # 3.8
+# v1.8: USB-C 開口の中心を「スタック下面 (BAT パッド面) から 2.9mm」に置く (実測 M2: A4.50 − B3.20/2)。
+USB_CENTER_ABOVE_STACK = 2.9
+USB_Z0 = WALL + XIAO_LIFT + USB_CENTER_ABOVE_STACK - 4.8 / 2.0   # 3.5 (旧 3.8 = 中心 3.2)
 USB_CB_W, USB_CB_H, USB_CB_D = 13.0, 8.0, 0.8   # プラグ逃がし座ぐり (オーバーモールド対応)
 # マイク開口: 上面。Sense拡張ボード上面 (z=10.5) 近傍の高さに合わせる
 MIC_Z = xiao[5] - 0.9                           # 9.6 (開口 z 8.85..10.35)
@@ -369,8 +372,14 @@ if PCB == "sense":
     # 筐体幅の変更で「基板が育つ」ため、外形を定数にして左壁アンカーで置く。
     pcb = (_pk[0] + PCB_CLR, _pk[1] + PCB_CLR,
            _pk[0] + PCB_CLR + 10.0, _pk[1] + PCB_CLR + 15.6, PCB_Z0, PCB_Z1)
-    assert pcb[2] <= _pk[2] - PCB_CLR + 1e-6 and pcb[3] <= _pk[3] - PCB_CLR + 1e-6, (
-        'MC-SENSE-A pocket too small')
+    if not (pcb[2] <= _pk[2] - PCB_CLR + 1e-6 and pcb[3] <= _pk[3] - PCB_CLR + 1e-6):
+        # v1.8: 実測スイッチ (本体高さ 4.0、旧仮定 3.5) でスイッチ挟みリブが 0.5mm 下がり、
+        # ポケット高さが 15.9mm (必要 16.4mm) に縮んだ。sense は v2 の検討用 (発注禁止) なので、
+        # 基板を実際に作る段階でスイッチ位置か基板外形と一緒に再設計する。
+        raise SystemExit(
+            f"MINDCLIP_PCB=sense: MC-SENSE-A (10.0x15.6) のポケットが不足 "
+            f"(高さ {_pk[3] - _pk[1]:.1f}mm < 必要 {15.6 + 2 * PCB_CLR:.1f}mm)。"
+            f"実測スイッチ (SW_H={SW_H}) では成立しない。v2 で再設計すること")
     # J1: (7.0, 31.6) rot180 / コートヤード 8.4 x 5.2 (gen_pcb.py fp_jst_ph2)
     pcb_j1 = (2.8, 29.0, 11.2, 34.2, PCB_Z1, PCB_Z1 + J1_BODY_Z)
     pcb_parts = [
@@ -809,12 +818,12 @@ def check_layout():
     #   公開値と食い違ったら必ず落ちるようにし、落ちたら MECHANICAL.md §1 / §11.1 と
     #   README §6 の寸法を更新してからでないと STL を出せないようにする。
     GOLDEN_OUTER = {
-        ("allday", "none"): (39.0, 49.4, 14.6),
-        ("slim", "none"): (39.0, 49.4, 12.9),
-        ("allday", "sense"): (39.0, 49.4, 14.6),
-        ("slim", "sense"): (39.0, 49.4, 14.2),
-        ("allday", "carrier"): (39.0, 51.2, 14.9),
-        ("slim", "carrier"): (39.0, 51.2, 14.9),
+        # v1.8: 実測 (電池 32mm → 幅 +1.0 / XIAO 8.2mm → slim の奥行き +0.7) を反映。
+        #       sense は実測スイッチで成立しないため対象外 (モジュール読み込み時に SystemExit)。
+        ("allday", "none"): (40.0, 49.4, 14.6),
+        ("slim", "none"): (40.0, 49.4, 13.6),
+        ("allday", "carrier"): (40.0, 51.2, 14.9),
+        ("slim", "carrier"): (40.0, 51.2, 14.9),
     }
     _g = GOLDEN_OUTER[(VARIANT, PCB)]
     assert (abs(W - _g[0]) < 1e-6 and abs(H - _g[1]) < 1e-6

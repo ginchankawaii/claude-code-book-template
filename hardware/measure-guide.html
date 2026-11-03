@@ -692,10 +692,10 @@ a { color: var(--accent); }
     m8: function () {
       var e = num("m8e"), g = num("m8g"), h = num("m8h"); if (!has(e, g, h)) return { s: "todo" };
       if (h >= g) return { s: "ng", m: "H は G より小さくなります。測り直してください" };
-      if (e < 3.45) return { s: "ng", m: "ツバが穴（3.4 mm）とほぼ同じで、筒を素通りします。相談させてください" };
       var f = g - h, dome = (f - 4.5) - 0.2;
-      if (Math.abs(f - 4.5) <= 0.2) return { s: "ok", m: "先端はフタの面から " + (dome <= 0 ? f2(-dome) + " mm 奥" : f2(dome) + " mm 出る") + "。そのままで面一になります" };
-      return { s: "adj", m: "このままだと先端がフタの面から " + (dome <= 0 ? f2(-dome) + " mm 奥に沈みます" : f2(dome) + " mm 出ます") + "。沈め量を CAD で合わせます" };
+      var thin = e < 3.45 ? "ツバが窓の穴（3.4 mm）とほぼ同じ太さなので、組み立てではフタを伏せて LED の先端を机に当てて止めます。" : "";
+      if (Math.abs(f - 4.5) <= 0.2) return { s: thin ? "adj" : "ok", m: thin + "長さは設計どおりで、先端はフタの面とそろいます" };
+      return { s: "adj", m: thin + "このままだと先端がフタの面から " + (dome <= 0 ? f2(-dome) + " mm 奥に沈みます" : f2(dome) + " mm 出ます") + "。沈め量を CAD で合わせます" };
     }
   };
   var LABEL = { todo: "未測定", ok: "そのまま", adj: "CAD を合わせる", ng: "要相談", skip: "対象外" };
