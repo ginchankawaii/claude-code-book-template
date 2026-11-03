@@ -204,3 +204,83 @@ def test_live_brain_still_reads_green():
     assert any(c["name"] == "執行一致" and c["flag"] == monitor.GREEN for c in r["checks"])
     assert not any(c["name"] in ("EA稼働", "バー鮮度", "バー本数", "時計", "稼働鮮度")
                    for c in r["checks"])
+
+
+# ---- round-9: the performance checks must not cry wolf ----------------------
+# They compared the live run with the old flat-5x recipe's single numbers (20
+# trades/yr, +12.4%/yr) and annualised short spans, so production's OWN
+# backtest read 🔴 in 12-25% of trailing windows (trade rate) and 21-23% of
+# 60-90-day windows (return). A RED on normal behaviour teaches the owner to
+# ignore REDs — and REDs are how a dead brain or EA is reported.
+
+def _alternating(n_changes: int) -> list[str]:
+    return ["LONG" if i % 2 == 0 else "FLAT" for i in range(n_changes + 1)]
+
+
+def test_production_never_reads_red_on_its_own_backtest():
+    import numpy as np
+    from scripts import monitor_envelope as ME
+    st = ME.production_run()
+    tv, eq = st["t"].to_numpy(), st["eq"]
+    ct = ME.change_times(st).to_numpy()
+    # spans ON and BETWEEN the envelope's rows, and beyond its last row
+    for W in (30, 45, 60, 75, 120, 200, 270, 365, 500, 730, 1000, 1460, 1800, 2400):
+        yellow = n = 0
+        for k in range(0, len(tv), 24 * 7):
+            s = tv[k] - np.timedelta64(W, "D")
+            if s < tv[0]:
+                continue
+            j = int(np.searchsorted(tv, s))
+            n_ch = int(((ct > s) & (ct <= tv[k])).sum())
+            rep = monitor.build_report(initial_balance=eq[j], equity_values=[eq[j], eq[k]],
+                                       span_days=float(W), actions=_alternating(n_ch))
+            for c in rep["checks"]:
+                if c["name"] in ("取引頻度", "リターン"):
+                    assert c["flag"] != RED, (W, str(tv[k])[:10], c["msg"])
+                    yellow += c["flag"] == YELLOW
+            n += 1
+        if W >= 60:                    # both checks judge from 60 days on
+            assert yellow / (2 * n) < 0.15, (W, yellow / (2 * n))
+
+
+def test_real_anomalies_still_read_red():
+    # a flip-flopping signal (a bug) and a loss far beyond anything the
+    # backtest did over the same span
+    over = monitor.build_report(initial_balance=272000, equity_values=[272000, 272000],
+                                span_days=60, actions=_alternating(200))
+    assert any(c["name"] == "取引頻度" and c["flag"] == RED for c in over["checks"])
+    loss = monitor.build_report(initial_balance=272000, equity_values=[272000, 163000],
+                                span_days=90, actions=["LONG"])
+    assert any(c["name"] == "リターン" and c["flag"] == RED for c in loss["checks"])
+    ok = monitor.build_report(initial_balance=272000, equity_values=[272000, 260000],
+                              span_days=90, actions=_alternating(20))
+    assert not any(c["name"] in ("取引頻度", "リターン") and c["flag"] == RED for c in ok["checks"])
+
+
+def test_envelope_lookup():
+    T = monitor.ENVELOPE_CHANGES
+    assert monitor.envelope_at(T, 29.9, "scale") is None
+    assert monitor.envelope_at(T, float("nan"), "scale") is None
+    assert monitor.envelope_at(T, 30, "scale") == (12, 31)
+    lo, hi = monitor.envelope_at(T, 45, "scale")
+    assert 12 < lo < 19 and 31 < hi < 43                    # linear between rows
+    assert monitor.envelope_at(T, 2920, "scale") == (380.0, 396.0)   # counts scale with span
+    R = monitor.ENVELOPE_RETURN
+    assert monitor.envelope_at(R, 5000, "hold") == (18.8, -1.3)      # returns hold the last row
+    for (w0, p0, m0), (w1, p1, m1) in zip(T, T[1:]):
+        assert w1 > w0 and p1 >= p0 and m1 >= m0 and m0 >= p0      # sane, monotone table
+
+
+def test_blocked_rows_are_not_decisions(monkeypatch):
+    import json
+    from scripts import run_monitor
+    rows = [{"source": "combined", "components": json.dumps({"action": "LONG"})},
+            {"source": "combined", "components": json.dumps({"action": "FLAT", "trigger": "blocked-on-lock"})},
+            {"source": "combined", "components": json.dumps({"action": "FLAT", "trigger": "blocked-on-lock"})},
+            {"source": "combined", "components": json.dumps({"action": "LONG"})},
+            {"source": "combined", "components": json.dumps({"action": "FLAT", "trigger": "stop"})},
+            {"source": "ai", "components": json.dumps({"action": "FLAT"})}]
+    monkeypatch.setattr(run_monitor.db, "load_signals", lambda rid: rows)
+    acts = run_monitor._actions(1)
+    assert acts == ["LONG", "LONG", "FLAT"]                  # a stop IS a position change
+    assert monitor.count_position_changes(acts) == 1

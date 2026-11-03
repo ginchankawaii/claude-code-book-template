@@ -20,13 +20,40 @@ from __future__ import annotations
 from .bridge import (BRAIN_SIGNAL_STALE_S, EA_BUILD_EXPECTED,
                      EA_STATUS_STALE_S, MAX_BAR_AGE_H)
 
+import math
 from datetime import datetime
 
-# Backtest expectation for the shipped FX recipe (research_run8, 2015-2026).
-EXP_CAGR_PCT = 12.4
+# Production's own backtest — what the operator is shown as the expectation
+# (H1 2015-01..2026-06, USD/JPY long-only, SMA2400, linear ramp 1.5 ATR, 5x
+# cap, no swap; docs/RESEARCH.md Round-4/9). Before Round-9 these were the
+# flat-5x recipe's numbers (12.4%/yr, 20 trades/yr).
+BT_CAGR_PCT = 15.3
+BT_MAXDD_PCT = 26.7
+BT_CHANGES_PER_YEAR = 38.3       # entries + exits; a stop-out and its re-entry are two
+
+# Drawdown alarm line: RED above it, YELLOW above 75% of it. The backtest's
+# worst is BT_MAXDD_PCT; the daily-bar proxy of 1995-2014 reached 51.5%
+# under the same rules (Round-9), so RED here means "outside the tested
+# envelope — review the size", not necessarily "broken".
 EXP_MAXDD_PCT = 34.0
-EXP_TRADES_PER_YEAR = 20.0
-EXP_TIME_IN_MARKET = 0.55
+
+# Span-aware envelopes from production's own backtest
+# (`python -m scripts.monitor_envelope`; re-run it whenever the production
+# configuration changes). A live run of N days is judged against what the
+# backtest did over windows of the SAME length. Both quantities are bursty —
+# a whipsaw week near the SMA is normal — so the single annualised
+# expectations used before Round-9 read normal behaviour 🔴 in 12-25% of
+# trailing windows (trade rate) and 21-23% of 60-90-day windows (return).
+ENVELOPE_CHANGES = (     # (span_days, p90 count, max count)
+    (30, 12, 31), (60, 19, 43), (90, 27, 48), (180, 43, 62),
+    (365, 66, 91), (730, 115, 132), (1460, 190, 198),
+)
+ENVELOPE_RETURN = (      # (span_days, p10 return %, worst return %), no swap
+    (60, -5.1, -15.5), (90, -5.2, -16.3), (180, -6.2, -20.2), (365, -6.7, -19.6),
+    (730, -8.8, -15.2), (1460, 3.5, -22.9), (2190, 18.8, -1.3),
+)
+CHANGES_RED_MARGIN = 1.25        # RED only well beyond the backtest's busiest window
+RETURN_RED_MARGIN_PP = 5.0       # ... or well below its worst (at least 5pp / 25%)
 
 # How much live history before a metric is trustworthy.
 MIN_DAYS_FOR_DD = 20
@@ -60,6 +87,23 @@ def annualize(return_pct: float, years: float) -> float:
     if growth <= 0:
         return -100.0
     return (growth ** (1 / years) - 1) * 100
+
+
+def envelope_at(table, span_days: float, beyond: str) -> tuple[float, float] | None:
+    """(soft, hard) bound of `table` for a span, linear between rows; None below
+    the first row (too little history to judge). Beyond the last row, 'scale'
+    grows both in proportion to the span (counts accumulate), 'hold' keeps the
+    last row (returns)."""
+    if not span_days >= table[0][0]:
+        return None
+    for (w0, a0, b0), (w1, a1, b1) in zip(table, table[1:]):
+        if span_days <= w1:
+            f = (span_days - w0) / (w1 - w0)
+            return a0 + f * (a1 - a0), b0 + f * (b1 - b0)
+    w, a, b = table[-1]
+    if beyond == "scale":
+        return a * span_days / w, b * span_days / w
+    return float(a), float(b)
 
 
 def count_position_changes(actions: list[str]) -> int:
@@ -116,36 +160,50 @@ def build_report(*, initial_balance: float, equity_values: list[float],
         checks.append({"name": "ドローダウン", "flag": GREEN,
                        "msg": f"最大DD {mdd:.1f}%（想定{EXP_MAXDD_PCT:.0f}%内）"})
 
-    # --- trade frequency vs ~20/year ---
+    # --- trade frequency vs production's backtest over the SAME span ---
     n_changes = count_position_changes(actions)
     tpy = n_changes / years if years > 0 else 0.0
-    if span_days < 30:
+    env = envelope_at(ENVELOPE_CHANGES, span_days, "scale")
+    if env is None:
         checks.append({"name": "取引頻度", "flag": YELLOW,
-                       "msg": f"建玉変化 {n_changes}回（観察期間が短く判定保留）"})
-    elif tpy > EXP_TRADES_PER_YEAR * 3:
-        checks.append({"name": "取引頻度", "flag": RED,
-                       "msg": f"年率換算 {tpy:.0f}回/年 ≫ 想定{EXP_TRADES_PER_YEAR:.0f}回。過剰売買=ダマシ/不具合の疑い"})
-    elif tpy > EXP_TRADES_PER_YEAR * 1.8:
-        checks.append({"name": "取引頻度", "flag": YELLOW,
-                       "msg": f"年率換算 {tpy:.0f}回/年（想定{EXP_TRADES_PER_YEAR:.0f}回よりやや多い）"})
+                       "msg": f"建玉変化 {n_changes}回（観察{span_days:.0f}日・判定は30日以降）"})
     else:
-        checks.append({"name": "取引頻度", "flag": GREEN,
-                       "msg": f"年率換算 {tpy:.0f}回/年（想定{EXP_TRADES_PER_YEAR:.0f}回前後）"})
+        p90, most = env
+        if n_changes > math.ceil(most * CHANGES_RED_MARGIN):
+            checks.append({"name": "取引頻度", "flag": RED,
+                           "msg": f"建玉変化 {n_changes}回／{span_days:.0f}日：バックテストの同じ長さの期間の"
+                                  f"最多{most:.0f}回を大きく超過 → 過剰売買（ダマシの連続 or 不具合）の疑い。"
+                                  f"`docker compose logs fx` で売買の理由を確認"})
+        elif n_changes > p90:
+            checks.append({"name": "取引頻度", "flag": YELLOW,
+                           "msg": f"建玉変化 {n_changes}回／{span_days:.0f}日（バックテストの同じ長さの期間の"
+                                  f"上位10%＝{p90:.0f}回超。平均線付近でダマシが続く時期はこうなる）"})
+        else:
+            checks.append({"name": "取引頻度", "flag": GREEN,
+                           "msg": f"建玉変化 {n_changes}回／{span_days:.0f}日（バックテストの同じ長さの期間の"
+                                  f"範囲内・上位10%は{p90:.0f}回）"})
 
-    # --- realized return vs ~12% CAGR (only once there's enough history) ---
+    # --- realized return vs production's backtest over the SAME span ---
     ann = annualize(st["return_pct"], years)
-    if not enough_ret:
+    ret = st["return_pct"]
+    env = envelope_at(ENVELOPE_RETURN, span_days, "hold")
+    if env is None:
         checks.append({"name": "リターン", "flag": YELLOW,
-                       "msg": f"累計 {st['return_pct']:+.1f}%（観察{span_days:.0f}日・年率判定は60日以降）"})
-    elif ann < -10:
-        checks.append({"name": "リターン", "flag": RED,
-                       "msg": f"年率換算 {ann:+.1f}%（想定+{EXP_CAGR_PCT:.0f}%に対し持続的マイナス → 要確認）"})
-    elif ann < EXP_CAGR_PCT * 0.3:
-        checks.append({"name": "リターン", "flag": YELLOW,
-                       "msg": f"年率換算 {ann:+.1f}%（想定+{EXP_CAGR_PCT:.0f}%を下回る・レンジ期かも）"})
+                       "msg": f"累計 {ret:+.1f}%（観察{span_days:.0f}日・判定は60日以降）"})
     else:
-        checks.append({"name": "リターン", "flag": GREEN,
-                       "msg": f"年率換算 {ann:+.1f}%（想定+{EXP_CAGR_PCT:.0f}%圏）"})
+        p10, worst = env
+        if ret < worst - max(RETURN_RED_MARGIN_PP, 0.25 * abs(worst)):
+            checks.append({"name": "リターン", "flag": RED,
+                           "msg": f"累計 {ret:+.1f}%／{span_days:.0f}日：バックテストの同じ長さの期間の最悪"
+                                  f"{worst:+.1f}%を下回る＝試験済みの範囲外（故障とは限らない）。執行一致が🟢なら"
+                                  f"ルール通りの負け → レバの見直しを検討（docs/RESEARCH.md Round-8/9）"})
+        elif ret < p10:
+            checks.append({"name": "リターン", "flag": YELLOW,
+                           "msg": f"累計 {ret:+.1f}%／{span_days:.0f}日（バックテストの同じ長さの期間の"
+                                  f"下位10%＝{p10:+.1f}%未満。横ばい・ダマシの時期はこうなる）"})
+        else:
+            checks.append({"name": "リターン", "flag": GREEN,
+                           "msg": f"累計 {ret:+.1f}%／{span_days:.0f}日（バックテストの同じ長さの期間の範囲内）"})
 
     # --- staleness: has the system actually been updating? A running brain
     #     records equity on every decision and decides at least every 20h, so

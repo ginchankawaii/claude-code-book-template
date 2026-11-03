@@ -25,6 +25,10 @@ from app.strategies.trend import TrendRegimeStrategy
 
 
 def _actions(run_id: int) -> list[str]:
+    """The decision log, oldest first. A brain blocked on the lock writes
+    'FLAT' blocked-on-lock rows while the book may still be LONG; they are not
+    decisions (as in _last_decision_age_s), and counting them added two fake
+    position changes to 取引頻度 per blocked spell (Round-9)."""
     out = []
     for s in db.load_signals(run_id):
         if s.get("source") != "combined":
@@ -34,6 +38,8 @@ def _actions(run_id: int) -> list[str]:
             comp = json.loads(s["components"]) if s.get("components") else {}
         except (json.JSONDecodeError, TypeError):
             comp = {}
+        if comp.get("trigger") == "blocked-on-lock":
+            continue
         out.append(str(comp.get("action", "FLAT")))
     return out
 
@@ -242,9 +248,11 @@ def main() -> None:
     if rep["trades_per_year"] is not None:
         print(f" 建玉変化 {rep['n_position_changes']}回（年率 {rep['trades_per_year']:.0f}回）")
     print("-" * 60)
-    print(" 基準（バックテスト H1/SMA2400/5x）: "
-          f"CAGR+{monitor.EXP_CAGR_PCT:.0f}% / 最大DD {monitor.EXP_MAXDD_PCT:.0f}% / "
-          f"取引 約{monitor.EXP_TRADES_PER_YEAR:.0f}回/年")
+    print(" 基準（バックテスト H1 2015-26/SMA2400/線形ランプ5x・スワップ別）: "
+          f"年+{monitor.BT_CAGR_PCT:.0f}% / 最大DD {monitor.BT_MAXDD_PCT:.0f}%（警告線{monitor.EXP_MAXDD_PCT:.0f}%）/ "
+          f"建玉変化 約{monitor.BT_CHANGES_PER_YEAR:.0f}回/年")
+    print("   ※ 取引頻度・リターンは「同じ長さの期間のバックテスト」と比較。円安が続いた好条件の11年なので、"
+          "相場次第で下回りうる")
     print("-" * 60)
     for c in rep["checks"]:
         print(f"  {c['flag']} {c['name']:<6} {c['msg']}")
