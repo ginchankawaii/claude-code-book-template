@@ -81,10 +81,11 @@ def _current_strategy_signal(cfg: Settings, instrument: str, history_csv: str) -
               f"trend basis not computed; is the EA exporting?")
         return None
     age = _bars_age_h(candles)
-    if age is not None and age > bridge.MAX_BAR_AGE_H:
+    limit = bridge.max_bar_age_h(candles[-1].time)
+    if age is not None and age > limit:
         # The brain refuses these bars and goes blind; a trend basis from them
         # would describe a feed the system itself is not trading on (round-6f).
-        print(f"[monitor] bars are {age:.0f}h old (> {bridge.MAX_BAR_AGE_H:.0f}h): the brain "
+        print(f"[monitor] bars are {age:.0f}h old (> {limit:.0f}h): the brain "
               f"is blind on this feed — trend basis not computed")
         return None
     # The EA's last row is the still-forming bar; the brain decides on closed
@@ -282,7 +283,7 @@ def main() -> None:
     trend_basis = live_pos = None
     liveness = {"missing": False, "age_s": None, "legacy": False}
     brain = {"signal_age_s": None, "expired": None}
-    bars_age = bars_count = bars_need = None
+    bars_age = bars_count = bars_need = bars_limit = None
     if args.kind == "fx":
         cfg = Settings(granularity=args.granularity, trend_sma=args.sma)
         trend_basis = _current_strategy_signal(cfg, args.instrument, args.history)
@@ -291,6 +292,7 @@ def main() -> None:
         brain = _brain_liveness()
         _bars = bridge.read_bars(args.instrument, args.granularity)
         bars_age = _bars_age_h(_bars)
+        bars_limit = bridge.max_bar_age_h(_bars[-1].time) if _bars else None
         bars_count, bars_need = len(_bars), args.sma + 5
 
     rep = monitor.build_report(
@@ -300,6 +302,7 @@ def main() -> None:
         last_ai_binding=_last_ai_binding(rid), ea_build=_ea_build(),
         status_missing=liveness["missing"], ea_status_age_s=liveness["age_s"],
         bars_age_h=bars_age, bars_count=bars_count, bars_need=bars_need,
+        bars_limit_h=bars_limit,
         brain_signal_age_s=brain["signal_age_s"], signal_expired=brain["expired"],
         last_decision_age_s=_last_decision_age_s(rid), blocked_on_lock=_blocked_on_lock(rid),
         kind=args.kind,

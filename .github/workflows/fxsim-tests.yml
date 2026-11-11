@@ -1,0 +1,43 @@
+# Runs the fxsim test suite and the research-harness validations.
+# Until Round-10 the only check on this repository was a code-review job: no
+# push ever ran a test. This installs fxsim/requirements.txt exactly as the
+# Docker image does (same Python), so a broken or drifting dependency turns
+# this red before the owner rebuilds the live container.
+name: fxsim tests
+
+on:
+  pull_request:
+    paths:
+      - "fxsim/**"
+      - ".github/workflows/fxsim-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "fxsim/**"
+      - ".github/workflows/fxsim-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: fxsim
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"          # the Dockerfile's interpreter
+          cache: pip
+          cache-dependency-path: fxsim/requirements.txt
+      - name: Install the pinned dependencies
+        run: pip install -r requirements.txt
+      - name: Test suite
+        run: python -m pytest tests -q
+      - name: Research harness reproduces the engine (14 OK lines)
+        run: python -m scripts.research_harness
+      - name: Daily port reproduces the harness (4 OK lines)
+        run: python -m scripts.research_daily_port

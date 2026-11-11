@@ -973,3 +973,162 @@ def test_resident_loop_reenters_only_after_the_stop_bar_has_closed(tmp_path, mon
     if fault in (None, "torn_status"):
         stops = [r for r in db.load_signals(rid) if '"trigger": "stop"' in str(r.get("components"))]
         assert stops and '"reentry_bar": "' in str(stops[-1]["components"]), stops   # the mark was kept
+
+
+# ---- round-10: a weekend plus Christmas / New Year must not look like a dead feed ----
+# The 11-year tape holds closures of 76, 78 and 79 hours (bar open to bar open).
+# With the plain 75 h limit the brain went blind for the last hours of those and
+# a healthy long survived only on the grace + signal TTL; 2026-12-25 and
+# 2027-01-01 are Fridays, the 2015 calendar.
+
+def test_holiday_extra_covers_exactly_the_long_closures():
+    from datetime import timedelta
+    U = timezone.utc
+    extra = bridge.holiday_extra_h
+    assert extra(datetime(2015, 12, 24, 18, tzinfo=U), datetime(2015, 12, 27, 22, tzinfo=U)) == 24.0
+    assert extra(datetime(2017, 12, 22, 23, tzinfo=U), datetime(2017, 12, 26, 4, tzinfo=U)) == 24.0
+    assert extra(datetime(2026, 12, 31, 20, tzinfo=U), datetime(2027, 1, 3, 22, tzinfo=U)) == 24.0
+    assert extra(datetime(2026, 12, 24, 18), datetime(2026, 12, 27, 22)) == 24.0         # naive = UTC
+    assert extra(datetime(2026, 11, 6, 23, tzinfo=U), datetime(2026, 11, 9, 0, tzinfo=U)) == 0.0   # a weekend
+    assert extra(datetime(2026, 12, 28, 5, tzinfo=U), datetime(2026, 12, 31, 5, tzinfo=U)) == 0.0  # after it
+    assert extra(datetime(2026, 12, 25, 1, tzinfo=U), datetime(2026, 12, 25, 9, tzinfo=U)) == 0.0  # same day
+    assert extra(datetime(2027, 1, 5, tzinfo=U), datetime(2026, 12, 20, tzinfo=U)) == 0.0          # bar in the future
+    assert extra("2026-12-24", datetime(2026, 12, 27, tzinfo=U)) == 0.0                            # not a datetime
+    # bounded: a feed dead since before the holiday is still refused in the end
+    assert bridge.max_bar_age_h(datetime(2026, 12, 24, 18, tzinfo=U),
+                                datetime(2026, 12, 27, 22, tzinfo=U)) == 99.0
+
+
+def test_no_closure_in_the_tape_exceeds_the_limit():
+    # every market closure of the 11-year H1 tape, judged the way the brain judges it
+    from scripts import research_harness as H
+    t = H.pair_arrays("USD_JPY")["t"].reset_index(drop=True)
+    gap_h = t.diff().dt.total_seconds() / 3600.0
+    over_plain = over_new = 0
+    for i in gap_h[gap_h > 40].index:
+        last, reopen = t[i - 1].to_pydatetime(), t[i].to_pydatetime()
+        over_plain += gap_h[i] > bridge.MAX_BAR_AGE_H
+        over_new += gap_h[i] > bridge.max_bar_age_h(last, reopen)
+    assert over_plain == 3          # 76, 78 and 79 hours: the brain used to go blind
+    assert over_new == 0
+
+
+def test_load_bars_accepts_a_holiday_closure_and_still_refuses_a_dead_feed(monkeypatch):
+    from datetime import timedelta
+    from app.models import Candle
+
+    def feed(last):
+        return [Candle(instrument="USD_JPY", granularity="H1", time=last - timedelta(hours=130 - i),
+                       open=150.0, high=150.1, low=149.9, close=150.0) for i in range(131)]
+    U = timezone.utc
+
+    class _DT(datetime):
+        now_value = None
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.now_value
+    monkeypatch.setattr(R, "datetime", _DT)
+    # 77 h after a bar opened on 24 December: the Christmas closure
+    bars = feed(datetime(2026, 12, 24, 18, tzinfo=U))
+    monkeypatch.setattr(bridge, "read_bars", lambda *a, **k: bars)
+    _DT.now_value = datetime(2026, 12, 27, 23, tzinfo=U)
+    assert R._load_bars("USD_JPY", "H1", 90, "no-such-file.csv") is not None
+    _DT.now_value = datetime(2026, 12, 28, 22, tzinfo=U)            # 100 h: dead, holiday or not
+    assert R._load_bars("USD_JPY", "H1", 90, "no-such-file.csv") is None
+    # the same 77 h with no holiday inside is a dead feed
+    bars2 = feed(datetime(2026, 11, 5, 18, tzinfo=U))
+    monkeypatch.setattr(bridge, "read_bars", lambda *a, **k: bars2)
+    _DT.now_value = datetime(2026, 11, 8, 23, tzinfo=U)
+    assert R._load_bars("USD_JPY", "H1", 90, "no-such-file.csv") is None
+
+
+@pytest.mark.parametrize("holiday_aware", [True, False])
+def test_a_long_survives_the_christmas_closure(tmp_path, monkeypatch, holiday_aware):
+    """End to end through main(): LONG 0.08 lots, the market shuts on 24 December
+    18:00 (bar label) and the bars are 78.5 h old by the end of the run. The
+    heartbeat must keep its EXP alive throughout; with the plain limit it is
+    withheld from hour 75.5 and the EXP lapses (the EA then flattens at the
+    reopen) — that arm proves this test can see the failure."""
+    import sys as _sys
+    from datetime import timedelta
+    from app.models import Candle
+
+    class _Stop(BaseException):
+        pass
+
+    U = timezone.utc
+    last_bar = datetime(2026, 12, 24, 18, tzinfo=U)
+    clock = {"t": datetime(2026, 12, 24, 19, 30, tzinfo=U).timestamp()}
+    end = datetime(2026, 12, 28, 0, 30, tzinfo=U).timestamp()      # bars 78.5 h old
+    state = {"polls": 0}
+
+    class _FakeTime:
+        @staticmethod
+        def time():
+            return clock["t"]
+
+        @staticmethod
+        def sleep(s):
+            clock["t"] += s
+            state["polls"] += 1
+            if clock["t"] >= end or state["polls"] > 2000:
+                raise _Stop()
+
+    class _DT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromtimestamp(clock["t"], tz)
+
+    monkeypatch.setattr(R, "_time", _FakeTime)
+    monkeypatch.setattr(R, "datetime", _DT)
+    if not holiday_aware:
+        monkeypatch.setattr(bridge, "holiday_extra_h", lambda last, now=None: 0.0)
+    monkeypatch.setattr(R, "_acquire_brain_lock", lambda poll: tmp_path / "steady_brain.lock")
+    monkeypatch.setattr(R, "_touch_lock", lambda *a, **k: True)
+    monkeypatch.setattr(R, "_release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(R, "get_calendar", lambda *a, **k: type("C", (), {"for_instrument": lambda self, i: []})())
+
+    class _NoAI:
+        model = "none"
+
+        def __init__(self, *a, **k):
+            pass
+
+        def decide(self, ctx):
+            return _Dec(False, "long", 0.0)
+    monkeypatch.setattr(R, "AITrader", _NoAI)
+    dbp = str(tmp_path / "t.db")
+    monkeypatch.setattr(db.settings, "db_path", dbp)
+    db.init_db()
+
+    bars = [Candle(instrument="USD_JPY", granularity="H1", time=last_bar - timedelta(hours=130 - i),
+                   open=150.0 + i * 0.05, high=150.1 + i * 0.05, low=149.95 + i * 0.05,
+                   close=150.05 + i * 0.05) for i in range(131)]
+    seq0 = int(clock["t"]) - 5000
+    writes = []
+    monkeypatch.setattr(bridge, "read_bars", lambda *a, **k: bars)
+    monkeypatch.setattr(bridge, "read_status", lambda *a, **k: {
+        "balance": 272_000.0, "equity": 272_000.0, "position_lots": 0.08, "exec_seq": seq0,
+        "ea_time": int(clock["t"]), "build": bridge.EA_BUILD_EXPECTED})
+    standing = {"action": "LONG", "lots": 0.08, "seq": seq0, "sl": 150.0}
+    monkeypatch.setattr(bridge, "read_signal", lambda *a, **k: dict(standing))
+    monkeypatch.setattr(bridge, "write_signal",
+                        lambda action, lots, base=None, expires_at=None, sl=None, seq=None:
+                        writes.append((clock["t"], action, round(lots, 2), expires_at, seq)))
+    rid = db.create_run(mode="live", instrument="USD_JPY", granularity="H1", initial_balance=272_000.0,
+                        params={"system": "steady-ai", "model": "none", "max_risk": 0.04})
+    db.record_signal(rid, datetime.fromtimestamp(clock["t"] - 7200, U), "USD_JPY", "combined", 1, 0.0,
+                     "entry", {"action": "LONG", "trigger": "gate-entry", "stop_price": 150.0, "seq": seq0})
+    monkeypatch.setattr(_sys, "argv", ["run_ai_bridge.py", "--poll", "600", "--sma", "90"])
+    with pytest.raises(_Stop):
+        R.main()
+
+    assert writes and all(w[1] == "LONG" and w[2] == 0.08 and w[4] == seq0 for w in writes), writes[-3:]
+    last_exp = max(w[3] for w in writes)
+    if holiday_aware:
+        assert last_exp > end                       # the heartbeat never lapsed
+        gaps = [b[0] - a[0] for a, b in zip(writes, writes[1:])]
+        assert max(gaps) <= 1300, max(gaps)         # one beat per poll, all the way through
+    else:
+        assert last_exp < end                       # blind from hour 75: the EXP has lapsed

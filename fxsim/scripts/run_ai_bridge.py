@@ -132,10 +132,15 @@ def _load_bars(instrument: str, granularity: str, sma_n: int, history_csv: str):
     last_t = candles[-1].time
     if last_t.tzinfo is None:
         last_t = last_t.replace(tzinfo=timezone.utc)
-    age_h = (datetime.now(timezone.utc) - last_t).total_seconds() / 3600.0
-    if age_h > MAX_BAR_AGE_H:
-        print(f"[ai] bars STALE (last {last_t.isoformat()} = {age_h:.0f}h old, src={src}); "
-              f"refusing to trade on them", flush=True)
+    now_utc = datetime.now(timezone.utc)
+    age_h = (now_utc - last_t).total_seconds() / 3600.0
+    # A weekend plus Christmas or New Year keeps the market shut up to ~79 h:
+    # the limit stretches over exactly those closures (bridge.holiday_extra_h),
+    # so a healthy long is not failed safe at the reopen (Round-10).
+    limit_h = MAX_BAR_AGE_H + bridge.holiday_extra_h(last_t, now_utc)
+    if age_h > limit_h:
+        print(f"[ai] bars STALE (last {last_t.isoformat()} = {age_h:.0f}h old > {limit_h:.0f}h, "
+              f"src={src}); refusing to trade on them", flush=True)
         return None
     # Plausibility: quarantine an implausible last print instead of trading it.
     last_c, prev_c = float(candles[-1].close), float(candles[-2].close)

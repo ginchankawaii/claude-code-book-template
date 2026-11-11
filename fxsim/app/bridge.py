@@ -15,6 +15,7 @@ Both sides are build-independent and need no network.
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -31,6 +32,43 @@ EA_BUILD_EXPECTED = "r6e-status"
 # Bars older than this are refused by the brain (it goes blind); the operator's
 # instruments must judge the feed by the same rule (round-6f).
 MAX_BAR_AGE_H = 75.0
+# ... plus this when the closure since the newest bar spans 25 December or
+# 1 January, the two days the FX market is shut worldwide. A weekend is 49 h
+# (bar open to bar open) and a holiday weekend 73 h, but the 2015-26 tape holds
+# closures of 76, 78 and 79 h (2015-12-31, 2015-12-24, 2017-12-22): a weekend,
+# the holiday, and an early close or a late reopen. With the plain limit the
+# brain went blind for the last hours of those and a healthy long survived only
+# on the 30-min grace plus the 120-min signal TTL (about 20 minutes to spare at
+# 79 h); anything longer is flattened by the EA's fail-safe at the reopen.
+# 2026-12-25 and 2027-01-01 are Fridays — the 2015 calendar (Round-10).
+HOLIDAY_EXTRA_H = 24.0
+_SHUT_DAYS = ((12, 25), (1, 1))
+
+
+def holiday_extra_h(last_bar_time, now=None) -> float:
+    """HOLIDAY_EXTRA_H if a market holiday falls after the newest bar's date and
+    on or before today's, else 0. Naive times are UTC. A newest bar that is not
+    in the past earns nothing."""
+    now = now or datetime.now(timezone.utc)
+    if not isinstance(last_bar_time, datetime):
+        return 0.0
+    if last_bar_time.tzinfo is None:
+        last_bar_time = last_bar_time.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    day, end = last_bar_time.date() + timedelta(days=1), now.date()
+    for _ in range(8):                      # a closure is days, never weeks
+        if day > end:
+            break
+        if (day.month, day.day) in _SHUT_DAYS:
+            return HOLIDAY_EXTRA_H
+        day += timedelta(days=1)
+    return 0.0
+
+
+def max_bar_age_h(last_bar_time, now=None) -> float:
+    """The staleness limit for a feed whose newest bar opened at last_bar_time."""
+    return MAX_BAR_AGE_H + holiday_extra_h(last_bar_time, now)
 # A six-column EA rewrites its status every 30s; a row older than this means
 # the EA is not exporting (the brain's own liveness rule is "ea_time advances
 # between polls"; a one-shot instrument can only use age).

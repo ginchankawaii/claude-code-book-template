@@ -1,9 +1,15 @@
-fastapi>=0.110
-uvicorn[standard]>=0.29
-requests>=2.31
-pandas>=2.0
-numpy>=1.24
-jinja2>=3.1
-anthropic>=0.40
-httpx>=0.27
-pytest>=8.0
+# Exact pins (Round-10). `docker compose up -d --build` used to resolve "latest"
+# on every rebuild, so the live money path could change under the owner without
+# a line of this repository changing. These are the versions the test suite and
+# the research harness are validated on; .github/workflows/fxsim-tests.yml
+# installs exactly this file on the Dockerfile's Python for every push. Raise a
+# pin deliberately, with the tests green — never by rebuilding.
+fastapi==0.156.4
+uvicorn[standard]==0.54.0
+requests==2.34.2
+pandas==3.0.6
+numpy==2.4.6
+jinja2==3.1.6
+anthropic==1.17.0
+httpx==0.28.1
+pytest==9.1.1

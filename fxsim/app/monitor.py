@@ -154,6 +154,7 @@ def build_report(*, initial_balance: float, equity_values: list[float],
                  bars_age_h: float | None = None,
                  bars_count: int | None = None,
                  bars_need: int | None = None,
+                 bars_limit_h: float | None = None,
                  brain_signal_age_s: float | None = None,
                  signal_expired: bool | None = None,
                  last_decision_age_s: float | None = None,
@@ -327,10 +328,12 @@ def build_report(*, initial_balance: float, equity_values: list[float],
                        "msg": f"バーが{bars_count}本（{bars_need}本必要）：脳はこのフィードで判断できず盲目→"
                               f"心拍停止→EAがEXPで決済する状態 → MT5でUSDJPYのH1チャートを開いてHomeで履歴を"
                               f"遡る／EAの InpBars≥2500 を確認（docs/AI_TRADER.md）"})
-    elif bars_age_h is not None and bars_age_h > MAX_BAR_AGE_H:
+    elif bars_age_h is not None and bars_age_h > (bars_limit_h or MAX_BAR_AGE_H):
+        # bars_limit_h: the brain's own limit for THIS feed (longer over a
+        # Christmas / New Year closure — bridge.max_bar_age_h, Round-10)
         bridge_stale = True
         checks.append({"name": "バー鮮度", "flag": RED,
-                       "msg": f"バーが{bars_age_h:.0f}時間前で止まっている（>{MAX_BAR_AGE_H:.0f}h）：脳はこの"
+                       "msg": f"バーが{bars_age_h:.0f}時間前で止まっている（>{bars_limit_h or MAX_BAR_AGE_H:.0f}h）：脳はこの"
                               f"フィードを拒否して盲目→心拍停止→EAがEXPで決済する状態 → EAの配信を確認"})
 
     # --- EA build: every fix that lives in the EA exists only if the chart
