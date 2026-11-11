@@ -5,7 +5,7 @@ cannot drive a parameter sweep. This module replays the SAME rules in one linear
 pass. It has been lost twice to a wiped scratch directory; it lives in the repo
 now, and it must be re-validated before any number it produces is trusted:
 
-    python -m scripts.research_harness          # prints VALIDATE lines
+    python -m scripts.research_harness          # prints VALIDATE lines (14, all OK)
 
 Every VALIDATE line must reproduce the documented references (docs/RESEARCH.md):
     flat 5x cap               12.4 / 34.2 / 0.58 / 219
@@ -383,13 +383,6 @@ def _vs_engine(pair: str, verbose: bool) -> bool:
     return hit
 
 
-if __name__ == "__main__":
-    ok = validate()
-    print()
-    ok &= validate_ls()
-    raise SystemExit(0 if ok else 1)
-
-
 # Approximate year-average central-bank policy rates, % (public history, from
 # general knowledge — NOT a data feed; every carry result must be shown with a
 # sensitivity, including carry=0). Retail swap = differential minus a markup.
@@ -424,3 +417,155 @@ def carry_arrays(pair: str, a: dict | None = None, markup: float = 0.005,
                       - rates[min(max(y, 2015), 2026)][_CCY[quote]]) / 100.0 for y in yrs])
     diff = diff + shift
     return diff - markup, -diff - markup
+
+
+# --------------------------------------------------------------------------- #
+# Round-10: confirmed scale-in (the entry-size lottery)
+# --------------------------------------------------------------------------- #
+def sim_scalein(n_sma: int = 2400, *, cap=5.0, ramp_mult=1.5, ramp_pow=1.0, gate_bars=None,
+                policy: str = "reanchor", hyst=1.2, max_topups=1, risk=0.04, spread=0.8,
+                comm=0.0, max_units=None, bal0=500_000.0, stop_atr=1.5, carry=None,
+                i0=None, i1=None, a=None, keep_trades=False) -> dict:
+    """Production long-only, with an optional one-time scale-in once the trend
+    is confirmed. gate_bars=None reproduces sim() exactly.
+
+    Why (docs/RESEARCH.md Round-10): the size is frozen at the entry bar's ramp
+    value, so the same 2021-09 trend was held at 5.0x with SMA2400 and at 1.0x
+    with SMA2500 — the headline is a draw from a lottery on that one bar.
+
+    Scale-in rule, evaluated at each closed bar while long and the close is
+    above the SMA: if the up-regime is at least `gate_bars` bars old (age =
+    consecutive closes above the SMA, this bar included) and this position has
+    been topped up fewer than `max_topups` times, compute the ramp's target on
+    CURRENT equity; if target >= hyst * held units, buy the difference at the
+    close (+ half spread).
+      policy "reanchor": target = min(eq*risk/sd, lev*eq/price), sd = 1.5 ATR;
+                         the stop of the WHOLE position moves to fill - sd
+                         (what a stop-out and re-entry does by accident).
+      policy "keep":     the stop stays; target = min(eq*risk/(fill - stop),
+                         lev*eq/price), i.e. the total loss to the existing
+                         stop stays within the risk budget.
+    ramp_mult=None = flat cap. carry: scalar or per-bar annual swap fraction."""
+    a = a or arrays()
+    cl, hi, lo, at, t = a["cl"], a["hi"], a["lo"], a["atr"], a["t"]
+    n = len(cl)
+    i0 = WARMUP if i0 is None else i0
+    i1 = n if i1 is None else i1
+    hs = spread * PIP / 2.0
+    m = sma(n_sma, a)
+    up = cl > m                                    # False where the SMA is NaN
+    if ramp_mult is None:
+        levs = np.full(n, float(cap))
+    else:
+        levs = dyn_lev(ramp_mult, 1.0, cap, ramp_pow, n_sma, a)
+    age = np.zeros(n, dtype=np.int64)
+    run = 0
+    for i in range(n):
+        run = run + 1 if up[i] else 0
+        age[i] = run
+    cy = np.broadcast_to(np.asarray(carry if carry is not None else 0.0, float), (n,))
+    hours = t.diff().dt.total_seconds().fillna(3600).to_numpy() / 3600.0
+    bal, units, entry, stop = float(bal0), 0, 0.0, 0.0
+    trades, held, topups, n_top = 0, 0, 0, 0
+    eqs = np.empty(i1 - i0)
+    log = [] if keep_trades else None
+    cur = None
+
+    def cm(u):
+        return abs(u) / 1_000_000.0 * comm
+
+    def close_at(fill, i, why):
+        nonlocal bal, units, trades, cur, topups
+        pnl = units * (fill - entry) - cm(units)
+        bal += pnl
+        if log is not None:
+            cur.update(exit_t=t[i], exit=fill, pnl=pnl, why=why, ret=pnl / cur["bal"] * 100)
+            log.append(cur)
+            cur = None
+        units = 0
+        topups = 0
+        trades += 1
+
+    for k, i in enumerate(range(i0, i1)):
+        price = cl[i]
+        av = at[i] if not math.isnan(at[i]) else PIP * 10
+        if units and stop_atr is not None and lo[i] <= stop:
+            close_at(stop - hs, i, "stop")
+        if units == 0:
+            if up[i]:
+                sd = max(av * stop_atr, PIP * 5)
+                u = int(bal * risk / sd)
+                if max_units is not None:
+                    u = min(u, max_units)
+                L = float(levs[i])
+                if L > 0 and price > 0:
+                    u = min(u, int(L * bal / price))
+                if u > 0:
+                    entry = price + hs
+                    stop = entry - sd
+                    bal -= cm(u)
+                    units = u
+                    if log is not None:
+                        cur = dict(entry_t=t[i], entry=entry, lev=u * price / bal, bal=bal,
+                                   age=int(age[i]), topups=0, lev_after=u * price / bal)
+        elif not up[i]:
+            close_at(price - hs, i, "trend")
+        elif gate_bars is not None and age[i] >= gate_bars and topups < max_topups:
+            eq = bal + units * (price - entry)
+            fill = price + hs
+            L = float(levs[i])
+            if policy == "reanchor":
+                sd = max(av * stop_atr, PIP * 5)
+                tgt = int(eq * risk / sd)
+            else:
+                dist = fill - stop
+                tgt = int(eq * risk / dist) if dist > 0 else 0
+            if max_units is not None:
+                tgt = min(tgt, max_units)
+            if L > 0 and price > 0:
+                tgt = min(tgt, int(L * eq / price))
+            if tgt >= hyst * units and tgt > units:
+                add = tgt - units
+                entry = (entry * units + fill * add) / tgt
+                bal -= cm(add)
+                units = tgt
+                if policy == "reanchor":
+                    stop = fill - sd
+                topups += 1
+                n_top += 1
+                if log is not None:
+                    cur["topups"] += 1
+                    cur["lev_after"] = units * price / eq
+        if units:
+            held += 1
+            if cy[i]:
+                bal += units * price * cy[i] * hours[i] / (365.0 * 24.0)
+        eqs[k] = bal + units * (price - entry)
+    if units:
+        close_at(cl[i1 - 1] - hs, i1 - 1, "end")
+    out = stats(eqs, t[i0], t[i1 - 1], bal, trades, bal0, held, log)
+    out["n_topups"] = n_top
+    return out
+
+
+def validate_scalein(verbose: bool = True) -> bool:
+    """With the scale-in off, sim_scalein must equal the four references."""
+    ok = True
+    for name, (want, spec) in REFERENCES.items():
+        lv = spec["lev"]
+        st = sim_scalein(2400, ramp_mult=None if lv is None else lv[1],
+                         ramp_pow=1.0 if lv is None else lv[3], comm=50.0, max_units=100_000)
+        got = (st["cagr"], st["mdd"], st["sharpe"], st["trades"])
+        ok &= got == want
+        if verbose:
+            print(f"VALIDATE_SCALEIN off {name:<7} {got} want {want}", "OK" if got == want else "MISMATCH")
+    return ok
+
+
+if __name__ == "__main__":
+    ok = validate()
+    print()
+    ok &= validate_ls()
+    print()
+    ok &= validate_scalein()
+    raise SystemExit(0 if ok else 1)
