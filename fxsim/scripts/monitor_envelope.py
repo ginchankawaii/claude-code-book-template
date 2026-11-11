@@ -31,6 +31,15 @@ and each exit, so a stop-out and its re-entry are two. Returns are simple
 returns over the window WITHOUT swap (the live account earns swap, so this
 errs toward fewer false alarms).
 
+The reference is the NEIGHBOURHOOD, not the single live path (Round-10). The
+size a whole trend is held at is a draw on its entry bar: the 2021-22 trend was
+held at 5.0x with SMA2400 and at 1.0x with SMA2500, so SMA2400's own 15.3%/yr
+is the top of the draw (5th of 81 neighbouring lengths; the nine lengths
+2000..2800 average 9.3%, and earn about zero from 2015-01 to 2021-09). A band
+built from the SMA2400 path alone would call the next, ordinary draw
+under-performance. The tables therefore cover the close cadence at all nine
+lengths plus the closed-bar live cadence at the live length.
+
 Each table row covers the spans from its own up to the next row's, and holds
 the EXTREME over every whole-day span in that interval (no interpolation can
 then understate the backtest's worst — the Round-9 review found 🔴 at spans
@@ -54,7 +63,8 @@ if str(FXSIM) not in sys.path:
 
 from scripts import research_harness as H  # noqa: E402
 
-N_SMA = 2400
+N_SMA = 2400                          # the live length
+NEIGHBOURHOOD = tuple(range(2000, 2801, 100))
 RISK, STOP_ATR, CAP = 0.04, 1.5, 5.0
 HS = 0.8 * 0.01 / 2.0                 # half of the 0.8-pip spread
 LIVE_POLL_MIN, LIVE_COOLDOWN_MIN = 10, 15
@@ -74,8 +84,7 @@ def _arrays() -> dict:
         t = a["t"].dt.tz_convert("UTC").dt.tz_localize(None).to_numpy()
         _cache["a"] = dict(cl=a["cl"], hi=a["hi"], lo=a["lo"], atr=a["atr"],
                            op=df["open"].to_numpy(float), t=t,
-                           sec=t.astype("datetime64[s]").astype(np.int64),
-                           sma=H.sma(N_SMA, a))
+                           sec=t.astype("datetime64[s]").astype(np.int64), src=a)
     return _cache["a"]
 
 
@@ -95,14 +104,15 @@ def _ramp(price: float, sma: float, atr: float) -> float:
     return 1.0 + (CAP - 1.0) * min(max((price - sma) / (STOP_ATR * atr), 0.0), 1.0)
 
 
-def replay(cadence: str = "close", phase_min: int = 5) -> dict:
+def replay(cadence: str = "close", phase_min: int = 5, n_sma: int = N_SMA) -> dict:
     """Production long-only. cadence: "close" (the backtest), "closedbar" (the
     live brain since Round-9: closed-bar signal at 10-min polls, re-entry after
     a stop only once the stop's bar has closed), "live" (the live brain before
     Round-9: the forming bar at 10-min polls). Returns per-bar equity (from
     H.WARMUP), the bar times, the change times, trades and the final balance."""
     A = _arrays()
-    cl, hi, lo, op, atr, sma, t, sec = (A[k] for k in ("cl", "hi", "lo", "op", "atr", "sma", "t", "sec"))
+    cl, hi, lo, op, atr, t, sec = (A[k] for k in ("cl", "hi", "lo", "op", "atr", "t", "sec"))
+    sma = H.sma(n_sma, A["src"])
     n = len(cl)
     bal, u, entry, stop = 500_000.0, 0, 0.0, 0.0
     last_gate = -1e18
@@ -140,7 +150,7 @@ def replay(cadence: str = "close", phase_min: int = 5) -> dict:
                         changes.append(sec[i] + 3600)
             eqs[k] = bal + u * (c - entry)
             continue
-        prev_sum = sma[i] * N_SMA - c if not math.isnan(sma[i]) else math.nan
+        prev_sum = sma[i] * n_sma - c if not math.isnan(sma[i]) else math.nan
         av = atr[i - 1] if not math.isnan(atr[i - 1]) else 0.1      # last CLOSED bar's ATR
         fprev = 0.0
         if u and o <= stop:                                          # gap through the SL
@@ -171,7 +181,7 @@ def replay(cadence: str = "close", phase_min: int = 5) -> dict:
                     continue
             else:
                 # today's live loop: the forming bar against an SMA including it
-                s_now = (prev_sum + p) / N_SMA
+                s_now = (prev_sum + p) / n_sma
                 up = p > s_now
                 lev_px, lev_ma = p, s_now
             if u and not up:
@@ -214,19 +224,25 @@ def window_returns(r: dict, span_days: int) -> np.ndarray:
     return (r["eq"][ks[ok]] / r["eq"][j] - 1.0) * 100.0
 
 
-def runs(phases=LIVE_PHASES) -> list[dict]:
-    """The cadences the envelopes are built from: the backtest and the live
-    brain since Round-9. NOT the forming-bar brain before it: widening the
-    tables to cover that defect made the monitor blind to the very defect
-    (a regression to ~100 changes/yr read 🟢 — second review). run_monitor
-    judges only the part of a run made by the closed-bar brain instead."""
-    return [replay("close")] + [replay("closedbar", p) for p in phases]
+def runs(phases=LIVE_PHASES, lengths=NEIGHBOURHOOD) -> tuple[list[dict], list[dict]]:
+    """(count_runs, return_runs).
+
+    Position changes are a property of the SIGNAL at the live length, so their
+    envelope comes from SMA2400 alone (backtest + closed-bar live cadence): a
+    shorter SMA simply crosses more often, and including it would hide a real
+    excess. RETURNS depend on the leverage draw (module docstring), so their
+    envelope adds the backtest at every neighbouring length.
+    Never the forming-bar brain before Round-9: widening the tables to cover
+    that defect made the monitor blind to it (~100 changes/yr read 🟢)."""
+    live = [replay("close")] + [replay("closedbar", p) for p in phases]
+    family = [replay("close", n_sma=n) for n in lengths if n != N_SMA]
+    return live, live + family
 
 
-def build(rs: list[dict]) -> tuple[tuple, tuple]:
+def build(count_runs: list[dict], return_runs: list[dict]) -> tuple[tuple, tuple]:
     """Step tables: each row holds the extreme over every whole-day span from
     its own to the next row's (exclusive); the last row is its span alone."""
-    def rows_for(table, fn, agg):
+    def rows_for(table, fn, agg, rs):
         out = []
         for a_, b_ in zip(table, table[1:] + (table[-1] + 1,)):
             vals = [fn(r, s) for r in rs for s in range(a_, b_)]
@@ -241,8 +257,8 @@ def build(rs: list[dict]) -> tuple[tuple, tuple]:
         return (round(float(min(np.percentile(v, 10) for v in vals if len(v))) - 0.05, 1),
                 round(float(min(v.min() for v in vals if len(v))) - 0.05, 1))
 
-    chg = rows_for(CHANGE_ROWS, window_counts, chg_agg)
-    ret = rows_for(RETURN_ROWS, window_returns, ret_agg)
+    chg = rows_for(CHANGE_ROWS, window_counts, chg_agg, count_runs)
+    ret = rows_for(RETURN_ROWS, window_returns, ret_agg, return_runs)
     # A longer window is never judged more strictly than a shorter one: the
     # worst over spans up to W is the running minimum (else a -26.5% drawdown
     # that merely stayed flat for 25 more days flipped 🟡 to 🔴 at day 545 —
@@ -272,16 +288,19 @@ def main() -> int:
     if not validate():
         return 1
     rs = runs()
-    yrs = (rs[0]["t"][-1] - rs[0]["t"][0]) / np.timedelta64(1, "D") / 365.25
-    names = ["close"] + [f"closedbar p{p}" for p in LIVE_PHASES]
+    yrs = (rs[0][0]["t"][-1] - rs[0][0]["t"][0]) / np.timedelta64(1, "D") / 365.25
+    count_runs, return_runs = rs
+    names = (["close SMA2400"] + [f"closedbar p{p}" for p in LIVE_PHASES]
+             + [f"close SMA{n} (returns only)" for n in NEIGHBOURHOOD if n != N_SMA])
     old = [replay("live", p) for p in LIVE_PHASES]          # comparison only
-    for r, name in zip(rs + old, names + [f"forming-bar p{p} (pre-fix, not in tables)" for p in LIVE_PHASES]):
+    for r, name in zip(return_runs + old,
+                       names + [f"forming-bar p{p} (pre-fix, not in tables)" for p in LIVE_PHASES]):
         cagr = ((r["final"] / 500_000.0) ** (1 / yrs) - 1) * 100
         eq = r["eq"]
         mdd = float(np.max(1 - eq / np.maximum.accumulate(eq)) * 100)
-        print(f"# {name:13s}: CAGR {cagr:5.1f}% maxDD {mdd:4.1f}% "
+        print(f"# {name:42s}: CAGR {cagr:5.1f}% maxDD {mdd:4.1f}% "
               f"{len(r['changes']) / yrs:5.1f} position changes/yr")
-    chg, ret = build(rs)
+    chg, ret = build(count_runs, return_runs)
     print("ENVELOPE_CHANGES = (   # (from span_days, p90 count, max count)")
     for row in chg:
         print(f"    {row},")

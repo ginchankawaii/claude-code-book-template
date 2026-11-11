@@ -227,11 +227,14 @@ def test_production_never_reads_red_on_its_own_behaviour():
     # it made the monitor blind to that very defect) — it must not read GREEN.
     import numpy as np
     from scripts import monitor_envelope as ME
-    runs = {"close": ME.replay("close"), "closedbar": ME.replay("closedbar", 5)}
+    runs = {"close": ME.replay("close"), "closedbar": ME.replay("closedbar", 5),
+            # the neighbourhood: an ordinary unlucky draw must not read RED on return (Round-10)
+            "close2500": ME.replay("close", n_sma=2500), "close2600": ME.replay("close", n_sma=2600),
+            "close2000": ME.replay("close", n_sma=2000), "close2800": ME.replay("close", n_sma=2800)}
     for name, r in runs.items():
         yellow = n = 0
         for W in range(30, 1501, 7):
-            counts = ME.window_counts(r, W)
+            counts = ME.window_counts(r, W) if name in ("close", "closedbar") else np.array([], dtype=int)
             rets = ME.window_returns(r, W) if W >= 60 else np.array([])
             for c in np.unique(counts):
                 rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 1.0],
@@ -245,7 +248,8 @@ def test_production_never_reads_red_on_its_own_behaviour():
                                            span_days=float(W), actions=["LONG"])
                 f = next(x for x in rep["checks"] if x["name"] == "リターン")["flag"]
                 assert f != RED, (name, W, float(v))
-        assert yellow / n < 0.12, (name, yellow / n)
+        if n:
+            assert yellow / n < 0.12, (name, yellow / n)
     forming = ME.replay("live", 5)
     counts = ME.window_counts(forming, 365)
     flagged = sum(next(x for x in monitor.build_report(
@@ -440,3 +444,41 @@ def test_live_page_health_names_a_fresh_lock_wait(monkeypatch):
     assert "BLOCKED" in (server._fresh_lock_wait(7) or "")
     rows[0]["time"] = (now - timedelta(hours=3)).isoformat()          # the wait has ended
     assert server._fresh_lock_wait(7) is None
+
+
+# ---- round-10: the expectation is the neighbourhood, not the lucky path -----
+
+def test_expectation_shown_is_the_neighbourhood_not_the_lucky_path():
+    # SMA2400's own 15.3%/yr is the top of the entry-size draw (5th of 81 lengths)
+    assert monitor.BT_CAGR_PCT < 10 and monitor.BT_CAGR_RANGE == (2.8, 15.3)
+    assert abs(monitor.EXP_MAXDD_PCT - monitor.BT_MAXDD_PCT) < 0.5     # the alarm line = the worst neighbour
+
+
+def test_an_ordinary_unlucky_draw_is_not_under_performance():
+    # 2015-01..2021-09: the nine lengths average about zero for 6.7 years; a flat
+    # account after four years must not read RED, and a run like SMA2500's
+    # (the 2021-22 trend held at 1x) must not read RED at any span
+    def flag(span, ret):
+        rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 1 + ret / 100],
+                                   span_days=float(span), actions=["LONG"])
+        return next(x for x in rep["checks"] if x["name"] == "リターン")["flag"]
+    assert flag(1460, 0.0) == GREEN
+    assert flag(1460, -15.0) != RED
+    assert flag(365, -20.0) != RED
+    assert flag(365, -45.0) == RED           # far beyond every length's worst year
+
+
+def test_current_entry_reports_the_draw(monkeypatch):
+    import json as _json
+    from scripts import run_monitor
+    def row(day, action, **comp):
+        return {"source": "combined", "time": f"2026-11-{day:02d}T00:00:00+00:00",
+                "components": _json.dumps({"action": action, **comp})}
+    rows = [row(1, "LONG", eff_leverage=5.0, target_lots=0.08), row(2, "FLAT", trigger="stop"),
+            row(3, "LONG", eff_leverage=1.3, target_lots=0.02, trigger="gate-entry"),
+            row(4, "FLAT", trigger="blocked-on-lock"), row(5, "LONG", eff_leverage=1.3, target_lots=0.02)]
+    monkeypatch.setattr(run_monitor.db, "load_signals", lambda rid: rows)
+    e = run_monitor._current_entry(1)
+    assert e["eff_leverage"] == 1.3 and e["lots"] == 0.02 and e["time"].startswith("2026-11-03")
+    rows.append(row(6, "FLAT", trigger="gate-exit"))
+    assert run_monitor._current_entry(1) is None

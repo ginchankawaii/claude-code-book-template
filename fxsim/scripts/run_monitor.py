@@ -41,6 +41,31 @@ def _timed_actions(run_id: int) -> list[tuple[str, str]]:
     return out
 
 
+def _current_entry(run_id: int) -> dict | None:
+    """The decision that opened the position the log currently holds: the first
+    LONG row of the newest unbroken run of LONG decisions. Its ramp value is the
+    draw this whole holding is sized by (Round-10), so the owner should see it."""
+    entry = None
+    prev_long = False
+    for s in db.load_signals(run_id):
+        if s.get("source") != "combined":
+            continue
+        try:
+            comp = json.loads(s["components"]) if s.get("components") else {}
+        except (json.JSONDecodeError, TypeError):
+            comp = {}
+        if comp.get("trigger") == "blocked-on-lock":
+            continue
+        is_long = str(comp.get("action", "FLAT")).upper() == "LONG"
+        if is_long and not prev_long:
+            entry = {"time": str(s.get("time")), "eff_leverage": comp.get("eff_leverage"),
+                     "lots": comp.get("target_lots")}
+        if not is_long:
+            entry = None
+        prev_long = is_long
+    return entry
+
+
 def _actions(run_id: int) -> list[str]:
     """The decision log, oldest first. A brain blocked on the lock writes
     'FLAT' blocked-on-lock rows while the book may still be LONG; they are not
@@ -314,16 +339,24 @@ def main() -> None:
     print("=" * 60)
     print(f" 稼働 {span:.0f}日 ｜ 初期 ¥{bal0:,.0f} → 現在 ¥{eq:,.0f} ({s['return_pct']:+.1f}%)")
     print(f" 現在DD {s['cur_dd_pct']:.1f}% ｜ 期間中最大DD {s['max_dd_pct']:.1f}%")
+    held = _current_entry(rid) if (args.kind == "fx" and live_pos == "LONG") else None
+    if held and held.get("eff_leverage") is not None:
+        print(f" 今の建玉：{float(held.get('lots') or 0):.2f}ロット ｜ 建てた時のランプ倍率 "
+              f"{float(held['eff_leverage']):.1f}倍（1〜5倍。この倍率のまま決済まで持つ）"
+              f" ｜ {held['time'][:16]} 建て")
     tpy = rep["trades_per_year"]                          # annualised only from 365 days
     print(f" 建玉変化（全期間） {rep['n_position_changes']}回／{span:.0f}日"
           + (f"（年率 {tpy:.0f}回）" if tpy is not None else ""))
     print("-" * 60)
     if args.kind == "fx":
-        print(" 基準（バックテスト H1 2015-26/SMA2400/線形ランプ5x・スワップ別）: "
-              f"年+{monitor.BT_CAGR_PCT:.0f}% / 最大DD {monitor.BT_MAXDD_PCT:.0f}%（警告線{monitor.EXP_MAXDD_PCT:.0f}%）/ "
-              f"建玉変化 約{monitor.BT_CHANGES_PER_YEAR:.0f}回/年")
+        lo_, hi_ = monitor.BT_CAGR_RANGE
+        print(" 基準（バックテスト H1 2015-26・平均線の長さ9通り・スワップ別）: "
+              f"年+{monitor.BT_CAGR_PCT:.0f}%前後（{lo_:.0f}〜{hi_:.0f}%） / 最大DD 29%前後"
+              f"（最悪{monitor.BT_MAXDD_PCT:.0f}%＝警告線） / 建玉変化 約{monitor.BT_CHANGES_PER_YEAR:.0f}回/年")
+        print(f"   ※ 本番SMA2400単独の+{hi_:.0f}%は最上位の引き。建玉の倍率（1〜5倍）は建てた足で決まり、"
+              "大きなトレンドを何倍で持てるかで結果が大きく変わる。2015年〜2021年9月は9通りの平均でほぼ0%")
         print("   ※ 取引頻度・リターンは確定足方式（2026-11修正）の判断以降の区間だけを、同じ長さの期間の"
-              "バックテスト／確定足リプレイと比較。円安が続いた好条件の11年なので、相場次第で下回りうる")
+              "バックテスト／確定足リプレイと比較（リターンは9通り、回数はSMA2400）")
     print("-" * 60)
     for c in rep["checks"]:
         print(f"  {c['flag']} {c['name']:<6} {c['msg']}")

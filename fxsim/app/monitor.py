@@ -25,31 +25,40 @@ from .bridge import (BRAIN_SIGNAL_STALE_S, EA_BUILD_EXPECTED,
 import math
 from datetime import datetime
 
-# Production's own backtest — what the operator is shown as the expectation
-# (H1 2015-01..2026-06, USD/JPY long-only, SMA2400, linear ramp 1.5 ATR, 5x
-# cap, no swap; docs/RESEARCH.md Round-4/9). Before Round-9 these were the
-# flat-5x recipe's numbers (12.4%/yr, 20 trades/yr).
-BT_CAGR_PCT = 15.3
-BT_MAXDD_PCT = 26.7
-BT_CHANGES_PER_YEAR = 38.3       # entries + exits; a stop-out and its re-entry are two
+# What the operator is shown as the expectation (H1 2015-01..2026-06, USD/JPY
+# long-only, linear ramp 1.5 ATR, 5x cap, no swap). NOT SMA2400's own 15.3%/yr:
+# the size a whole trend is held at is a draw on its entry bar (the 2021-22
+# trend: 5.0x at SMA2400, 1.0x at SMA2500), and 15.3% is the top of that draw —
+# 5th of 81 neighbouring lengths. The nine lengths 2000..2800 average 9.3%
+# (2.8-15.3), with about zero from 2015-01 to 2021-09, and a 29% mean / 34%
+# worst drawdown (docs/RESEARCH.md Round-10). Before Round-9 these were the
+# flat-5x recipe's numbers; before Round-10, the lucky path's.
+BT_CAGR_PCT = 9.3                # neighbourhood mean
+BT_CAGR_RANGE = (2.8, 15.3)      # neighbourhood min .. max (max = the live length's own path)
+BT_MAXDD_PCT = 33.9              # neighbourhood worst (mean 29.4; the live path's own 26.7)
+BT_CHANGES_PER_YEAR = 38.3       # at the live length; entries + exits, a stop-out and its re-entry are two
 
-# Drawdown alarm line: RED above it, YELLOW above 75% of it. The backtest's
-# worst is BT_MAXDD_PCT; the daily-bar proxy of 1995-2014 reached 51.5%
-# under the same rules (Round-9), so RED here means "outside the tested
-# envelope — review the size", not necessarily "broken".
+# Drawdown alarm line: RED above it, YELLOW above 75% of it. It sits at the
+# neighbourhood's worst (BT_MAXDD_PCT); the daily-bar proxy of 1995-2014
+# reached 51.5% under the same rules (Round-9), so RED here means "outside the
+# tested envelope — review the size", not necessarily "broken".
 EXP_MAXDD_PCT = 34.0
 
 # Span-aware envelopes (`python -m scripts.monitor_envelope`; re-run it
-# whenever production changes). A live run of N days is judged against what
-# production did over windows of the SAME length. Both quantities are bursty —
-# a whipsaw week near the SMA is normal — so the single annualised
-# expectations used before Round-9 read normal behaviour 🔴 in 36-39% of 60-90
-# -day windows. Each row covers the spans up to the next row and holds the
-# EXTREME over every whole-day span in between (a step, never interpolated).
-# Built from the backtest and the CLOSED-BAR live brain (Round-9) only — never
-# from the forming-bar brain before it (~85-100 changes/yr, 3-9%/yr replayed):
-# including that defect made the monitor blind to it. A run that began before
-# the fix is judged only from its first closed-bar decision (run_monitor).
+# whenever production changes). A live run of N days is judged against windows
+# of the SAME length. Both quantities are bursty — a whipsaw week near the SMA
+# is normal — so the single annualised expectations used before Round-9 read
+# normal behaviour 🔴 in 36-39% of 60-90-day windows. Each row covers the spans
+# up to the next row and holds the EXTREME over every whole-day span in between
+# (a step, never interpolated).
+#   CHANGES: the live length only (backtest + closed-bar live cadence) — a
+#     count is a property of the signal, and a shorter SMA just crosses more.
+#   RETURN: the backtest at all nine neighbouring lengths as well — the return
+#     depends on the leverage draw, and a band from the lucky SMA2400 path
+#     alone would call the next ordinary draw under-performance (Round-10).
+# Never the forming-bar brain before Round-9 (~85-100 changes/yr, 3-9%/yr
+# replayed): including that defect made the monitor blind to it. A run that
+# began before the fix is judged only from its first closed-bar decision.
 ENVELOPE_CHANGES = (     # (from span_days, p90 count, max count)
     (30, 16, 32), (45, 19, 45), (60, 21, 48), (75, 27, 48), (90, 31, 64),
     (120, 39, 64), (150, 45, 64), (180, 51, 77), (240, 64, 88), (300, 68, 93),
@@ -59,11 +68,11 @@ ENVELOPE_CHANGES = (     # (from span_days, p90 count, max count)
 )
 ENVELOPE_RETURN = (      # (from span_days, p10 return %, worst return %), no swap;
     # worst = running minimum over spans: a longer window is never stricter
-    (60, -5.4, -15.6), (75, -5.5, -16.4), (90, -5.9, -18.1), (120, -6.5, -19.9),
-    (150, -6.5, -21.5), (180, -6.7, -22.0), (240, -6.9, -22.0), (300, -7.0, -22.0),
-    (365, -8.0, -22.0), (450, -8.1, -27.3), (545, -8.6, -27.3), (640, -9.7, -27.3),
-    (730, -10.4, -27.3), (910, -10.8, -27.3), (1095, -11.1, -27.3),
-    (1280, -2.5, -27.3), (1460, 1.7, -27.3),
+    (60, -6.9, -20.8), (75, -7.2, -20.8), (90, -7.8, -20.8), (120, -8.8, -26.8),
+    (150, -9.5, -28.6), (180, -10.6, -28.6), (240, -10.6, -28.6), (300, -11.9, -28.6),
+    (365, -13.1, -28.6), (450, -12.9, -31.7), (545, -10.6, -31.7), (640, -10.6, -31.7),
+    (730, -12.9, -31.7), (910, -15.0, -31.7), (1095, -17.1, -31.7),
+    (1280, -18.2, -31.7), (1460, -17.0, -31.7),
 )
 CHANGES_RED_MARGIN = 1.25        # RED only well beyond the backtest's busiest window
 RETURN_RED_MARGIN_PP = 5.0       # ... or well below its worst (at least 5pp / 25%)
@@ -183,13 +192,13 @@ def build_report(*, initial_balance: float, equity_values: list[float],
         checks.append({"name": "ドローダウン", "flag": YELLOW,
                        "msg": f"最大DD {mdd:.1f}%（観察{span_days:.0f}日・判定はもう少し先）"})
     elif mdd > EXP_MAXDD_PCT:
-        bt = f"（バックテストの最悪は{BT_MAXDD_PCT:.0f}%）" if kind == "fx" else ""
+        bt = "（バックテストの平均線9通りの最悪に相当）" if kind == "fx" else ""
         checks.append({"name": "ドローダウン", "flag": RED,
                        "msg": f"最大DD {mdd:.1f}% が警告線{EXP_MAXDD_PCT:.0f}%を超過{bt}＝試験済みの範囲外"
                               f"（故障とは限らない）。ログを確認し、ルール通りならサイズの見直しを検討"
                               + ("（docs/RESEARCH.md Round-9）" if kind == "fx" else "")})
     elif mdd > EXP_MAXDD_PCT * 0.75:
-        bt = f"。バックテストの最悪は{BT_MAXDD_PCT:.0f}%" if kind == "fx" else ""
+        bt = f"。バックテストの平均線9通りの最悪は{BT_MAXDD_PCT:.0f}%" if kind == "fx" else ""
         checks.append({"name": "ドローダウン", "flag": YELLOW,
                        "msg": f"最大DD {mdd:.1f}%（警告線{EXP_MAXDD_PCT:.0f}%内だが深い{bt}）"})
     else:
