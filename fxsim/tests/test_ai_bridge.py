@@ -460,6 +460,12 @@ def test_on_off_dials_read_what_the_owner_typed(monkeypatch, capsys):
     assert Settings().dd_brake is False and Settings().dyn_leverage is True
     monkeypatch.setenv("FXSIM_DD_BRAKE", "maybe")
     assert Settings().dd_brake is False and "FXSIM_DD_BRAKE" in capsys.readouterr().out
+    # review of dae5183: numbers keep their old meaning, an empty value is said out loud
+    for raw, want in (("1.0", True), ("2", True), ("0.0", False), ("-1", True)):
+        monkeypatch.setenv("FXSIM_DD_BRAKE", raw)
+        assert Settings().dd_brake is want, raw
+    monkeypatch.setenv("FXSIM_DYN_LEVERAGE", "")
+    assert Settings().dyn_leverage is True and "is empty" in capsys.readouterr().out
     for raw, want in (("Shadow", "shadow"), ("ＥＮＴＲＹ", "entry"), ("full", "full"),
                       ("none", "shadow"), ("", "shadow")):
         monkeypatch.setenv("FXSIM_AI_AUTHORITY", raw)

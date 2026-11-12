@@ -165,6 +165,11 @@ def _load_bars(instrument: str, granularity: str, sma_n: int, history_csv: str):
 # epsilon — the final-fuzz round found three inconsistent thresholds wedging
 # a 0.007-lot intent into a heartbeat-less, fail-safe-less limbo.
 FLAT_EPS = 0.01
+# Which code this brain is. Printed first at startup so the owner can confirm
+# an update really reached the running container: a failed `docker compose up
+# -d --build` leaves the OLD brain trading, and the documented test run passed
+# either way (review of dae5183). Bump with every change to the order path.
+BRAIN_BUILD = "r10c-2026-11"
 
 # Container clock vs the MT5 terminal's clock (reported in the status file).
 # WSL2's clock stops during Windows sleep and is not resynced on resume; a lag
@@ -577,18 +582,25 @@ def _awaiting_new_bar(reentry_bar, bar_t, pos: float):
 
 
 def _safe_calendar(mode: str, instrument: str, prev=None):
-    """The event calendar, or `prev` (else an empty one) if loading it raised.
-    The calendar only ever adds advisory decision triggers, so a bad one must
-    never stop trading: a calendar.json holding a null entry or a dict with no
-    'events' list raised at the start of main() — before the lock, on every
-    supervisor restart — and in the loop's daily refresh on every poll after
-    UTC midnight, while the EA flattened the long at EXP (Round-10B)."""
+    """The event calendar, or `prev` (else an empty one) when loading it raised
+    or the file could not be read. The calendar only ever adds advisory
+    decision triggers, so a bad one must never stop trading: a calendar.json
+    holding a null entry or a dict with no 'events' list raised at the start of
+    main() — before the lock, on every supervisor restart — and in the loop's
+    daily refresh on every poll after UTC midnight, while the EA flattened the
+    long at EXP (Round-10B). A file that went bad mid-run keeps the calendar
+    already loaded instead of emptying it (review of dae5183)."""
     try:
-        return get_calendar(mode, instrument)
+        cal = get_calendar(mode, instrument)
     except Exception as exc:
         print(f"[cal] calendar load failed ({type(exc).__name__}: {exc}); keeping "
               f"{'the previous' if prev is not None else 'an empty'} calendar", flush=True)
         return prev if prev is not None else EconomicCalendar([])
+    if getattr(cal, "unreadable", False) and prev is not None:
+        print("[cal] the new calendar file could not be read; keeping the previous calendar",
+              flush=True)
+        return prev
+    return cal
 
 
 def _restore_reentry(granularity: str = "H1") -> tuple[Optional[str], float]:
@@ -977,6 +989,7 @@ def main() -> None:
                     seq=int((live or {}).get("seq") or 0))
         return
 
+    print(f"[ai] brain build {BRAIN_BUILD}", flush=True)
     print(f"[ai] dials in force: max_risk={args.max_risk} sma={args.sma} "
           f"max_leverage={cfg.max_leverage} dyn_lev={cfg.dyn_leverage} "
           f"dd_brake={cfg.dd_brake} authority={cfg.ai_authority}", flush=True)

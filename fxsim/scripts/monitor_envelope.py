@@ -46,15 +46,16 @@ there against 33.9% at the close; Round-10B).
     of the nine POOLED, one weight per length (it was the minimum of the
     per-run percentiles: the unluckiest length's own p10, 1.5-10 pp looser
     than the label — Round-10B); the worst column is the worst of any run.
-  * COUNTS: the live length and its two immediate neighbours (2300-2500). A
-    count is a property of the signal, and SMA2400's own 38 changes/yr is the
-    FEWEST of the nine (41-51 for the others) — a lucky draw too: a band from
-    it alone read the whipsaw SMA2300 and SMA2500 really produced as RED or
-    "unprecedented". The whole nine would hide a doubled trade rate (it read
-    RED in 37% of start dates against 66% with 2300-2500). Measured on the
-    tape, Round-10B: the p90 YELLOW comes at a median ~170 days either way;
-    the forming-bar defect still reads RED in 80% of start dates (87% with
-    SMA2400 alone), and no start of SMA2300 or SMA2500 ever reads RED.
+  * COUNTS: three lines (Round-10C). SMA2400's own 38 changes/yr is the
+    FEWEST of the nine (41-51 for the others) — a lucky draw too — so a RED
+    line from it alone read the whipsaw SMA2300 and SMA2500 really produced as
+    RED; but hard and RED lines from 2300-2500 (Round-10B) never read a steady
+    doubled trade rate RED and delayed the forming-bar defect's RED by months
+    (review of dae5183). So: the soft line (上位10%) is the pooled p90 of
+    2300-2500; the hard line (過去最多) is the live length's own busiest
+    window; RED needs more than BOTH a quarter above that and the busiest
+    window of 2300-2500. tests/test_monitor.py pins the trade-off at fixed
+    horizons (docs/RESEARCH.md Round-10C has the numbers).
 
 Each table row covers the spans from its own up to the next row's, and holds
 the EXTREME over every whole-day span in that interval (no interpolation can
@@ -78,6 +79,7 @@ if str(FXSIM) not in sys.path:
     sys.path.insert(0, str(FXSIM))
 
 from scripts import research_harness as H  # noqa: E402
+from app.monitor import CHANGES_RED_MARGIN  # noqa: E402
 
 N_SMA = 2400                          # the live length
 NEIGHBOURHOOD = tuple(range(2000, 2801, 100))     # returns and the headline numbers
@@ -263,7 +265,9 @@ def pooled_percentile(groups: list[np.ndarray], q: float) -> float:
     w = np.concatenate([np.full(len(g), 1.0 / len(g)) for g in groups]) / len(groups)
     order = np.argsort(vals, kind="stable")
     cum = np.cumsum(w[order])
-    return float(vals[order][min(np.searchsorted(cum, q / 100.0), len(vals) - 1)])
+    # the epsilon: a cumulative weight that lands exactly on q must pick that
+    # value, and float sums of 1/(n*G) land a hair below it (Round-10C)
+    return float(vals[order][min(np.searchsorted(cum, q / 100.0 - 1e-12), len(vals) - 1)])
 
 
 def build(count_runs: list[dict], return_runs: list[dict]) -> tuple[tuple, tuple]:
@@ -292,9 +296,23 @@ def build(count_runs: list[dict], return_runs: list[dict]) -> tuple[tuple, tuple
             out.append((a_, softs, hards))
         return out
 
-    chg = tuple((w, int(max(math.ceil(v) for v in sf)), int(max(hd)))
-                for w, sf, hd in rows_for(CHANGE_ROWS, window_counts,
-                                          lambda g: pooled_percentile(g, 90), np.max, count_runs))
+    # Counts: three lines (Round-10C). The soft line is the pooled top 10% of
+    # 2300-2500; "the busiest on record" is the LIVE length's own; RED needs
+    # more than both a quarter above that and anything a neighbour ever did.
+    # With the hard and RED lines from 2300-2500 alone (Round-10B), a steady
+    # doubled trade rate never read RED and the forming-bar defect read RED
+    # months later (review of dae5183); with them from SMA2400 alone, the
+    # whipsaw SMA2300/2500 really had read RED.
+    live = [r for r in count_runs if r.get("n_sma", N_SMA) == N_SMA]
+    nb = rows_for(CHANGE_ROWS, window_counts, lambda g: pooled_percentile(g, 90), np.max, count_runs)
+    own = rows_for(CHANGE_ROWS, window_counts, lambda g: 0.0, np.max, live)
+    chg = []
+    for (w, sf, hd), (_, _, hd_own) in zip(nb, own):
+        p90 = int(max(math.ceil(v) for v in sf))
+        most = max(int(max(hd_own)), p90)
+        red = max(math.ceil(most * CHANGES_RED_MARGIN), int(max(hd)))
+        chg.append((w, p90, most, red))
+    chg = tuple(chg)
     ret = [(w, round(float(min(sf)) - 0.05, 1), round(float(min(hd)) - 0.05, 1))
            for w, sf, hd in rows_for(RETURN_ROWS, window_returns,
                                      lambda g: pooled_percentile(g, 10), np.min, return_runs)]
@@ -368,7 +386,7 @@ def main() -> int:
     print(f"BT_MAXDD_PCT = {hl['maxdd_worst']:.1f}")
     print(f"BT_CHANGES_PER_YEAR = {hl['changes_per_year']:.1f}")
     chg, ret = build(count_runs, return_runs)
-    print("ENVELOPE_CHANGES = (   # (from span_days, p90 count, max count)")
+    print("ENVELOPE_CHANGES = (   # (from span_days, p90 count, live-length max, RED above)")
     for row in chg:
         print(f"    {row},")
     print(")")

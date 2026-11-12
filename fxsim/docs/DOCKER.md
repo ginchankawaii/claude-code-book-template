@@ -68,7 +68,15 @@ docker compose up -d --build
   固定していない間は、再ビルドのたびにその日の最新版が入っていた。
 - 再ビルドは `fx` コンテナを作り直す＝脳が再起動する。建玉中でも安全（新しい脳は最大約12分で引き継ぎ、
   EAの注文期限は120分）。ただし年末年始の休場中（12/25・1/1をまたぐ週末）はやらない。
-- 再ビルドの後は `docker compose run --rm app python -m pytest tests -q` で failed が0なのを確認。
+- **新しい脳が動いているかの確認**（テストの合格だけでは分からない：再ビルドが失敗しても、テストは
+  新しいコードで通ってしまう）：
+  1. `docker compose up -d --build` が**エラーで終わらず**、最後に fx の `Recreated` / `Started` が出る
+  2. `docker compose logs --tail 30 fx` に、更新案内に書いた `[ai] brain build ...` の行が出ている
+- **再ビルドがエラーで終わったら**：何も壊れていない。古い脳がそのまま動き続けている。
+  `failed to solve`・`ResolutionImpossible`・`CERTIFICATE_VERIFY_FAILED`・`429`・`toomanyrequests` は
+  ネットワークやDocker Hubの混雑で、固定した版の問題ではない（`requirements.txt` / `constraints.txt` は直さない）。
+  まず `docker compose restart fx` で新しいコードを読み込ませ（ライブラリが古いままでも動く）、
+  再ビルドは時間をおいてやり直す。休場中はやり直さない。
 - `.env`（APIキー・パスワード）はイメージに入らない（`.dockerignore`。実行時にマウントと `env_file` から読む）。
 
 ## つまづきポイント

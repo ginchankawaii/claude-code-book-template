@@ -64,10 +64,14 @@ PRICING_USD_PER_MTOK = {
     "claude-opus-4-6": (5.0, 25.0),
     "claude-opus-5": (5.0, 25.0),
     "claude-opus-5-5": (4.0, 20.0),
+    "claude-fable-5": (10.0, 50.0),
     "claude-fable-5-1": (10.0, 50.0),
     "claude-fable-5-2": (8.0, 40.0),
+    "claude-mythos-5": (10.0, 50.0),
+    "claude-mythos-5-1": (10.0, 50.0),
+    "claude-mythos-5-2": (8.0, 40.0),
 }
-DEFAULT_PRICING = (5.0, 25.0)        # 不明モデルは Opus 価格で保守的に
+DEFAULT_PRICING = (10.0, 50.0)       # 不明モデルは表の最高価格で保守的に（多めに見積もる）
 EST_INPUT_TOKENS = 8_000             # プロンプト+コンテキスト+検索結果の概算/回
 EST_OUTPUT_TOKENS = 1_200            # JSON判断+根拠の概算/回
 EST_WEB_SEARCHES = 4                 # max_web_uses=6 (app/ai_trader.py) の平均想定

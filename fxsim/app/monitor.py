@@ -59,11 +59,14 @@ EXP_MAXDD_PCT = 36.0
 # (a step, never interpolated). The soft column (上位10% / 下位10%) is the
 # percentile of the lengths POOLED, one weight per length; the hard column
 # (過去最多 / 過去最悪) is the extreme of any run.
-#   CHANGES: the live length and its immediate neighbours 2300-2500. SMA2400's
-#     own 38 changes/yr is the fewest of the nine (41-51 for the others), so a
-#     band from it alone read the whipsaw its neighbours really had as RED; all
-#     nine would hide a doubled trade rate. The early warning (above the p90)
-#     comes at a median ~170 days either way (Round-10B).
+#   CHANGES: three lines (Round-10C). 上位10% = the pooled p90 of the live
+#     length and its immediate neighbours 2300-2500; 過去最多 = the live
+#     length's own busiest window; RED above BOTH a quarter beyond that and the
+#     busiest window 2300-2500 ever had. SMA2400's own 38 changes/yr is the
+#     fewest of the nine (41-51 for the others), so a RED line from it alone
+#     read the whipsaw its neighbours really had as RED; hard and RED lines from
+#     2300-2500 (Round-10B) never read a steady doubled trade rate RED and
+#     delayed the forming-bar defect's RED by months.
 #   RETURN: all nine — the return depends on the leverage draw, and a band from
 #     the lucky SMA2400 path alone would call the next ordinary draw
 #     under-performance (Round-10). From day 150 on, a return below the RED
@@ -74,12 +77,13 @@ EXP_MAXDD_PCT = 36.0
 # Never the forming-bar brain before Round-9 (~85-100 changes/yr, 3-9%/yr
 # replayed): including that defect made the monitor blind to it. A run that
 # began before the fix is judged only from its first closed-bar decision.
-ENVELOPE_CHANGES = (     # (from span_days, p90 count, max count)
-    (30, 16, 47), (45, 19, 47), (60, 23, 56), (75, 27, 58), (90, 32, 64),
-    (120, 39, 64), (150, 44, 67), (180, 52, 97), (240, 59, 106), (300, 70, 109),
-    (365, 83, 126), (450, 94, 142), (545, 109, 153), (640, 122, 161),
-    (730, 143, 176), (910, 174, 210), (1095, 199, 231), (1280, 222, 246),
-    (1460, 222, 246),
+ENVELOPE_CHANGES = (     # (from span_days, p90 count, live-length max, RED above)
+    (30, 16, 32, 47), (45, 19, 45, 57), (60, 23, 48, 60), (75, 27, 48, 60),
+    (90, 32, 64, 80), (120, 39, 64, 80), (150, 44, 64, 80), (180, 52, 77, 97),
+    (240, 59, 88, 110), (300, 70, 93, 117), (365, 83, 110, 138), (450, 94, 123, 154),
+    (545, 109, 127, 159), (640, 122, 136, 170), (730, 143, 150, 188),
+    (910, 174, 180, 225), (1095, 199, 199, 249), (1280, 222, 222, 278),
+    (1460, 222, 222, 278),
 )
 ENVELOPE_RETURN = (      # (from span_days, p10 return %, worst return %), no swap;
     # worst = running minimum over spans: a longer window is never stricter
@@ -89,7 +93,7 @@ ENVELOPE_RETURN = (      # (from span_days, p10 return %, worst return %), no sw
     (730, -10.0, -31.8), (910, -11.0, -31.8), (1095, -11.4, -32.7),
     (1280, -10.4, -32.9), (1460, -7.5, -32.9),
 )
-CHANGES_RED_MARGIN = 1.25        # RED only well beyond the backtest's busiest window
+CHANGES_RED_MARGIN = 1.25        # RED only a quarter beyond the live length's busiest window (and every neighbour's)
 RETURN_RED_MARGIN_PP = 5.0       # ... or well below its worst (at least 5pp / 25%)
 
 # How much live history before a metric is trustworthy.
@@ -126,24 +130,24 @@ def annualize(return_pct: float, years: float) -> float:
     return (growth ** (1 / years) - 1) * 100
 
 
-def envelope_at(table, span_days: float, beyond: str) -> tuple[float, float] | None:
-    """(soft, hard) bound of `table` for a span: the row at or below it (each
-    row already holds the extreme of its interval — never interpolate, which
-    understated the worst between sparse rows). None below the first row or
-    for a non-finite span (too little history to judge). From the last row on,
-    'scale' grows both with the span (counts accumulate) and 'loosest' keeps
-    the loosest row (returns: a long run is never judged more strictly than a
-    short one)."""
+def envelope_at(table, span_days: float, beyond: str) -> tuple[float, ...] | None:
+    """The bounds of `table` for a span — every column after the span: (soft,
+    hard) for returns, (soft, hard, RED) for counts. The row at or below the
+    span (each row already holds the extreme of its interval — never
+    interpolate, which understated the worst between sparse rows). None below
+    the first row or for a non-finite span (too little history to judge). From
+    the last row on, 'scale' grows every column with the span (counts
+    accumulate) and 'loosest' keeps the loosest row (returns: a long run is
+    never judged more strictly than a short one)."""
     if not (math.isfinite(span_days) and span_days >= table[0][0]):
         return None
     w_last = table[-1][0]
     if span_days < w_last:
         row = [r for r in table if r[0] <= span_days][-1]
-        return float(row[1]), float(row[2])
+        return tuple(float(v) for v in row[1:])
     if beyond == "scale":
-        _, a, b = table[-1]
-        return a * span_days / w_last, b * span_days / w_last
-    return float(min(r[1] for r in table)), float(min(r[2] for r in table))
+        return tuple(v * span_days / w_last for v in table[-1][1:])
+    return tuple(float(min(r[k] for r in table)) for k in range(1, len(table[-1])))
 
 
 def _pending_msg(state) -> str:
@@ -237,10 +241,10 @@ def build_report(*, initial_balance: float, equity_values: list[float],
         checks.append({"name": "取引頻度", "flag": YELLOW,
                        "msg": f"建玉変化 {s_changes}回{s_from}（観察{s_span:.0f}日・判定は30日以降）"})
     else:
-        p90, most = env
+        p90, most, red = env
         ref = f"（同じ長さの期間の過去最多{most:.0f}回・上位10%{p90:.0f}回）"
         head = f"建玉変化 {s_changes}回／{s_span:.0f}日{s_from}"
-        if s_changes > math.ceil(most * CHANGES_RED_MARGIN):
+        if s_changes > math.ceil(red):
             checks.append({"name": "取引頻度", "flag": RED,
                            "msg": f"{head}：過去最多を大きく超過{ref} → "
                                   f"過剰売買（ダマシの連続 or 不具合）の疑い。`docker compose logs fx` で売買の理由を確認"})
@@ -290,7 +294,18 @@ def build_report(*, initial_balance: float, equity_values: list[float],
     #     >3 days is never normal — before round-6 this could only ever be
     #     YELLOW, and a brain dead for weeks reported "観察" (I10). ---
     stale_red_d = max(1.0, daily_gap_h * 1.5 / 24.0)     # 1.5 decision cycles
-    if staleness_days is not None and staleness_days > stale_red_d:
+    hb_fresh = (brain_signal_age_s is not None and not blocked_on_lock
+                and brain_signal_age_s <= BRAIN_SIGNAL_STALE_S)
+    if staleness_days is not None and staleness_days > stale_red_d and hb_fresh:
+        # Alive but not deciding: it is waiting for the EA to execute a FLAT, or
+        # blind on the bars. A restart changes neither — the old text sent the
+        # owner to restart a healthy brain while the EA ignored its FLAT
+        # (review of dae5183).
+        checks.append({"name": "稼働鮮度", "flag": RED,
+                       "msg": f"最終更新が{staleness_days:.1f}日前：脳は動いている（心拍{brain_signal_age_s / 60:.0f}分前）が"
+                              f"判断を記録していない＝EAの決済待ち、またはバー停止で判断を見送っている。"
+                              f"執行一致・バー鮮度の🔴を先に確認（再起動では直らない）"})
+    elif staleness_days is not None and staleness_days > stale_red_d:
         checks.append({"name": "稼働鮮度", "flag": RED,
                        "msg": f"最終更新が{staleness_days:.1f}日前：脳（fxコンテナ）が停止している疑い → "
                               f"`docker compose ps` / `docker compose logs fx` を確認し `docker compose up -d fx`"})
@@ -373,7 +388,15 @@ def build_report(*, initial_balance: float, equity_values: list[float],
     last_decision = actions[-1].upper() if actions else None
     stale_decision = (last_decision_age_s is not None
                       and last_decision_age_s > daily_gap_h * 3600)
-    if (bridge_stale or brain_dead or stale_decision) and live_position:
+    # A decision that DISAGREES with the book stays a mismatch however old it
+    # is while the brain and the bridge are alive: a brain waiting for the EA
+    # to execute its FLAT writes no rows, and after 20 h the stale-decision
+    # branch called a real stuck-LONG 'only a match with a frozen state' while
+    # the remedy (MT5 algo trading / the EA's error) left the screen (review
+    # of dae5183).
+    mismatch = (last_decision in ("LONG", "FLAT") and bool(live_position)
+                and last_decision != str(live_position).upper())
+    if (bridge_stale or brain_dead or (stale_decision and not mismatch)) and live_position:
         # A match computed from a frozen file, or against a decision the brain
         # made days ago, is not a match — and this 🟢 is the documented
         # criterion for going live and for increasing size (round-7).

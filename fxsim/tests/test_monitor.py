@@ -1,3 +1,5 @@
+import math
+
 from app import monitor
 from app.monitor import GREEN, RED, YELLOW
 
@@ -341,13 +343,7 @@ def test_a_regression_to_the_forming_bar_cadence_is_visible():
         return next(x for x in rep["checks"] if x["name"] == "取引頻度")["flag"]
     assert flag(365, 100) != GREEN
     assert flag(90, 70) != GREEN
-    # Round-10B: SMA2300/2500 really made up to 97 changes in 180 days, so 100
-    # is 'unprecedented' (check the logs), and RED needs a quarter more than that
-    assert flag(180, 100) == YELLOW
-    rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 1.0],
-                               span_days=180.0, actions=_alternating(100))
-    assert "例のない" in next(x for x in rep["checks"] if x["name"] == "取引頻度")["msg"]
-    assert flag(180, 123) == RED
+    assert flag(180, 100) == RED
     assert flag(365, 159) == RED
 
 
@@ -432,21 +428,56 @@ def test_envelope_lookup():
     assert monitor.envelope_at(T, 29.9, "scale") is None
     assert monitor.envelope_at(T, float("nan"), "scale") is None
     assert monitor.envelope_at(T, float("inf"), "scale") is None       # never raises
-    assert monitor.envelope_at(T, 30, "scale") == (16.0, 47.0)
-    assert monitor.envelope_at(T, 44.9, "scale") == (16.0, 47.0)       # a step, not interpolated
-    assert monitor.envelope_at(T, 45, "scale") == (19.0, 47.0)
-    assert monitor.envelope_at(T, 2920, "scale") == (444.0, 492.0)     # counts scale with span
+    assert monitor.envelope_at(T, 30, "scale") == (16.0, 32.0, 47.0)
+    assert monitor.envelope_at(T, 44.9, "scale") == (16.0, 32.0, 47.0)  # a step, not interpolated
+    assert monitor.envelope_at(T, 45, "scale") == (19.0, 45.0, 57.0)
+    assert monitor.envelope_at(T, 2920, "scale") == (444.0, 444.0, 556.0)   # counts scale with span
     R_ = monitor.ENVELOPE_RETURN
     loosest = (min(r[1] for r in R_), min(r[2] for r in R_))
     assert monitor.envelope_at(R_, 5000, "loosest") == loosest         # long runs: never stricter
-    for (w0, p0, m0), (w1, p1, m1) in zip(T, T[1:]):
-        assert w1 > w0 and p1 >= p0 and m1 >= m0 and m0 >= p0
+    for (w0, p0, m0, r0), (w1, p1, m1, r1) in zip(T, T[1:]):
+        assert w1 > w0 and p1 >= p0 and m1 >= m0 and r1 >= r0 and r0 >= m0 >= p0
+    for w, p90, most, red in T:     # RED is beyond a quarter above the live length's busiest
+        assert red >= math.ceil(most * monitor.CHANGES_RED_MARGIN)
     for w, p10, worst in R_:
         assert worst <= p10 and math.isfinite(worst)
     # a span beyond the table is never judged more strictly than the last row
     rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 1 + loosest[1] / 100],
                                span_days=4000.0, actions=["LONG"])
     assert next(c for c in rep["checks"] if c["name"] == "リターン")["flag"] != RED
+
+
+def test_overtrading_is_still_caught_while_neighbour_whipsaw_is_not_red():
+    """Round-10C (review of dae5183): with every line from 2300-2500 a steady
+    doubled trade rate never read RED and the forming-bar defect read RED
+    months later; with every line from SMA2400 alone, the whipsaw SMA2300 and
+    SMA2500 really had read RED. Pinned at fixed horizons on the tape."""
+    import numpy as np
+    from scripts import monitor_envelope as ME
+    def first_red_day(rate):
+        return next((d for d in range(30, 3000) if rate * d / 365.25 > math.ceil(
+            monitor.envelope_at(monitor.ENVELOPE_CHANGES, float(d), "scale")[2])), None)
+    assert first_red_day(2 * 38.3) <= 900          # a steady doubled rate (it never did in Round-10B)
+    assert first_red_day(150) <= 240 and first_red_day(100) <= 600
+    def red_starts(r, mult, within):
+        t = r["t"].astype("datetime64[s]").astype(np.int64)
+        hit = n = 0
+        for s in t[::24]:
+            spans = np.arange(30, within + 1)
+            ends = s + spans * 86400
+            if ends[-1] > t[-1]:
+                break
+            c = mult * (np.searchsorted(r["changes"], ends, side="right")
+                        - np.searchsorted(r["changes"], s, side="right"))
+            red = np.array([math.ceil(monitor.envelope_at(monitor.ENVELOPE_CHANGES, float(x), "scale")[2])
+                            for x in spans])
+            hit += bool((c > red).any()); n += 1
+        return hit / n
+    live = ME.replay("closedbar", 5)
+    assert red_starts(live, 2, 365) >= 0.2          # 25% across poll phases (16% in Round-10B)
+    assert red_starts(live, 1, 1460) == 0.0          # production itself never
+    for n_sma in (2300, 2500):                       # ordinary neighbour whipsaw never RED
+        assert red_starts(ME.replay("closedbar", 5, n_sma=n_sma), 1, 1460) == 0.0, n_sma
 
 
 def test_beyond_history_but_inside_the_margin_says_so():
@@ -457,7 +488,7 @@ def test_beyond_history_but_inside_the_margin_says_so():
                                span_days=90.0, actions=["LONG"])
     c = next(x for x in rep["checks"] if x["name"] == "リターン")
     assert c["flag"] == YELLOW and "例のない" in c["msg"] and "よくある" not in c["msg"]
-    p90, most = monitor.envelope_at(monitor.ENVELOPE_CHANGES, 90, "scale")
+    p90, most, red = monitor.envelope_at(monitor.ENVELOPE_CHANGES, 90, "scale")
     rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 1.0], span_days=90.0,
                                actions=_alternating(int(most) + 1))
     c = next(x for x in rep["checks"] if x["name"] == "取引頻度")
@@ -630,3 +661,28 @@ def test_health_check_prints_the_held_size_and_its_real_multiple(monkeypatch, ca
     assert "UTC建て" in line and "2026-11-10 17:00" in line, line
     head = next(l for l in out.splitlines() if "基準" in l)
     assert "年+9%前後（2〜15%）" in head and "警告線36%" in head and "最悪35%" in head, head
+
+
+def test_a_stuck_long_stays_an_execution_mismatch_however_old_the_decision():
+    """Review of dae5183: the EA ignores a FLAT (algo trading off). The brain
+    keeps heartbeating FLAT and writes no rows; after 20 h the stale-decision
+    branch read the real mismatch as 判定不能 and, from 30 h, 稼働鮮度 told the
+    owner to restart a healthy brain."""
+    for age_h in (2.0, 21.0, 31.0, 72.0):
+        r = _report(actions=["LONG", "FLAT"], live_position="LONG", trend_basis="FLAT",
+                    brain_signal_age_s=60.0, ea_status_age_s=20.0, bars_age_h=1.0,
+                    bars_count=3000, bars_need=2405, last_decision_age_s=age_h * 3600,
+                    staleness_days=age_h / 24.0)
+        ex = next(c for c in r["checks"] if c["name"] == "執行一致")
+        assert ex["flag"] == RED and "アルゴ取引" in ex["msg"], (age_h, ex)
+        fr = [c for c in r["checks"] if c["name"] == "稼働鮮度"]
+        assert not any("up -d fx" in c["msg"] for c in fr), (age_h, fr)
+        if age_h > 30:
+            assert fr and fr[0]["flag"] == RED and "再起動では直らない" in fr[0]["msg"]
+    # a dead brain is still sent to the restart, and an agreeing stale decision is still 判定不能
+    r = _report(actions=["LONG", "FLAT"], live_position="LONG", brain_signal_age_s=4000.0,
+                ea_status_age_s=20.0, last_decision_age_s=31 * 3600.0, staleness_days=31 / 24.0)
+    assert any(c["name"] == "稼働鮮度" and "up -d fx" in c["msg"] for c in r["checks"])
+    r = _report(actions=["LONG"], live_position="LONG", trend_basis="LONG", brain_signal_age_s=60.0,
+                ea_status_age_s=20.0, bars_age_h=1.0, last_decision_age_s=21 * 3600.0)
+    assert next(c for c in r["checks"] if c["name"] == "執行一致")["flag"] == YELLOW

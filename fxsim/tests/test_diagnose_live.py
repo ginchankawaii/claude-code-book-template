@@ -180,6 +180,8 @@ def test_api_prices_match_the_reference_and_dated_ids_take_the_longest_key():
     assert p("claude-sonnet-4-6") == (3.0, 15.0) and p("claude-opus-4-8") == (5.0, 25.0)
     assert p("claude-haiku-4-5-20251001") == (1.0, 5.0)
     assert p("claude-opus-5-5") == (4.0, 20.0) and p("claude-opus-5") == (5.0, 25.0)
+    assert p("claude-fable-5") == (10.0, 50.0) and p("claude-mythos-5-2") == (8.0, 40.0)
+    assert D.DEFAULT_PRICING == max(D.PRICING_USD_PER_MTOK.values())   # unknown = the dearest
 
 
 # --------------------------------------------------------------------------- #

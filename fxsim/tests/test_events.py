@@ -160,3 +160,26 @@ def test_a_calendar_that_cannot_load_never_stops_the_brain(monkeypatch, capsys):
     assert R._safe_calendar("file", "USD_JPY").events == []
     assert R._safe_calendar("file", "USD_JPY", prev) is prev
     assert "calendar load failed" in capsys.readouterr().out
+
+
+def test_a_calendar_file_that_goes_bad_keeps_the_calendar_already_loaded(tmp_path, monkeypatch):
+    # review of dae5183: a file overwritten with {"events": null} or [null] at
+    # 23:00 replaced the good in-memory calendar with an empty one at midnight
+    import app.events as E
+    from scripts import run_ai_bridge as R
+    f = tmp_path / "calendar.json"
+    monkeypatch.setattr(E, "CALENDAR_FILE", f)
+    monkeypatch.setattr(E.settings, "anthropic_api_key", "", raising=False)
+    f.write_text('[{"time": "2026-12-02T00:20:00Z", "currency": "USD", "title": "CPI", "impact": "high"}]')
+    good = R._safe_calendar("file", "USD_JPY")
+    assert [e.title for e in good.events] == ["CPI"] and not good.unreadable
+    for bad in ('{"events": null}', '[null]', '{"items": []}', 'not json', '[{"time": "soon"}]'):
+        f.write_text(bad)
+        for mode in ("file", "anthropic"):
+            assert R._safe_calendar(mode, "USD_JPY", good) is good, (bad, mode)
+    f.write_text('[]')                                   # a valid, empty calendar is believed
+    assert R._safe_calendar("file", "USD_JPY", good).events == []
+    f.write_text('{"events": []}')
+    assert R._safe_calendar("file", "USD_JPY", good).events == []
+    f.unlink()                                           # no file at all: no events
+    assert R._safe_calendar("file", "USD_JPY", good).events == []

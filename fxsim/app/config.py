@@ -56,17 +56,28 @@ def _get_bool(name: str, default: bool) -> bool:
     """Read an on/off dial. NFKC + case-folded like the float dials: the raw
     comparison read a full-width '０' (Japanese IME), 'off' or 'False' as ON —
     FXSIM_DD_BRAKE=off switched the brake on and FXSIM_DYN_LEVERAGE=off left
-    the ramp on (Round-10B). Anything else is LOUD and keeps the default."""
+    the ramp on (Round-10B). A number keeps its old meaning (any finite
+    non-zero is ON, so '1.0' and '2' still mean ON; zero is OFF). An empty
+    value used to mean OFF and now keeps the default — said out loud, as is
+    anything else (review of dae5183)."""
     raw = os.getenv(name)
     if raw is None:
         return default
     v = _norm(raw).lower()
-    if v == "":
-        return default
     if v in _TRUE_WORDS:
         return True
     if v in _FALSE_WORDS:
         return False
+    try:
+        f = float(v)
+        if f == f and abs(f) != float("inf"):
+            return f != 0.0
+    except ValueError:
+        pass
+    if v == "":
+        print(f"[cfg] WARNING: {name} is empty — using the default {'1' if default else '0'} "
+              f"(an empty value used to mean 0). Write 1 or 0 in .env.", flush=True)
+        return default
     print(f"[cfg] WARNING: {name}={raw!r} is not on/off (1/0) — using the default "
           f"{'1' if default else '0'}. Fix .env: this is NOT the value you set.", flush=True)
     return default

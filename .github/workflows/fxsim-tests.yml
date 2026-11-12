@@ -17,7 +17,7 @@ on:
     paths:
       - "fxsim/**"
       - ".github/workflows/fxsim-tests.yml"
-  workflow_dispatch:
+  workflow_dispatch:      # offered by GitHub only once this file is on the default branch
 
 permissions:
   contents: read
@@ -40,12 +40,17 @@ jobs:
             fxsim/constraints.txt
       - name: Install the pinned dependencies
         run: pip install -r requirements.txt -c constraints.txt
-      - name: Every pinned package is installed at its pinned version
+      - name: Exactly the pinned packages are installed, at their pinned versions
+        # both ways: a package added to requirements.txt without regenerating
+        # constraints.txt would otherwise install unpinned and pass (review of dae5183)
         run: |
-          pip freeze | sort > /tmp/installed.txt
-          grep -v '^#' constraints.txt | sort > /tmp/pinned.txt
-          missing=$(comm -23 /tmp/pinned.txt /tmp/installed.txt)
-          if [ -n "$missing" ]; then echo "not installed as pinned:"; echo "$missing"; exit 1; fi
+          pip freeze | LC_ALL=C sort > /tmp/installed.txt
+          grep -v '^#' constraints.txt | grep . | LC_ALL=C sort > /tmp/pinned.txt
+          missing=$(LC_ALL=C comm -23 /tmp/pinned.txt /tmp/installed.txt)
+          extra=$(LC_ALL=C comm -13 /tmp/pinned.txt /tmp/installed.txt)
+          if [ -n "$missing" ]; then echo "not installed as pinned:"; echo "$missing"; fi
+          if [ -n "$extra" ]; then echo "installed but not pinned in constraints.txt:"; echo "$extra"; fi
+          [ -z "$missing" ] && [ -z "$extra" ]
       - name: Test suite
         run: python -m pytest tests -q
       - name: Research harness reproduces the engine (14 OK lines)

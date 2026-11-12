@@ -93,6 +93,11 @@ class EconomicEvent:
 @dataclass
 class EconomicCalendar:
     events: list[EconomicEvent] = field(default_factory=list)
+    # True when the file existed but nothing usable could be read from it
+    # (bad JSON or encoding, the wrong shape, or only unreadable entries): the
+    # resident loop then keeps the calendar it already has instead of
+    # replacing it with an empty one (review of dae5183).
+    unreadable: bool = False
 
     def __post_init__(self) -> None:
         self.events = sorted(self.events, key=lambda e: e.time)
@@ -171,11 +176,11 @@ def _load_file(path: Path | None = None) -> EconomicCalendar:
         raw = json.loads(path.read_text(encoding="utf-8-sig"))
     except (ValueError, OSError) as exc:    # bad JSON or encoding, unreadable
         print(f"[cal] {path.name} unreadable ({type(exc).__name__}); no events", flush=True)
-        return EconomicCalendar([])
+        return EconomicCalendar([], unreadable=True)
     items = raw.get("events") if isinstance(raw, dict) else raw
     if not isinstance(items, list):
         print(f"[cal] {path.name} holds no event list; no events", flush=True)
-        return EconomicCalendar([])
+        return EconomicCalendar([], unreadable=True)
     events: list[EconomicEvent] = []
     skipped = 0
     for it in items:
@@ -189,7 +194,7 @@ def _load_file(path: Path | None = None) -> EconomicCalendar:
     if skipped:
         print(f"[cal] {path.name}: skipped {skipped} unreadable entr"
               f"{'y' if skipped == 1 else 'ies'}", flush=True)
-    return EconomicCalendar(events)
+    return EconomicCalendar(events, unreadable=bool(skipped and not events))
 
 
 def _cache_events(events: list[EconomicEvent], path: Path | None = None) -> None:
