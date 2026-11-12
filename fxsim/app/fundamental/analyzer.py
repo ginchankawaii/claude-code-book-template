@@ -114,8 +114,10 @@ class AnthropicAnalyzer(Analyzer):
         if not settings.anthropic_api_key:
             raise RuntimeError("ANTHROPIC_API_KEY not set for fundamental_mode=anthropic")
 
+        # One bounded attempt, no SDK retry: anthropic 1.x sleeps for the
+        # server's retry-after with no cap (Round-10B).
         client = anthropic.Anthropic(api_key=settings.anthropic_api_key,
-                                     timeout=120.0, max_retries=1)
+                                     timeout=120.0, max_retries=0)
         pair = instrument.replace("_", "/")
         resp = client.messages.create(
             model=self.model,

@@ -147,6 +147,73 @@ def test_stale_bars_are_red_and_block_the_match():
     assert not any(c["name"] == "執行一致" and c["flag"] == monitor.GREEN for c in r["checks"])
 
 
+def test_bar_freshness_uses_the_brains_own_limit():
+    # Round-10B: the monitor half of the holiday fix was untested — reverting it
+    # left every test passing. 77 h into the Christmas closure is healthy.
+    kw = dict(actions=["LONG"], live_position="LONG", trend_basis="LONG",
+              bars_count=3000, bars_need=2405)
+    r = _report(bars_age_h=77.0, bars_limit_h=99.0, **kw)
+    assert not any(c["name"] == "バー鮮度" for c in r["checks"])
+    r = _report(bars_age_h=77.0, bars_limit_h=None, **kw)          # the plain 75 h rule
+    assert any(c["name"] == "バー鮮度" and c["flag"] == monitor.RED for c in r["checks"])
+    r = _report(bars_age_h=100.0, bars_limit_h=99.0, **kw)
+    c = next(c for c in r["checks"] if c["name"] == "バー鮮度")
+    assert c["flag"] == monitor.RED and "99h" in c["msg"]
+
+
+def test_health_check_judges_a_christmas_closure_by_the_brains_rule(monkeypatch):
+    """run_monitor end to end on 27 December 23:00 UTC, 77 h after the last bar
+    (24 December 18:00): the limit handed to build_report and used for the
+    trend basis must be the brain's 99 h, not the plain 75 h."""
+    import sys as _sys
+    from datetime import datetime as _datetime, timedelta, timezone as _tz
+    from app.models import Candle
+    from scripts import run_monitor as M
+
+    pinned = _datetime(2026, 12, 27, 23, tzinfo=_tz.utc)
+
+    class _DT(_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return pinned
+    monkeypatch.setattr(M, "datetime", _DT)
+    last = _datetime(2026, 12, 24, 18, tzinfo=_tz.utc)
+    bars = [Candle(instrument="USD_JPY", granularity="H1", time=last - timedelta(hours=2500 - i),
+                   open=150.0, high=150.1, low=149.9, close=140.0 + i * 0.01) for i in range(2501)]
+    monkeypatch.setattr(M.bridge, "read_bars", lambda *a, **k: bars)
+    assert M._current_strategy_signal(M.Settings(granularity="H1", trend_sma=2400),
+                                      "USD_JPY", "no-such.csv") == "LONG"
+    seen = {}
+
+    class _Captured(BaseException):
+        pass
+
+    def capture(**kw):
+        seen.update(kw)
+        raise _Captured()
+    monkeypatch.setattr(M.db, "init_db", lambda: None)
+    monkeypatch.setattr(M.db, "latest_live_run_id", lambda kind: 1)
+    monkeypatch.setattr(M.db, "get_run", lambda rid: {"mode": "live", "granularity": "H1",
+                                                      "started_at": "2026-06-18", "instrument": "USD_JPY",
+                                                      "initial_balance": 300_000.0})
+    monkeypatch.setattr(M.db, "load_equity", lambda rid: [
+        {"time": "2026-06-18T00:00:00+00:00", "equity": 300_000.0},
+        {"time": "2026-12-27T22:00:00+00:00", "equity": 280_000.0}])
+    for name, val in (("_actions", ["LONG"]), ("_live_position", "LONG"),
+                      ("_bridge_liveness", {"missing": False, "age_s": 20.0, "legacy": False}),
+                      ("_brain_liveness", {"signal_age_s": 60.0, "expired": False}),
+                      ("_last_ai_binding", None), ("_ea_build", "r6e-status"),
+                      ("_last_decision_age_s", 3600.0), ("_blocked_on_lock", None),
+                      ("_closed_bar_segment", None)):
+        monkeypatch.setattr(M, name, (lambda v: (lambda *a, **k: v))(val))
+    monkeypatch.setattr(M.monitor, "build_report", capture)
+    monkeypatch.setattr(_sys, "argv", ["run_monitor.py"])
+    with __import__("pytest").raises(_Captured):
+        M.main()
+    assert seen["bars_limit_h"] == 99.0 and round(seen["bars_age_h"]) == 77
+    assert seen["trend_basis"] == "LONG"
+
+
 def test_clock_skew_is_named():
     r = _report(actions=["LONG"], live_position="LONG", ea_status_age_s=-7200.0)
     assert any(c["name"] == "時計" and "wsl --shutdown" in c["msg"] for c in r["checks"])
@@ -228,13 +295,17 @@ def test_production_never_reads_red_on_its_own_behaviour():
     import numpy as np
     from scripts import monitor_envelope as ME
     runs = {"close": ME.replay("close"), "closedbar": ME.replay("closedbar", 5),
-            # the neighbourhood: an ordinary unlucky draw must not read RED on return (Round-10)
-            "close2500": ME.replay("close", n_sma=2500), "close2600": ME.replay("close", n_sma=2600),
-            "close2000": ME.replay("close", n_sma=2000), "close2800": ME.replay("close", n_sma=2800)}
+            # the count reference's neighbours at the live cadence (Round-10B) ...
+            "closedbar2300": ME.replay("closedbar", 5, n_sma=2300),
+            "closedbar2500": ME.replay("closedbar", 5, n_sma=2500),
+            # ... and the return neighbourhood: an ordinary unlucky draw must not read RED (Round-10)
+            "closedbar2700": ME.replay("closedbar", 9, n_sma=2700),
+            **{f"close{n}": ME.replay("close", n_sma=n) for n in ME.NEIGHBOURHOOD if n != 2400}}
+    counted = ("close", "closedbar", "closedbar2300", "closedbar2500")
     for name, r in runs.items():
         yellow = n = 0
         for W in range(30, 1501, 7):
-            counts = ME.window_counts(r, W) if name in ("close", "closedbar") else np.array([], dtype=int)
+            counts = ME.window_counts(r, W) if name in counted else np.array([], dtype=int)
             rets = ME.window_returns(r, W) if W >= 60 else np.array([])
             for c in np.unique(counts):
                 rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 1.0],
@@ -249,7 +320,9 @@ def test_production_never_reads_red_on_its_own_behaviour():
                 f = next(x for x in rep["checks"] if x["name"] == "リターン")["flag"]
                 assert f != RED, (name, W, float(v))
         if n:
-            assert yellow / n < 0.12, (name, yellow / n)
+            # the live length: YELLOW stays rare; its busier neighbours sit above
+            # the POOLED top-10% line a little more often, by construction
+            assert yellow / n < (0.12 if name in ("close", "closedbar") else 0.15), (name, yellow / n)
     forming = ME.replay("live", 5)
     counts = ME.window_counts(forming, 365)
     flagged = sum(next(x for x in monitor.build_report(
@@ -268,7 +341,14 @@ def test_a_regression_to_the_forming_bar_cadence_is_visible():
         return next(x for x in rep["checks"] if x["name"] == "取引頻度")["flag"]
     assert flag(365, 100) != GREEN
     assert flag(90, 70) != GREEN
-    assert flag(180, 100) == RED
+    # Round-10B: SMA2300/2500 really made up to 97 changes in 180 days, so 100
+    # is 'unprecedented' (check the logs), and RED needs a quarter more than that
+    assert flag(180, 100) == YELLOW
+    rep = monitor.build_report(initial_balance=1.0, equity_values=[1.0, 1.0],
+                               span_days=180.0, actions=_alternating(100))
+    assert "例のない" in next(x for x in rep["checks"] if x["name"] == "取引頻度")["msg"]
+    assert flag(180, 123) == RED
+    assert flag(365, 159) == RED
 
 
 def test_envelope_checks_judge_only_the_closed_bar_segment():
@@ -352,10 +432,10 @@ def test_envelope_lookup():
     assert monitor.envelope_at(T, 29.9, "scale") is None
     assert monitor.envelope_at(T, float("nan"), "scale") is None
     assert monitor.envelope_at(T, float("inf"), "scale") is None       # never raises
-    assert monitor.envelope_at(T, 30, "scale") == (16.0, 32.0)
-    assert monitor.envelope_at(T, 44.9, "scale") == (16.0, 32.0)       # a step, not interpolated
-    assert monitor.envelope_at(T, 45, "scale") == (19.0, 45.0)
-    assert monitor.envelope_at(T, 2920, "scale") == (388.0, 404.0)     # counts scale with span
+    assert monitor.envelope_at(T, 30, "scale") == (16.0, 47.0)
+    assert monitor.envelope_at(T, 44.9, "scale") == (16.0, 47.0)       # a step, not interpolated
+    assert monitor.envelope_at(T, 45, "scale") == (19.0, 47.0)
+    assert monitor.envelope_at(T, 2920, "scale") == (444.0, 492.0)     # counts scale with span
     R_ = monitor.ENVELOPE_RETURN
     loosest = (min(r[1] for r in R_), min(r[2] for r in R_))
     assert monitor.envelope_at(R_, 5000, "loosest") == loosest         # long runs: never stricter
@@ -450,8 +530,9 @@ def test_live_page_health_names_a_fresh_lock_wait(monkeypatch):
 
 def test_expectation_shown_is_the_neighbourhood_not_the_lucky_path():
     # SMA2400's own 15.3%/yr is the top of the entry-size draw (5th of 81 lengths)
-    assert monitor.BT_CAGR_PCT < 10 and monitor.BT_CAGR_RANGE == (2.8, 15.3)
-    assert abs(monitor.EXP_MAXDD_PCT - monitor.BT_MAXDD_PCT) < 0.5     # the alarm line = the worst neighbour
+    assert monitor.BT_CAGR_PCT < 10 and monitor.BT_CAGR_RANGE == (2.0, 15.3)
+    # the alarm line sits just above the worst neighbour at the live cadence
+    assert 0 <= monitor.EXP_MAXDD_PCT - monitor.BT_MAXDD_PCT < 1
 
 
 def test_an_ordinary_unlucky_draw_is_not_under_performance():
@@ -474,11 +555,78 @@ def test_current_entry_reports_the_draw(monkeypatch):
     def row(day, action, **comp):
         return {"source": "combined", "time": f"2026-11-{day:02d}T00:00:00+00:00",
                 "components": _json.dumps({"action": action, **comp})}
-    rows = [row(1, "LONG", eff_leverage=5.0, target_lots=0.08), row(2, "FLAT", trigger="stop"),
-            row(3, "LONG", eff_leverage=1.3, target_lots=0.02, trigger="gate-entry"),
-            row(4, "FLAT", trigger="blocked-on-lock"), row(5, "LONG", eff_leverage=1.3, target_lots=0.02)]
+    rows = [row(1, "LONG", eff_leverage=5.0, target_lots=0.08, position_lots=0.0),
+            row(2, "FLAT", trigger="stop"),
+            row(3, "LONG", eff_leverage=1.3, target_lots=0.02, trigger="gate-entry", position_lots=0.0),
+            row(4, "FLAT", trigger="blocked-on-lock"),
+            row(5, "LONG", eff_leverage=5.0, target_lots=0.02, trigger="daily", position_lots=0.02)]
     monkeypatch.setattr(run_monitor.db, "load_signals", lambda rid: rows)
     e = run_monitor._current_entry(1)
     assert e["eff_leverage"] == 1.3 and e["lots"] == 0.02 and e["time"].startswith("2026-11-03")
     rows.append(row(6, "FLAT", trigger="gate-exit"))
     assert run_monitor._current_entry(1) is None
+
+
+def test_current_entry_is_the_order_that_filled(monkeypatch):
+    """Round-10B: an entry the EA did not fill (algo trading off, back-off) is
+    re-decided on a later bar at a new ramp; the line showed the unfilled
+    order's 1.8x for a book held at 5.0x."""
+    import json as _json
+    from scripts import run_monitor
+    def row(h, action, **comp):
+        return {"source": "combined", "time": f"2026-11-10T{h:02d}:00:00+00:00",
+                "components": _json.dumps({"action": action, **comp})}
+    rows = [row(15, "FLAT", trigger="gate-exit"),
+            row(16, "LONG", eff_leverage=1.79, target_lots=0.03, trigger="gate-entry", position_lots=0.0),
+            row(17, "LONG", eff_leverage=5.0, target_lots=0.09, trigger="gate-entry", position_lots=0.0)]
+    monkeypatch.setattr(run_monitor.db, "load_signals", lambda rid: rows)
+    assert run_monitor._current_entry(1)["eff_leverage"] == 5.0        # the newest order is the live one
+    rows += [row(18, "LONG", trigger="restart-settle", position_lots=0.09),   # no ramp on this row
+             row(19, "LONG", eff_leverage=2.2, target_lots=0.09, trigger="daily", position_lots=0.09),
+             row(20, "LONG", eff_leverage=4.0, target_lots=0.09, trigger="gate-rearm", position_lots=0.09)]
+    e = run_monitor._current_entry(1)
+    assert e["eff_leverage"] == 5.0 and e["time"].startswith("2026-11-10T17")
+    rows.append(row(21, "FLAT", trigger="stop"))
+    rows.append(row(22, "LONG", trigger="restart-settle", position_lots=0.05))
+    assert run_monitor._current_entry(1)["eff_leverage"] is None      # unknown draw: the line is omitted
+
+def test_health_check_prints_the_held_size_and_its_real_multiple(monkeypatch, capsys):
+    """Round-10B: at 272,000 JPY the 0.01-lot step truncates a ramp of 1.0-1.1x
+    to about 0.55x real, and an external trim is adopted by the brain: the line
+    must show the book's lots and the real multiple next to the ramp's."""
+    import sys as _sys
+    from datetime import datetime as _datetime, timedelta, timezone as _tz
+    from app.models import Candle
+    from scripts import run_monitor as M
+    now = _datetime.now(_tz.utc).replace(minute=0, second=0, microsecond=0)
+    bars = [Candle(instrument="USD_JPY", granularity="H1", time=now - timedelta(hours=2500 - i),
+                   open=150.0, high=150.1, low=149.9, close=140.0 + i * 0.004) for i in range(2501)]
+    monkeypatch.setattr(M.bridge, "read_bars", lambda *a, **k: bars)
+    monkeypatch.setattr(M.bridge, "read_status", lambda *a, **k: {
+        "balance": 272_000.0, "equity": 272_000.0, "position_lots": 0.01})
+    monkeypatch.setattr(M.db, "init_db", lambda: None)
+    monkeypatch.setattr(M.db, "latest_live_run_id", lambda kind: 1)
+    monkeypatch.setattr(M.db, "get_run", lambda rid: {"mode": "live", "granularity": "H1",
+                                                      "started_at": "2026-06-18", "instrument": "USD_JPY",
+                                                      "initial_balance": 300_000.0})
+    monkeypatch.setattr(M.db, "load_equity", lambda rid: [
+        {"time": "2026-06-18T00:00:00+00:00", "equity": 300_000.0},
+        {"time": now.isoformat(), "equity": 272_000.0}])
+    monkeypatch.setattr(M, "_current_entry", lambda rid: {
+        "time": "2026-11-10T17:00:00+00:00", "eff_leverage": 1.08, "lots": 0.01})
+    for name, val in (("_actions", ["LONG"]),
+                      ("_bridge_liveness", {"missing": False, "age_s": 20.0, "legacy": False}),
+                      ("_brain_liveness", {"signal_age_s": 60.0, "expired": False}),
+                      ("_last_ai_binding", None), ("_ea_build", "r6e-status"),
+                      ("_last_decision_age_s", 3600.0), ("_blocked_on_lock", None),
+                      ("_closed_bar_segment", None)):
+        monkeypatch.setattr(M, name, (lambda v: (lambda *a, **k: v))(val))
+    monkeypatch.setattr(_sys, "argv", ["run_monitor.py"])
+    M.main()
+    out = capsys.readouterr().out
+    line = next(l for l in out.splitlines() if "今の建玉" in l)
+    real = 0.01 * 100_000 * bars[-1].close / 272_000.0
+    assert "0.01ロット" in line and f"実効{real:.1f}倍" in line and "ランプ倍率 1.1倍" in line, line
+    assert "UTC建て" in line and "2026-11-10 17:00" in line, line
+    head = next(l for l in out.splitlines() if "基準" in l)
+    assert "年+9%前後（2〜15%）" in head and "警告線36%" in head and "最悪35%" in head, head

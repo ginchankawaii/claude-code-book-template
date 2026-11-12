@@ -37,8 +37,24 @@ held at 5.0x with SMA2400 and at 1.0x with SMA2500, so SMA2400's own 15.3%/yr
 is the top of the draw (5th of 81 neighbouring lengths; the nine lengths
 2000..2800 average 9.3%, and earn about zero from 2015-01 to 2021-09). A band
 built from the SMA2400 path alone would call the next, ordinary draw
-under-performance. The tables therefore cover the close cadence at all nine
-lengths plus the closed-bar live cadence at the live length.
+under-performance. Every length is replayed at both cadences the envelopes
+cover — the backtest close and the closed-bar live brain at five poll phases —
+because the account trades at the second (SMA2700 reaches a 35.4% drawdown
+there against 33.9% at the close; Round-10B).
+
+  * RETURNS: all nine lengths. The "bottom 10%" column is the 10th percentile
+    of the nine POOLED, one weight per length (it was the minimum of the
+    per-run percentiles: the unluckiest length's own p10, 1.5-10 pp looser
+    than the label — Round-10B); the worst column is the worst of any run.
+  * COUNTS: the live length and its two immediate neighbours (2300-2500). A
+    count is a property of the signal, and SMA2400's own 38 changes/yr is the
+    FEWEST of the nine (41-51 for the others) — a lucky draw too: a band from
+    it alone read the whipsaw SMA2300 and SMA2500 really produced as RED or
+    "unprecedented". The whole nine would hide a doubled trade rate (it read
+    RED in 37% of start dates against 66% with 2300-2500). Measured on the
+    tape, Round-10B: the p90 YELLOW comes at a median ~170 days either way;
+    the forming-bar defect still reads RED in 80% of start dates (87% with
+    SMA2400 alone), and no start of SMA2300 or SMA2500 ever reads RED.
 
 Each table row covers the spans from its own up to the next row's, and holds
 the EXTREME over every whole-day span in that interval (no interpolation can
@@ -64,7 +80,8 @@ if str(FXSIM) not in sys.path:
 from scripts import research_harness as H  # noqa: E402
 
 N_SMA = 2400                          # the live length
-NEIGHBOURHOOD = tuple(range(2000, 2801, 100))
+NEIGHBOURHOOD = tuple(range(2000, 2801, 100))     # returns and the headline numbers
+COUNT_LENGTHS = (2300, 2400, 2500)                # trade counts (module docstring)
 RISK, STOP_ATR, CAP = 0.04, 1.5, 5.0
 HS = 0.8 * 0.01 / 2.0                 # half of the 0.8-pip spread
 LIVE_POLL_MIN, LIVE_COOLDOWN_MIN = 10, 15
@@ -198,7 +215,7 @@ def replay(cadence: str = "close", phase_min: int = 5, n_sma: int = N_SMA) -> di
         bal += u * (cl[-1] - HS - entry)
         trades += 1                                                  # the forced close at the end
     return dict(eq=eqs, t=t[H.WARMUP:], changes=np.array(changes, dtype=np.int64),
-                trades=trades, final=bal)
+                trades=trades, final=bal, n_sma=n_sma, cadence=cadence)
 
 
 def _ends(t: np.ndarray) -> np.ndarray:
@@ -224,41 +241,63 @@ def window_returns(r: dict, span_days: int) -> np.ndarray:
     return (r["eq"][ks[ok]] / r["eq"][j] - 1.0) * 100.0
 
 
-def runs(phases=LIVE_PHASES, lengths=NEIGHBOURHOOD) -> tuple[list[dict], list[dict]]:
-    """(count_runs, return_runs).
+def runs(phases=LIVE_PHASES, lengths=NEIGHBOURHOOD,
+         count_lengths=COUNT_LENGTHS) -> tuple[list[dict], list[dict]]:
+    """(count_runs, return_runs): every length at the backtest close and at the
+    closed-bar live cadence (each poll phase). Counts use count_lengths,
+    returns all `lengths` (module docstring). Never the forming-bar brain
+    before Round-9: widening the tables to cover that defect made the monitor
+    blind to it (~100 changes/yr read 🟢)."""
+    by_len = {n: [replay("close", n_sma=n)] + [replay("closedbar", p, n_sma=n) for p in phases]
+              for n in sorted(set(lengths) | set(count_lengths))}
+    return ([r for n in count_lengths for r in by_len[n]],
+            [r for n in lengths for r in by_len[n]])
 
-    Position changes are a property of the SIGNAL at the live length, so their
-    envelope comes from SMA2400 alone (backtest + closed-bar live cadence): a
-    shorter SMA simply crosses more often, and including it would hide a real
-    excess. RETURNS depend on the leverage draw (module docstring), so their
-    envelope adds the backtest at every neighbouring length.
-    Never the forming-bar brain before Round-9: widening the tables to cover
-    that defect made the monitor blind to it (~100 changes/yr read 🟢)."""
-    live = [replay("close")] + [replay("closedbar", p) for p in phases]
-    family = [replay("close", n_sma=n) for n in lengths if n != N_SMA]
-    return live, live + family
+
+def pooled_percentile(groups: list[np.ndarray], q: float) -> float:
+    """The q-th percentile of the groups pooled with ONE weight per group (each
+    group's values share it equally), so a length replayed at six cadences
+    counts once, like a length replayed at one."""
+    groups = [np.asarray(g, float) for g in groups if len(g)]
+    vals = np.concatenate(groups)
+    w = np.concatenate([np.full(len(g), 1.0 / len(g)) for g in groups]) / len(groups)
+    order = np.argsort(vals, kind="stable")
+    cum = np.cumsum(w[order])
+    return float(vals[order][min(np.searchsorted(cum, q / 100.0), len(vals) - 1)])
 
 
 def build(count_runs: list[dict], return_runs: list[dict]) -> tuple[tuple, tuple]:
     """Step tables: each row holds the extreme over every whole-day span from
-    its own to the next row's (exclusive); the last row is its span alone."""
-    def rows_for(table, fn, agg, rs):
-        out = []
+    its own to the next row's (exclusive); the last row is its span alone.
+    The soft column is the pooled percentile at each span (one weight per
+    length), its extreme over the row's spans; the hard column is the extreme
+    of any run at any of those spans."""
+    def by_length(rs):
+        out: dict = {}
+        for r in rs:
+            out.setdefault(r.get("n_sma", N_SMA), []).append(r)
+        return list(out.values())
+
+    def rows_for(table, fn, soft, hard, rs):
+        groups, out = by_length(rs), []
         for a_, b_ in zip(table, table[1:] + (table[-1] + 1,)):
-            vals = [fn(r, s) for r in rs for s in range(a_, b_)]
-            out.append((a_,) + agg(vals))
-        return tuple(out)
+            softs, hards = [], []
+            for s in range(a_, b_):
+                per_len = [np.concatenate([fn(r, s) for r in g]) for g in groups]
+                per_len = [v for v in per_len if len(v)]
+                if not per_len:
+                    continue
+                softs.append(soft(per_len))
+                hards.append(hard(np.concatenate(per_len)))
+            out.append((a_, softs, hards))
+        return out
 
-    def chg_agg(vals):
-        return (int(max(math.ceil(np.percentile(v, 90)) for v in vals if len(v))),
-                int(max(v.max() for v in vals if len(v))))
-
-    def ret_agg(vals):
-        return (round(float(min(np.percentile(v, 10) for v in vals if len(v))) - 0.05, 1),
-                round(float(min(v.min() for v in vals if len(v))) - 0.05, 1))
-
-    chg = rows_for(CHANGE_ROWS, window_counts, chg_agg, count_runs)
-    ret = rows_for(RETURN_ROWS, window_returns, ret_agg, return_runs)
+    chg = tuple((w, int(max(math.ceil(v) for v in sf)), int(max(hd)))
+                for w, sf, hd in rows_for(CHANGE_ROWS, window_counts,
+                                          lambda g: pooled_percentile(g, 90), np.max, count_runs))
+    ret = [(w, round(float(min(sf)) - 0.05, 1), round(float(min(hd)) - 0.05, 1))
+           for w, sf, hd in rows_for(RETURN_ROWS, window_returns,
+                                     lambda g: pooled_percentile(g, 10), np.min, return_runs)]
     # A longer window is never judged more strictly than a shorter one: the
     # worst over spans up to W is the running minimum (else a -26.5% drawdown
     # that merely stayed flat for 25 more days flipped 🟡 to 🔴 at day 545 —
@@ -268,6 +307,30 @@ def build(count_runs: list[dict], return_runs: list[dict]) -> tuple[tuple, tuple
         run = min(run, worst)
         out.append((w, p10, run))
     return chg, tuple(out)
+
+
+def headline(count_runs: list[dict], return_runs: list[dict]) -> dict:
+    """The numbers the operator is shown (app/monitor.py BT_*), from the same
+    runs: per-length means, then the mean over lengths; ranges over all runs."""
+    yrs = (return_runs[0]["t"][-1] - return_runs[0]["t"][0]) / np.timedelta64(1, "D") / 365.25
+
+    def cagr(r):
+        return ((r["final"] / 500_000.0) ** (1 / yrs) - 1) * 100
+
+    def mdd(r):
+        eq = r["eq"]
+        return float(np.max(1 - eq / np.maximum.accumulate(eq)) * 100)
+
+    def per_len(rs, f):
+        g: dict = {}
+        for r in rs:
+            g.setdefault(r.get("n_sma", N_SMA), []).append(f(r))
+        return [float(np.mean(v)) for v in g.values()]
+    return dict(cagr=float(np.mean(per_len(return_runs, cagr))),
+                cagr_range=(min(map(cagr, return_runs)), max(map(cagr, return_runs))),
+                maxdd_mean=float(np.mean(per_len(return_runs, mdd))),
+                maxdd_worst=max(map(mdd, return_runs)),
+                changes_per_year=float(np.mean(per_len(count_runs, lambda r: len(r["changes"]) / yrs))))
 
 
 def validate(verbose: bool = True) -> bool:
@@ -287,19 +350,23 @@ def validate(verbose: bool = True) -> bool:
 def main() -> int:
     if not validate():
         return 1
-    rs = runs()
-    yrs = (rs[0][0]["t"][-1] - rs[0][0]["t"][0]) / np.timedelta64(1, "D") / 365.25
-    count_runs, return_runs = rs
-    names = (["close SMA2400"] + [f"closedbar p{p}" for p in LIVE_PHASES]
-             + [f"close SMA{n} (returns only)" for n in NEIGHBOURHOOD if n != N_SMA])
+    count_runs, return_runs = runs()
+    yrs = (return_runs[0]["t"][-1] - return_runs[0]["t"][0]) / np.timedelta64(1, "D") / 365.25
     old = [replay("live", p) for p in LIVE_PHASES]          # comparison only
-    for r, name in zip(return_runs + old,
-                       names + [f"forming-bar p{p} (pre-fix, not in tables)" for p in LIVE_PHASES]):
+    for r in return_runs + old:
         cagr = ((r["final"] / 500_000.0) ** (1 / yrs) - 1) * 100
         eq = r["eq"]
         mdd = float(np.max(1 - eq / np.maximum.accumulate(eq)) * 100)
-        print(f"# {name:42s}: CAGR {cagr:5.1f}% maxDD {mdd:4.1f}% "
-              f"{len(r['changes']) / yrs:5.1f} position changes/yr")
+        tag = ("pre-fix, not in tables" if r["cadence"] == "live"
+               else "counts+returns" if r["n_sma"] in COUNT_LENGTHS else "returns")
+        print(f"# SMA{r['n_sma']} {r['cadence']:9s} ({tag:22s}): CAGR {cagr:5.1f}% "
+              f"maxDD {mdd:4.1f}% {len(r['changes']) / yrs:5.1f} position changes/yr")
+    hl = headline(count_runs, return_runs)
+    print(f"BT_CAGR_PCT = {hl['cagr']:.1f}")
+    print(f"BT_CAGR_RANGE = ({hl['cagr_range'][0]:.1f}, {hl['cagr_range'][1]:.1f})")
+    print(f"BT_MAXDD_MEAN_PCT = {hl['maxdd_mean']:.1f}")
+    print(f"BT_MAXDD_PCT = {hl['maxdd_worst']:.1f}")
+    print(f"BT_CHANGES_PER_YEAR = {hl['changes_per_year']:.1f}")
     chg, ret = build(count_runs, return_runs)
     print("ENVELOPE_CHANGES = (   # (from span_days, p90 count, max count)")
     for row in chg:

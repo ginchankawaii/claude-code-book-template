@@ -6,8 +6,9 @@ Claude(Claude Code)がどれくらい FX で利益を出せるかを検証する
 （Claude によるニュース分析）を組み合わせ、売買結果を SQLite に保存し、
 Web GUI でグラフィカルに確認できます。
 
-> ⚠️ これはペーパートレード（仮想売買）です。実資金の発注は行いません。
-> バックテストで継続的に利益が出ることを確認してから本番（実口座）を検討してください。
+> ⚠️ **本番稼働中（実資金）**：USD/JPYを、OANDA証券の実口座でMT5のSteadyBridge EA経由で売買しています。
+> 運用の要点・起動・更新・監視は **docs/OVERVIEW.md**。以下の説明の多くは、この仕組みの出発点だった
+> ペーパートレード・シミュレータ（実レートを取得し、約定をローカルで再現する部分）のものです。
 
 ---
 
@@ -154,11 +155,12 @@ Claude Code on the web の実行環境はネットワークポリシーで外部
 ## リスク / サイズ計算
 
 - 1トレードの損失は `FXSIM_RISK`（既定 4%・攻め設定）× 現在エクイティ
-- **レバレッジ上限** `FXSIM_MAX_LEVERAGE`（既定 5x）：ノーション = `units × price` が
-  `5 × エクイティ` を超えない。攻めのダイヤル兼・安全装置（小ATR時のサイズ暴走を防ぐ）。
+- **レバレッジ上限** `FXSIM_MAX_LEVERAGE`（既定 5x、0より大きく5以下。0以下は無効として1倍、5超は5倍に丸める）：
+  ノーション = `units × price` が `上限 × エクイティ` を超えない。攻めのダイヤル兼・安全装置（小ATR時のサイズ暴走を防ぐ）。
   複利の最適点は約5倍で、それ以上はDDだけ増えCAGRは下がる（docs/RESEARCH.md）
 - **攻めの最適レシピ**（11年OOS検証）：`FXSIM_STRATEGY=trend FXSIM_GRANULARITY=H1
-  FXSIM_TREND_SMA=2400 FXSIM_RISK=0.04 FXSIM_USE_TAKE_PROFIT=0`（フラット5倍：CAGR≈12% / DD≈34%。本番の線形ランプ `FXSIM_DYN_LEVERAGE=1` では CAGR≈15% / DD≈27%）。
+  FXSIM_TREND_SMA=2400 FXSIM_RISK=0.04 FXSIM_USE_TAKE_PROFIT=0`（フラット5倍：CAGR≈12% / DD≈34%。本番の線形ランプ `FXSIM_DYN_LEVERAGE=1` では CAGR≈15% / DD≈27%。
+  ただしこの15%は平均線の長さの「引き」の最上位で、近い長さ9通りの平均は年9%前後・最悪DD 35%＝docs/RESEARCH.md Round-10）。
   詳細と検証は `docs/RESEARCH.md`（`scripts/research_run8.py` で再現）
 - ストップ = 1.5 × ATR、利確 = 2 × ストップ（リワード:リスク = 2:1）
 - 口座通貨はペアの**クォート通貨**（USD_JPY なら JPY）と仮定（単一ペアの厳密計算のため）
@@ -174,4 +176,5 @@ python -m pytest tests/ -q
 
 - 現状は単一ペアを想定（複数ペア同時運用は今後）
 - `sample` データはランダムで、利益検証には不適（実データを使用すること）
-- 本番（実発注）は未実装 — OANDA の order API を engine に差し込めば拡張可能
+- 実発注はMT5ブリッジ経由で実装済み（`scripts/run_ai_bridge.py` ⇄ `mt5_ea/SteadyBridge.mq5`、docs/AI_TRADER.md）。
+  このシミュレータのengineから直接OANDAへ発注する経路はない

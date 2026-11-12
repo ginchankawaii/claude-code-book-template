@@ -41,12 +41,20 @@ def _timed_actions(run_id: int) -> list[tuple[str, str]]:
     return out
 
 
+FLAT_EPS = 0.01          # the brain's dust threshold (scripts/run_ai_bridge.py)
+
+
 def _current_entry(run_id: int) -> dict | None:
-    """The decision that opened the position the log currently holds: the first
-    LONG row of the newest unbroken run of LONG decisions. Its ramp value is the
-    draw this whole holding is sized by (Round-10), so the owner should see it."""
-    entry = None
-    prev_long = False
+    """The order that opened the position the log currently holds. Within the
+    newest unbroken run of LONG decisions: the LAST one decided over a flat
+    book before the first row that saw the book open — the order that filled.
+    Its ramp value is the draw this whole holding is sized by (Round-10).
+    The first LONG of the run is not enough (Round-10B): an entry the EA did
+    not fill (algo trading off, entry back-off) is re-decided on a later bar
+    at a new ramp, and the line showed the unfilled order's 1.8x for a book
+    held at 5.0x. Rows without a ramp value (restart-settle) never replace a
+    candidate that has one."""
+    entry = filled = None
     for s in db.load_signals(run_id):
         if s.get("source") != "combined":
             continue
@@ -54,16 +62,40 @@ def _current_entry(run_id: int) -> dict | None:
             comp = json.loads(s["components"]) if s.get("components") else {}
         except (json.JSONDecodeError, TypeError):
             comp = {}
-        if comp.get("trigger") == "blocked-on-lock":
+        if not isinstance(comp, dict) or comp.get("trigger") == "blocked-on-lock":
             continue
-        is_long = str(comp.get("action", "FLAT")).upper() == "LONG"
-        if is_long and not prev_long:
+        if str(comp.get("action", "FLAT")).upper() != "LONG":
+            entry = filled = None                 # a FLAT ends the holding
+            continue
+        if filled is not None:
+            continue                              # holds and re-arms of the filled order
+        try:
+            pos = float(comp.get("position_lots") or 0.0)
+        except (TypeError, ValueError):
+            pos = 0.0
+        if pos >= FLAT_EPS:
+            filled = entry or {"time": str(s.get("time")), "eff_leverage": None,
+                               "lots": None}       # the book is open: the candidate filled
+        elif comp.get("eff_leverage") is not None or entry is None:
             entry = {"time": str(s.get("time")), "eff_leverage": comp.get("eff_leverage"),
                      "lots": comp.get("target_lots")}
-        if not is_long:
-            entry = None
-        prev_long = is_long
-    return entry
+    return filled or entry
+
+
+def _live_book() -> tuple[float | None, float | None]:
+    """(position lots, equity) from the EA's status, or (None, None)."""
+    try:
+        st = bridge.read_status()
+    except Exception:
+        st = None
+    if not st:
+        return None, None
+    try:
+        lots = float(st.get("position_lots") or 0.0)
+        eq = float(st.get("equity") or st.get("balance") or 0.0)
+    except (TypeError, ValueError):
+        return None, None
+    return lots, (eq if eq > 0 else None)
 
 
 def _actions(run_id: int) -> list[str]:
@@ -86,13 +118,13 @@ def _actions(run_id: int) -> list[str]:
     return out
 
 
-def _bars_age_h(candles) -> float | None:
+def _bars_age_h(candles, now=None) -> float | None:
     if not candles:
         return None
     t = candles[-1].time
     if t.tzinfo is None:
         t = t.replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - t).total_seconds() / 3600.0
+    return ((now or datetime.now(timezone.utc)) - t).total_seconds() / 3600.0
 
 
 def _current_strategy_signal(cfg: Settings, instrument: str, history_csv: str) -> str | None:
@@ -105,8 +137,9 @@ def _current_strategy_signal(cfg: Settings, instrument: str, history_csv: str) -
         print(f"[monitor] bar feed unavailable/short ({len(candles)} bars < {need}) — "
               f"trend basis not computed; is the EA exporting?")
         return None
-    age = _bars_age_h(candles)
-    limit = bridge.max_bar_age_h(candles[-1].time)
+    now = datetime.now(timezone.utc)          # one clock for the age and its limit
+    age = _bars_age_h(candles, now)
+    limit = bridge.max_bar_age_h(candles[-1].time, now)
     if age is not None and age > limit:
         # The brain refuses these bars and goes blind; a trend basis from them
         # would describe a feed the system itself is not trading on (round-6f).
@@ -306,6 +339,7 @@ def main() -> None:
     actions = _actions(rid)
 
     trend_basis = live_pos = None
+    _bars = []
     liveness = {"missing": False, "age_s": None, "legacy": False}
     brain = {"signal_age_s": None, "expired": None}
     bars_age = bars_count = bars_need = bars_limit = None
@@ -316,8 +350,9 @@ def main() -> None:
         liveness = _bridge_liveness()
         brain = _brain_liveness()
         _bars = bridge.read_bars(args.instrument, args.granularity)
-        bars_age = _bars_age_h(_bars)
-        bars_limit = bridge.max_bar_age_h(_bars[-1].time) if _bars else None
+        bars_now = datetime.now(timezone.utc)
+        bars_age = _bars_age_h(_bars, bars_now)
+        bars_limit = bridge.max_bar_age_h(_bars[-1].time, bars_now) if _bars else None
         bars_count, bars_need = len(_bars), args.sma + 5
 
     rep = monitor.build_report(
@@ -341,9 +376,17 @@ def main() -> None:
     print(f" 現在DD {s['cur_dd_pct']:.1f}% ｜ 期間中最大DD {s['max_dd_pct']:.1f}%")
     held = _current_entry(rid) if (args.kind == "fx" and live_pos == "LONG") else None
     if held and held.get("eff_leverage") is not None:
-        print(f" 今の建玉：{float(held.get('lots') or 0):.2f}ロット ｜ 建てた時のランプ倍率 "
-              f"{float(held['eff_leverage']):.1f}倍（1〜5倍。この倍率のまま決済まで持つ）"
-              f" ｜ {held['time'][:16]} 建て")
+        # The lots come from the EA's book (an external trim is adopted), and
+        # the real multiple is shown next to the ramp's: at this balance the
+        # 0.01-lot step truncates a 1.0-1.1x ramp to about 0.55x (Round-10B).
+        lots, eq_now = _live_book()
+        px = float(_bars[-1].close) if _bars else None
+        real = (f"（実効{lots * 100_000 * px / eq_now:.1f}倍）"
+                if (lots and px and eq_now) else "")
+        lots_txt = f"{lots:.2f}" if lots else f"{float(held.get('lots') or 0):.2f}"
+        print(f" 今の建玉：{lots_txt}ロット{real} ｜ 建てた時のランプ倍率 "
+              f"{float(held['eff_leverage']):.1f}倍（1〜5倍。建てた足で決まり、決済までロット数は変えない）"
+              f" ｜ {held['time'][:16].replace('T', ' ')} UTC建て")
     tpy = rep["trades_per_year"]                          # annualised only from 365 days
     print(f" 建玉変化（全期間） {rep['n_position_changes']}回／{span:.0f}日"
           + (f"（年率 {tpy:.0f}回）" if tpy is not None else ""))
@@ -351,12 +394,13 @@ def main() -> None:
     if args.kind == "fx":
         lo_, hi_ = monitor.BT_CAGR_RANGE
         print(" 基準（バックテスト H1 2015-26・平均線の長さ9通り・スワップ別）: "
-              f"年+{monitor.BT_CAGR_PCT:.0f}%前後（{lo_:.0f}〜{hi_:.0f}%） / 最大DD 29%前後"
-              f"（最悪{monitor.BT_MAXDD_PCT:.0f}%＝警告線） / 建玉変化 約{monitor.BT_CHANGES_PER_YEAR:.0f}回/年")
+              f"年+{monitor.BT_CAGR_PCT:.0f}%前後（{lo_:.0f}〜{hi_:.0f}%） / 最大DD "
+              f"{monitor.BT_MAXDD_MEAN_PCT:.0f}%前後（最悪{monitor.BT_MAXDD_PCT:.0f}%・警告線"
+              f"{monitor.EXP_MAXDD_PCT:.0f}%） / 建玉変化 約{monitor.BT_CHANGES_PER_YEAR:.0f}回/年")
         print(f"   ※ 本番SMA2400単独の+{hi_:.0f}%は最上位の引き。建玉の倍率（1〜5倍）は建てた足で決まり、"
               "大きなトレンドを何倍で持てるかで結果が大きく変わる。2015年〜2021年9月は9通りの平均でほぼ0%")
         print("   ※ 取引頻度・リターンは確定足方式（2026-11修正）の判断以降の区間だけを、同じ長さの期間の"
-              "バックテスト／確定足リプレイと比較（リターンは9通り、回数はSMA2400）")
+              "バックテスト／確定足リプレイと比較（リターンは9通り、回数はSMA2300〜2500）")
     print("-" * 60)
     for c in rep["checks"]:
         print(f"  {c['flag']} {c['name']:<6} {c['msg']}")

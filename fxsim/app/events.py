@@ -156,20 +156,39 @@ class EconomicCalendar:
 # backends
 # --------------------------------------------------------------------------- #
 def _load_file(path: Path | None = None) -> EconomicCalendar:
+    """The cached calendar: a JSON list of events, or {"events": [...]}.
+
+    Never raises on content. The file is hand-maintained while the API key is
+    off, and the trading loop loads it at start and at every UTC date change:
+    a null entry, a dict with no 'events' list, or a file saved in Shift-JIS
+    raised AttributeError / UnicodeDecodeError straight through the old
+    (JSONDecodeError, OSError) guard and stopped the brain (Round-10B). A BOM
+    (Notepad's UTF-8) is accepted."""
     path = path if path is not None else CALENDAR_FILE   # resolve at call time
-    if not path.exists():
-        return EconomicCalendar([])
     try:
-        raw = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
+        if not path.exists():
+            return EconomicCalendar([])
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (ValueError, OSError) as exc:    # bad JSON or encoding, unreadable
+        print(f"[cal] {path.name} unreadable ({type(exc).__name__}); no events", flush=True)
         return EconomicCalendar([])
-    items = raw.get("events", raw) if isinstance(raw, dict) else raw
+    items = raw.get("events") if isinstance(raw, dict) else raw
+    if not isinstance(items, list):
+        print(f"[cal] {path.name} holds no event list; no events", flush=True)
+        return EconomicCalendar([])
     events: list[EconomicEvent] = []
-    for it in items or []:
+    skipped = 0
+    for it in items:
+        if not isinstance(it, dict):
+            skipped += 1
+            continue
         try:
             events.append(EconomicEvent.from_dict(it))
-        except (ValueError, TypeError, KeyError):
-            continue
+        except Exception:
+            skipped += 1
+    if skipped:
+        print(f"[cal] {path.name}: skipped {skipped} unreadable entr"
+              f"{'y' if skipped == 1 else 'ies'}", flush=True)
     return EconomicCalendar(events)
 
 
@@ -252,8 +271,10 @@ class AnthropicCalendar:
         # count as an attempt, or a restart loop bills for every restart.
         self._mark_attempt()
         try:
+            # One bounded attempt, no SDK retry: anthropic 1.x sleeps for the
+            # server's retry-after with no cap (Round-10B).
             client = anthropic.Anthropic(api_key=settings.anthropic_api_key,
-                                         timeout=120.0, max_retries=1)
+                                         timeout=120.0, max_retries=0)
             resp = client.messages.create(
                 model=self.model,
                 max_tokens=2048,
@@ -283,11 +304,15 @@ def _parse_events_json(text: str) -> list[EconomicEvent]:
         arr = json.loads(text[start : end + 1])
     except json.JSONDecodeError:
         return []
+    if not isinstance(arr, list):
+        return []
     out: list[EconomicEvent] = []
     for it in arr:
+        if not isinstance(it, dict):      # one stray null must not drop the whole reply
+            continue
         try:
             out.append(EconomicEvent.from_dict(it))
-        except (ValueError, TypeError, KeyError):
+        except Exception:
             continue
     return out
 

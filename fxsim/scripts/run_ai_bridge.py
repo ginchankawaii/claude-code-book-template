@@ -60,7 +60,7 @@ from app import bridge, db
 from app.adaptive import AdaptiveConfig, AdaptiveController
 from app.ai_trader import AITrader, size_lots
 from app.config import Settings, pip_size
-from app.events import get_calendar
+from app.events import EconomicCalendar, get_calendar
 from app.indicators import candles_to_df, enrich
 from app.providers.csv import load_csv_file
 from app.sizing import conviction_leverage
@@ -565,7 +565,8 @@ def _awaiting_new_bar(reentry_bar, bar_t, pos: float):
     exists: the backtest re-enters only at the close of the bar the stop hit
     in. An older or unreadable bar time (a torn bars file) keeps the block —
     only a newer bar, or a book that is no longer flat, clears it. Finite: a
-    frozen feed goes stale (blind) within MAX_BAR_AGE_H."""
+    frozen feed goes stale (blind) within bridge.max_bar_age_h — 75 h, or 99 h
+    when the closure spans 25 December or 1 January."""
     mark = _utc(reentry_bar)
     if mark is None or pos >= FLAT_EPS:
         return False, None
@@ -573,6 +574,21 @@ def _awaiting_new_bar(reentry_bar, bar_t, pos: float):
     if now_bar is None or now_bar <= mark:
         return True, reentry_bar
     return False, None
+
+
+def _safe_calendar(mode: str, instrument: str, prev=None):
+    """The event calendar, or `prev` (else an empty one) if loading it raised.
+    The calendar only ever adds advisory decision triggers, so a bad one must
+    never stop trading: a calendar.json holding a null entry or a dict with no
+    'events' list raised at the start of main() — before the lock, on every
+    supervisor restart — and in the loop's daily refresh on every poll after
+    UTC midnight, while the EA flattened the long at EXP (Round-10B)."""
+    try:
+        return get_calendar(mode, instrument)
+    except Exception as exc:
+        print(f"[cal] calendar load failed ({type(exc).__name__}: {exc}); keeping "
+              f"{'the previous' if prev is not None else 'an empty'} calendar", flush=True)
+        return prev if prev is not None else EconomicCalendar([])
 
 
 def _restore_reentry(granularity: str = "H1") -> tuple[Optional[str], float]:
@@ -874,8 +890,13 @@ def decide_once(cfg: Settings, instrument: str, max_risk: float, max_lots: float
                      f"conviction do not change it at this balance]")
     elif binder:
         stop_txt += f" [size set by {binder}]"
+    # Only a fresh entry is sized here; a hold keeps the lots it was opened with
+    # and a FLAT has none, so printing today's ramp on those lines contradicted
+    # the health check's entry line (Round-10B).
+    lev_txt = (f"lev {eff_leverage:.1f}x" if fresh
+               else "size held from entry" if action == "LONG" else "no position")
     print(f"[ai] decision: {action} {lots:.2f} lots | conviction {conviction:.2f} "
-          f"risk {risk_used:.3f} (brake {brake:.2f}) lev {eff_leverage:.1f}x{stop_txt} | {reason}",
+          f"risk {risk_used:.3f} (brake {brake:.2f}) {lev_txt}{stop_txt} | {reason}",
           flush=True)
     for f in factors:
         print(f"      - {f}", flush=True)
@@ -972,7 +993,7 @@ def main() -> None:
     reentry_bar = None
     veto_until = 0.0
     acted_events: set[str] = set()
-    cal = get_calendar(args.calendar_mode, args.instrument)
+    cal = _safe_calendar(args.calendar_mode, args.instrument)
     cal_day = datetime.now(timezone.utc).date()
 
     def record_stop_exit(price: float, stop: float, pos: float, now: datetime,
@@ -1072,12 +1093,22 @@ def main() -> None:
             now = datetime.now(timezone.utc)
             # refresh the event schedule once a day
             if now.date() != cal_day:
-                cal = get_calendar(args.calendar_mode, args.instrument)
+                # The day is marked done BEFORE the refresh: a refresh that
+                # raised used to repeat on every poll, ahead of the probe, the
+                # stop check and the heartbeat (Round-10B).
                 cal_day = now.date(); acted_events.clear()
+                cal = _safe_calendar(args.calendar_mode, args.instrument, cal)
 
             probe = _trend_gate(args.instrument, args.granularity, args.sma, args.history)
             trigger = None
-            skip_scheduled = False
+            # Blind means NO scheduled decision, whatever made it blind
+            # (Round-10B). decide_once reads the bars and the status itself and
+            # knows nothing of the re-entry mark or of a FLAT the EA has not
+            # executed yet: a daily or event decision on the poll after a
+            # transient bad read re-opened the book inside the stop's bar, or
+            # held the position the stop had just closed and re-armed it. The
+            # trigger stays due and runs at the first trusted poll.
+            skip_scheduled = probe is None
             if probe is not None:
                 trend_up, price, pos, st = probe
                 # EA liveness (round-6c): a live EA rewrites the status every

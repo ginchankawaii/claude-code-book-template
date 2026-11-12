@@ -7,3 +7,7 @@ node_modules
 .git
 .mt5common
 *.png
+# secrets never go into an image layer (Round-10B); compose supplies them at run time
+.env
+.env.*
+!.env.example

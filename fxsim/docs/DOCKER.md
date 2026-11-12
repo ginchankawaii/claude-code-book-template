@@ -40,7 +40,7 @@ docker compose up -d --build
 docker compose logs -f fx          # FXの判断ログを追う
 docker compose logs -f dashboard   # サーバのログ
 docker compose ps                  # 稼働状況
-docker compose restart fx          # コードを git pull した後の反映（再ビルド不要）
+docker compose restart fx          # コードを git pull した後の反映（通常。再ビルドが要る時は下の6）
 docker compose down                # 全部停止
 ```
 
@@ -60,10 +60,16 @@ docker compose run --rm app python -m pytest tests -q
 ## 6. 更新の流れ
 ```powershell
 git pull
-docker compose restart            # コードだけの変更（マウント反映）→ 再起動でOK
-# requirements.txt が変わった時だけ：
+docker compose restart fx         # コードだけの変更（マウント反映）→ 再起動でOK
+# requirements.txt / constraints.txt / Dockerfile が変わった時だけ（更新案内に「再ビルド」と書く）：
 docker compose up -d --build
 ```
+- 再ビルドで入るライブラリは `constraints.txt` で1つ残らず固定してある（GitHubのテストと同じ組み合わせ。Round-10B）。
+  固定していない間は、再ビルドのたびにその日の最新版が入っていた。
+- 再ビルドは `fx` コンテナを作り直す＝脳が再起動する。建玉中でも安全（新しい脳は最大約12分で引き継ぎ、
+  EAの注文期限は120分）。ただし年末年始の休場中（12/25・1/1をまたぐ週末）はやらない。
+- 再ビルドの後は `docker compose run --rm app python -m pytest tests -q` で failed が0なのを確認。
+- `.env`（APIキー・パスワード）はイメージに入らない（`.dockerignore`。実行時にマウントと `env_file` から読む）。
 
 ## つまづきポイント
 - **`http://localhost:8000` が開かない** → `docker compose ps` で dashboard が up か確認。

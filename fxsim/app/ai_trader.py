@@ -90,11 +90,16 @@ class AITrader:
         if not default_settings.anthropic_api_key:
             return AIDecision.flat("ANTHROPIC_API_KEY not set")
         try:
-            # Bounded timeout (Round-4: the SDK default is ~600s/attempt x3
-            # attempts ~= 30min — a hung consult would suspend the single-
-            # threaded loop that also enforces the protective stop).
+            # Bounded: ONE attempt of at most 120 s (Round-4: the SDK default
+            # is ~600s/attempt x3 attempts ~= 30min — a hung consult would
+            # suspend the single-threaded loop that also enforces the
+            # protective stop). No SDK retry at all (Round-10B): anthropic 1.x
+            # sleeps for the server's retry-after with no cap before a retry,
+            # so one 429 could hold the loop — and its heartbeat — for as long
+            # as the server asked; the caller already falls back to the trend
+            # edge on any error, so a retry buys nothing.
             client = anthropic.Anthropic(api_key=default_settings.anthropic_api_key,
-                                         timeout=120.0, max_retries=1)
+                                         timeout=120.0, max_retries=0)
             resp = client.messages.create(
                 model=self.model,
                 max_tokens=2048,

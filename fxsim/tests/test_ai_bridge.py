@@ -425,6 +425,58 @@ def test_dd_brake_default_off(wired, monkeypatch):
     assert calls == [1]               # opt-in path still works
 
 
+def test_the_leverage_dial_is_always_a_real_cap(monkeypatch, capsys):
+    """Round-10B: FXSIM_MAX_LEVERAGE=0 (documented as '0 disables') or any
+    negative value removed the cap — risk sizing then set 10-25x at 272,000
+    JPY, breaking I2. Read from .env it must always be a cap in (0, 5]."""
+    from app.ai_trader import size_lots
+    for raw, want in (("0", 1.0), ("-1", 1.0), ("０", 1.0), ("nan", 1.0), ("12", 5.0),
+                      ("inf", 5.0), ("2.5", 2.5), ("２．５", 2.5), ("5", 5.0), ("", 5.0)):
+        monkeypatch.setenv("FXSIM_MAX_LEVERAGE", raw)
+        assert Settings().max_leverage == want, raw
+    assert capsys.readouterr().out.count("WARNING") == 6       # every refusal is loud
+    monkeypatch.delenv("FXSIM_MAX_LEVERAGE")
+    assert Settings().max_leverage == 5.0
+    for raw in ("0", "-1"):                                     # through the real sizing call
+        monkeypatch.setenv("FXSIM_MAX_LEVERAGE", raw)
+        cap = Settings().max_leverage
+        lots = size_lots("long", 1.0, 272_000.0, 0.10, 0.01, 0.04, 100.0,
+                         price=150.0, max_leverage=cap)
+        assert lots * 100_000 * 150.0 <= cap * 272_000.0 + 1e-6, (raw, lots)
+    assert Settings(max_leverage=0.0).max_leverage == 0.0       # explicit (tests/research) untouched
+
+
+def test_on_off_dials_read_what_the_owner_typed(monkeypatch, capsys):
+    # Round-10B: '０' (IME), 'off' and 'False' all read as ON before.
+    for name, attr in (("FXSIM_DD_BRAKE", "dd_brake"), ("FXSIM_DYN_LEVERAGE", "dyn_leverage"),
+                       ("FXSIM_USE_TAKE_PROFIT", "use_take_profit")):
+        for raw in ("0", "０", "off", "OFF", "False", "no", " 0 "):
+            monkeypatch.setenv(name, raw)
+            assert getattr(Settings(), attr) is False, (name, raw)
+        for raw in ("1", "１", "on", "True", "yes"):
+            monkeypatch.setenv(name, raw)
+            assert getattr(Settings(), attr) is True, (name, raw)
+        monkeypatch.delenv(name)
+    assert Settings().dd_brake is False and Settings().dyn_leverage is True
+    monkeypatch.setenv("FXSIM_DD_BRAKE", "maybe")
+    assert Settings().dd_brake is False and "FXSIM_DD_BRAKE" in capsys.readouterr().out
+    for raw, want in (("Shadow", "shadow"), ("ＥＮＴＲＹ", "entry"), ("full", "full"),
+                      ("none", "shadow"), ("", "shadow")):
+        monkeypatch.setenv("FXSIM_AI_AUTHORITY", raw)
+        assert Settings().ai_authority == want, raw
+
+
+def test_a_non_finite_whole_number_dial_never_crashes_the_import(monkeypatch):
+    # Round-10B: FXSIM_TREND_SMA=nan raised in int() at import -> supervisor restart loop (I6)
+    for raw in ("nan", "inf", "-inf", "0", "-5", "1e400"):
+        monkeypatch.setenv("FXSIM_TREND_SMA", raw)
+        monkeypatch.setenv("FXSIM_MAX_UNITS", raw)
+        st = Settings()
+        assert st.trend_sma == 2400 and st.max_position_units == 100_000, raw
+    monkeypatch.setenv("FXSIM_TREND_SMA", "２４００")
+    assert Settings().trend_sma == 2400
+
+
 def test_dyn_lev_pow_reverted_to_linear():
     # Round-4 tribunal (pre-registered rule): convex failed its deflated-Sharpe
     # charge at every assumed N -> the default is the linear ramp again.
@@ -847,6 +899,8 @@ def test_awaiting_new_bar_helper():
     (2, "clock_behind"),      # 3rd review: a restored cooldown in the future held entries back
     (2, "torn_status"),       # 3rd review: a torn re-read lost the stop row and its mark
     (2, "lost_stop_row"),     # ...and with no stop row at all, settle must set the mark
+    (None, "blind_daily"),    # Round-10B: a blind poll dropped the block for a due daily
+    (None, "ea_lag_blind"),   # ...and, before the EA closed, re-armed the position it stopped
 ])
 def test_resident_loop_reenters_only_after_the_stop_bar_has_closed(tmp_path, monkeypatch,
                                                                    restart_after_poll, fault):
@@ -923,6 +977,11 @@ def test_resident_loop_reenters_only_after_the_stop_bar_has_closed(tmp_path, mon
         elif n == 7:                                 # that bar closes up; a new one forms
             closed.append(bar(120, 152.0))
             state["forming"] = bar(121, 152.1)
+        if n == 2 and fault in ("blind_daily", "ea_lag_blind"):
+            state["torn"] = True                     # the probe's status read fails once
+        if state.get("close_at") and n >= state["close_at"]:
+            state["pos"] = 0.0                       # the lagging EA finally closes
+            state.pop("close_at")
 
     monkeypatch.setattr(bridge, "read_bars", lambda *a, **k: closed + [state["forming"]])
     def read_status(*a, **k):
@@ -937,7 +996,10 @@ def test_resident_loop_reenters_only_after_the_stop_bar_has_closed(tmp_path, mon
         writes.append((state["polls"], action, round(lots, 2), seq))
         standing.update(action=action, lots=lots, seq=seq, sl=sl)
         if action == "FLAT":
-            state["pos"] = 0.0
+            if fault == "ea_lag_blind" and state["polls"] == 1:
+                state["close_at"] = 4         # the EA executes the stop's FLAT 3 polls late
+            elif not state.get("close_at"):
+                state["pos"] = 0.0
             if fault == "torn_status" and state["polls"] == 1:
                 state["torn"] = True          # the very next status read is torn
         elif action == "LONG" and seq and seq > state["exec_seq"] and state["pos"] == 0.0:
@@ -950,7 +1012,10 @@ def test_resident_loop_reenters_only_after_the_stop_bar_has_closed(tmp_path, mon
     db.record_signal(rid, datetime.fromtimestamp(clock["t"] - 3600, timezone.utc), "USD_JPY", "combined",
                      1, 0.0, "entry", {"action": "LONG", "trigger": "gate-entry", "stop_price": 151.0,
                                        "seq": state["exec_seq"]})
-    monkeypatch.setattr(_sys, "argv", ["run_ai_bridge.py", "--poll", "600", "--sma", "90"])
+    argv = ["run_ai_bridge.py", "--poll", "600", "--sma", "90"]
+    if fault in ("blind_daily", "ea_lag_blind"):
+        argv += ["--daily-gap-h", "0.1"]        # a scheduled decision is due at every poll
+    monkeypatch.setattr(_sys, "argv", argv)
     with pytest.raises(_Stop):
         R.main()
     if restart_after_poll is not None:          # the brain dies inside the stop's bar
@@ -997,6 +1062,129 @@ def test_holiday_extra_covers_exactly_the_long_closures():
     # bounded: a feed dead since before the holiday is still refused in the end
     assert bridge.max_bar_age_h(datetime(2026, 12, 24, 18, tzinfo=U),
                                 datetime(2026, 12, 27, 22, tzinfo=U)) == 99.0
+
+
+def test_a_feed_refused_before_the_holiday_is_never_revived_by_it():
+    """Round-10B: bars dead since Monday 21 December were refused at 75 h on the
+    24th and accepted again at 00:00 UTC on the 25th with no new data — the
+    heartbeat resumed and the health check read GREEN on Christmas Day. The
+    allowance must extend a live feed only, so for any one newest bar a refusal
+    is final."""
+    from datetime import timedelta
+    U = timezone.utc
+    lim = bridge.max_bar_age_h
+    dead = datetime(2026, 12, 21, 20, tzinfo=U)                 # 76 h old at 25 Dec 00:00
+    assert lim(dead, datetime(2026, 12, 24, 23, 30, tzinfo=U)) == 75.0
+    assert lim(dead, datetime(2026, 12, 25, 0, 10, tzinfo=U)) == 75.0
+    alive = datetime(2026, 12, 21, 22, tzinfo=U)                # 74 h old at 25 Dec 00:00
+    assert lim(alive, datetime(2026, 12, 25, 0, 10, tzinfo=U)) == 99.0
+    # property, over three calendars: once refused, never accepted again
+    for start in (datetime(2026, 12, 18, tzinfo=U), datetime(2017, 12, 18, tzinfo=U),
+                  datetime(2026, 12, 26, tzinfo=U)):
+        for h in range(0, 24 * 8, 2):
+            last = start + timedelta(hours=h)
+            refused, now = False, last
+            for _ in range(2 * 24 * 6):                         # 6 days in 30-min steps
+                now += timedelta(minutes=30)
+                ok = (now - last).total_seconds() / 3600.0 <= lim(last, now)
+                assert not (refused and ok), (last, now)
+                refused = refused or not ok
+
+
+@pytest.mark.parametrize("rule", ["fixed", "revival"])
+def test_a_dead_feed_stays_refused_through_christmas_day(tmp_path, monkeypatch, rule):
+    """End to end through main(): LONG 0.08, the bar export died on Monday
+    21 December 20:00 (label) while the EA status kept advancing. The brain
+    goes blind at 75 h on the 24th and withholds the heartbeat; it must stay
+    blind on the 25th. The 'revival' arm runs the first Round-10 rule and
+    proves this test sees the heartbeat come back."""
+    import sys as _sys
+    from datetime import timedelta
+    from app.models import Candle
+
+    class _Stop(BaseException):
+        pass
+
+    U = timezone.utc
+    last_bar = datetime(2026, 12, 21, 20, tzinfo=U)
+    clock = {"t": datetime(2026, 12, 24, 21, 0, tzinfo=U).timestamp()}
+    end = datetime(2026, 12, 25, 6, 0, tzinfo=U).timestamp()
+    xmas = datetime(2026, 12, 25, tzinfo=U).timestamp()
+    state = {"polls": 0}
+
+    class _FakeTime:
+        @staticmethod
+        def time():
+            return clock["t"]
+
+        @staticmethod
+        def sleep(s):
+            clock["t"] += s
+            state["polls"] += 1
+            if clock["t"] >= end or state["polls"] > 500:
+                raise _Stop()
+
+    class _DT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromtimestamp(clock["t"], tz)
+
+    monkeypatch.setattr(R, "_time", _FakeTime)
+    monkeypatch.setattr(R, "datetime", _DT)
+    if rule == "revival":
+        def first_rule(last, now=None):
+            day, stop = last.date() + timedelta(days=1), now.date()
+            while day <= stop:
+                if (day.month, day.day) in ((12, 25), (1, 1)):
+                    return 24.0
+                day += timedelta(days=1)
+            return 0.0
+        monkeypatch.setattr(bridge, "holiday_extra_h", first_rule)
+    monkeypatch.setattr(R, "_acquire_brain_lock", lambda poll: tmp_path / "steady_brain.lock")
+    monkeypatch.setattr(R, "_touch_lock", lambda *a, **k: True)
+    monkeypatch.setattr(R, "_release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(R, "get_calendar", lambda *a, **k: type("C", (), {"for_instrument": lambda self, i: []})())
+
+    class _NoAI:
+        model = "none"
+
+        def __init__(self, *a, **k):
+            pass
+
+        def decide(self, ctx):
+            return _Dec(False, "long", 0.0)
+    monkeypatch.setattr(R, "AITrader", _NoAI)
+    monkeypatch.setattr(db.settings, "db_path", str(tmp_path / "t.db"))
+    db.init_db()
+
+    bars = [Candle(instrument="USD_JPY", granularity="H1", time=last_bar - timedelta(hours=130 - i),
+                   open=150.0 + i * 0.05, high=150.1 + i * 0.05, low=149.95 + i * 0.05,
+                   close=150.05 + i * 0.05) for i in range(131)]
+    seq0 = int(clock["t"]) - 5000
+    writes = []
+    monkeypatch.setattr(bridge, "read_bars", lambda *a, **k: bars)
+    monkeypatch.setattr(bridge, "read_status", lambda *a, **k: {
+        "balance": 272_000.0, "equity": 272_000.0, "position_lots": 0.08, "exec_seq": seq0,
+        "ea_time": int(clock["t"]), "build": bridge.EA_BUILD_EXPECTED})
+    standing = {"action": "LONG", "lots": 0.08, "seq": seq0, "sl": 150.0}
+    monkeypatch.setattr(bridge, "read_signal", lambda *a, **k: dict(standing))
+    monkeypatch.setattr(bridge, "write_signal",
+                        lambda action, lots, base=None, expires_at=None, sl=None, seq=None:
+                        writes.append((clock["t"], action, round(lots, 2), expires_at, seq)))
+    rid = db.create_run(mode="live", instrument="USD_JPY", granularity="H1", initial_balance=272_000.0,
+                        params={"system": "steady-ai", "model": "none", "max_risk": 0.04})
+    db.record_signal(rid, datetime.fromtimestamp(clock["t"] - 7200, U), "USD_JPY", "combined", 1, 0.0,
+                     "entry", {"action": "LONG", "trigger": "gate-entry", "stop_price": 150.0, "seq": seq0})
+    monkeypatch.setattr(_sys, "argv", ["run_ai_bridge.py", "--poll", "600", "--sma", "90"])
+    with pytest.raises(_Stop):
+        R.main()
+
+    assert [w for w in writes if w[0] < xmas - 3600], writes[:3]     # alive before 75 h
+    revived = [w for w in writes if w[0] >= xmas]
+    if rule == "fixed":
+        assert not revived, revived[:3]                               # blind stays blind
+    else:
+        assert revived                                                # the defect, reproduced
 
 
 def test_no_closure_in_the_tape_exceeds_the_limit():

@@ -26,7 +26,8 @@
 
 ```powershell
 cd C:\Users\penan\claude-code-book-template\fxsim
-git pull && docker compose restart        # 更新の反映
+git pull                                   # 更新の取り込み
+docker compose restart fx                  # 反映（再ビルドの案内があった時は docker compose up -d --build）
 docker compose ps                          # 生きているか（PC再起動後は必ず）
 docker compose logs -f fx                  # 判断ログ
 docker compose run --rm app python -m scripts.diagnose_live   # 損益の解剖

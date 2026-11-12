@@ -47,8 +47,17 @@ _SHUT_DAYS = ((12, 25), (1, 1))
 
 def holiday_extra_h(last_bar_time, now=None) -> float:
     """HOLIDAY_EXTRA_H if a market holiday falls after the newest bar's date and
-    on or before today's, else 0. Naive times are UTC. A newest bar that is not
-    in the past earns nothing."""
+    on or before today's, and the feed was still fresh (within MAX_BAR_AGE_H)
+    when that holiday began at 00:00 UTC; else 0. Naive times are UTC. A newest
+    bar that is not in the past earns nothing.
+
+    The freshness condition makes the allowance an extension of a live feed,
+    never a revival of a dead one: without it a feed refused as dead on 24
+    December (bars 75.5 h old, heartbeat withheld) was accepted again at
+    00:00 UTC on the 25th with no new data — the heartbeat resumed and the
+    health check went from RED to GREEN for a feed dead since the Monday
+    (Round-10B). With it the limit for any one newest bar never decreases and
+    never re-admits: every closure of the 2015-26 tape still fits."""
     now = now or datetime.now(timezone.utc)
     if not isinstance(last_bar_time, datetime):
         return 0.0
@@ -61,7 +70,9 @@ def holiday_extra_h(last_bar_time, now=None) -> float:
         if day > end:
             break
         if (day.month, day.day) in _SHUT_DAYS:
-            return HOLIDAY_EXTRA_H
+            shut = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+            fresh_h = (shut - last_bar_time).total_seconds() / 3600.0
+            return HOLIDAY_EXTRA_H if fresh_h <= MAX_BAR_AGE_H else 0.0
         day += timedelta(days=1)
     return 0.0
 

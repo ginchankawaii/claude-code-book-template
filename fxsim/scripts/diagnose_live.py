@@ -51,14 +51,21 @@ BACKTEST_REF = {
     "p42d_p5_pct": -8.5,             # 5パーセンタイル
 }
 
-# APIコスト概算の前提 (モデル価格は 2026-06 時点の公表値, USD / 1M tokens)
+# APIコスト概算の前提 (モデル価格は 2026-11 時点の公表値, USD / 1M tokens。
+# 入力/出力の標準単価。Haiku 5.5 はプロンプト10万トークン以下の単価)
 PRICING_USD_PER_MTOK = {
     "claude-sonnet-4-6": (3.0, 15.0),
-    "claude-sonnet-5": (3.0, 15.0),
+    "claude-sonnet-5": (2.0, 10.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
     "claude-haiku-4-5": (1.0, 5.0),
+    "claude-haiku-5-5": (0.10, 0.50),
     "claude-opus-4-8": (5.0, 25.0),
     "claude-opus-4-7": (5.0, 25.0),
     "claude-opus-4-6": (5.0, 25.0),
+    "claude-opus-5": (5.0, 25.0),
+    "claude-opus-5-5": (4.0, 20.0),
+    "claude-fable-5-1": (10.0, 50.0),
+    "claude-fable-5-2": (8.0, 40.0),
 }
 DEFAULT_PRICING = (5.0, 25.0)        # 不明モデルは Opus 価格で保守的に
 EST_INPUT_TOKENS = 8_000             # プロンプト+コンテキスト+検索結果の概算/回
@@ -326,10 +333,11 @@ def estimate_api_cost(n_paid: int, model: str) -> dict:
     key = (model or "").strip()
     pricing = PRICING_USD_PER_MTOK.get(key)
     if pricing is None:
-        for k, v in PRICING_USD_PER_MTOK.items():
-            if key.startswith(k):
-                pricing = v
-                break
+        # dated ids ("claude-haiku-4-5-20251001"): the LONGEST matching prefix,
+        # so "claude-sonnet-5-5-..." is never priced as "claude-sonnet-5"
+        hits = [k for k in PRICING_USD_PER_MTOK if key.startswith(k)]
+        if hits:
+            pricing = PRICING_USD_PER_MTOK[max(hits, key=len)]
     pricing = pricing or DEFAULT_PRICING
     in_usd = n_paid * EST_INPUT_TOKENS / 1e6 * pricing[0]
     out_usd = n_paid * EST_OUTPUT_TOKENS / 1e6 * pricing[1]

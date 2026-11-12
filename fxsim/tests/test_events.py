@@ -111,3 +111,52 @@ def test_paid_refresh_is_gated_on_the_ATTEMPT_not_the_success(tmp_path, monkeypa
         cal.fetch({"USD", "JPY"})
     assert calls["n"] == 1, f"a failing refresh billed {calls['n']} times, not 1"
     assert not cal_file.exists()              # nothing was ever cached
+
+
+def test_a_malformed_calendar_file_never_raises(tmp_path, monkeypatch):
+    """Round-10B: a null entry, a dict with no 'events' list or a Shift-JIS file
+    raised AttributeError / UnicodeDecodeError out of the loader — at the start
+    of the brain (before its lock, on every supervisor restart) and in its
+    daily refresh. A bad calendar must load as fewer events, never as a crash,
+    in both the 'file' mode and the default 'anthropic' mode without a key."""
+    import app.events as E
+    f = tmp_path / "calendar.json"
+    monkeypatch.setattr(E, "CALENDAR_FILE", f)
+    monkeypatch.setattr(E.settings, "anthropic_api_key", "", raising=False)
+    good = '{"time": "2026-12-10T19:00:00Z", "currency": "USD", "title": "FOMC", "impact": "high"}'
+    cases = {
+        f'{{"events": [{good}, null]}}': 1,
+        f'[{good}, "FOMC", 5, []]': 1,
+        '{"updated": "2026-11-12", "items": []}': 0,
+        '{"events": {"2026-11-13": []}}': 0,
+        '{"events": 5}': 0,
+        '["FOMC 2026-12-10"]': 0,
+        '5': 0,
+        '"text"': 0,
+        'null': 0,
+        '[{"time": "soon", "currency": "USD"}]': 0,
+        '[{"time": null}]': 0,
+        '{"events": [1, 2,]}': 0,                       # not JSON at all
+    }
+    for text, n in cases.items():
+        f.write_text(text, encoding="utf-8")
+        for mode in ("file", "anthropic"):
+            cal = E.get_calendar(mode, "USD_JPY")
+            assert len(cal.events) == n, (text, mode)
+    f.write_bytes(("\ufeff[" + good + "]").encode("utf-8"))          # Notepad's UTF-8 BOM
+    assert [e.title for e in E.get_calendar("file").events] == ["FOMC"]
+    f.write_bytes('[{"time": "2026-12-10T19:00:00Z", "title": "日銀"}]'.encode("shift_jis"))
+    assert E.get_calendar("file").events == []
+    assert E._parse_events_json(f'text [{good}, null] text')[0].title == "FOMC"
+
+
+def test_a_calendar_that_cannot_load_never_stops_the_brain(monkeypatch, capsys):
+    from scripts import run_ai_bridge as R
+    prev = EconomicCalendar([EconomicEvent(NOW, "USD", "CPI", "high")])
+
+    def boom(*a, **k):
+        raise AttributeError("'NoneType' object has no attribute 'get'")
+    monkeypatch.setattr(R, "get_calendar", boom)
+    assert R._safe_calendar("file", "USD_JPY").events == []
+    assert R._safe_calendar("file", "USD_JPY", prev) is prev
+    assert "calendar load failed" in capsys.readouterr().out
