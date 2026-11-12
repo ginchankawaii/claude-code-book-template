@@ -82,8 +82,8 @@ ENVELOPE_CHANGES = (     # (from span_days, p90 count, live-length max, RED abov
     (90, 32, 64, 80), (120, 39, 64, 80), (150, 44, 64, 80), (180, 52, 77, 97),
     (240, 59, 88, 110), (300, 70, 93, 117), (365, 83, 110, 138), (450, 94, 123, 154),
     (545, 109, 127, 159), (640, 122, 136, 170), (730, 143, 150, 188),
-    (910, 174, 180, 225), (1095, 199, 199, 249), (1280, 222, 222, 278),
-    (1460, 222, 222, 278),
+    (910, 174, 180, 225), (1095, 194, 194, 243), (1280, 202, 202, 253),
+    (1460, 202, 202, 253),
 )
 ENVELOPE_RETURN = (      # (from span_days, p10 return %, worst return %), no swap;
     # worst = running minimum over spans: a longer window is never stricter
@@ -215,7 +215,9 @@ def build_report(*, initial_balance: float, equity_values: list[float],
         checks.append({"name": "ドローダウン", "flag": RED,
                        "msg": f"最大DD {mdd:.1f}% が警告線{EXP_MAXDD_PCT:.0f}%を超過{bt}＝試験済みの範囲外"
                               f"（故障とは限らない）。ログを確認し、ルール通りならサイズの見直しを検討"
-                              + ("（docs/RESEARCH.md Round-9）" if kind == "fx" else "")})
+                              + ("：今の建玉は手で決済しない。下げるなら .env の FXSIM_MAX_LEVERAGE を下げて "
+                                 "`docker compose restart fx`（次の新規エントリーから効く。docs/RESEARCH.md Round-9）"
+                                 if kind == "fx" else "")})
     elif mdd > EXP_MAXDD_PCT * 0.75:
         bt = f"。バックテストの平均線9通りの最悪は{BT_MAXDD_PCT:.1f}%" if kind == "fx" else ""
         checks.append({"name": "ドローダウン", "flag": YELLOW,
@@ -277,7 +279,9 @@ def build_report(*, initial_balance: float, equity_values: list[float],
             checks.append({"name": "リターン", "flag": RED,
                            "msg": f"{head}：過去最悪を大きく下回る{ref}＝試験済みの範囲外"
                                   f"（故障とは限らない）。ログと執行一致を確認（🟢でもスリッページ等の執行コストは否定できない）。"
-                                  f"ルール通りならサイズ（レバ）の見直しを検討（docs/RESEARCH.md Round-8/9）"})
+                                  f"ルール通りならサイズ（レバ）の見直しを検討：今の建玉は手で決済しない。"
+                                  f".env の FXSIM_MAX_LEVERAGE を下げて `docker compose restart fx`（次の新規エントリーから効く。"
+                                  f"docs/RESEARCH.md Round-8/9）"})
         elif ret < worst:
             checks.append({"name": "リターン", "flag": YELLOW,
                            "msg": f"{head}：過去に例のない水準{ref}。ログと執行一致を確認"})
@@ -296,15 +300,15 @@ def build_report(*, initial_balance: float, equity_values: list[float],
     stale_red_d = max(1.0, daily_gap_h * 1.5 / 24.0)     # 1.5 decision cycles
     hb_fresh = (brain_signal_age_s is not None and not blocked_on_lock
                 and brain_signal_age_s <= BRAIN_SIGNAL_STALE_S)
+    freshness = None
     if staleness_days is not None and staleness_days > stale_red_d and hb_fresh:
-        # Alive but not deciding: it is waiting for the EA to execute a FLAT, or
-        # blind on the bars. A restart changes neither — the old text sent the
-        # owner to restart a healthy brain while the EA ignored its FLAT
-        # (review of dae5183).
-        checks.append({"name": "稼働鮮度", "flag": RED,
-                       "msg": f"最終更新が{staleness_days:.1f}日前：脳は動いている（心拍{brain_signal_age_s / 60:.0f}分前）が"
-                              f"判断を記録していない＝EAの決済待ち、またはバー停止で判断を見送っている。"
-                              f"執行一致・バー鮮度の🔴を先に確認（再起動では直らない）"})
+        # Alive but not deciding (waiting for the EA to execute a FLAT, or
+        # blind on a frozen EA). A restart changes neither — the old text sent
+        # the owner to restart a healthy brain while the EA ignored its FLAT
+        # (review of dae5183). The cause is named below, once the bridge and
+        # execution checks are known (final pass).
+        freshness = {"name": "稼働鮮度", "flag": RED, "msg": ""}
+        checks.append(freshness)
     elif staleness_days is not None and staleness_days > stale_red_d:
         checks.append({"name": "稼働鮮度", "flag": RED,
                        "msg": f"最終更新が{staleness_days:.1f}日前：脳（fxコンテナ）が停止している疑い → "
@@ -396,6 +400,16 @@ def build_report(*, initial_balance: float, equity_values: list[float],
     # of dae5183).
     mismatch = (last_decision in ("LONG", "FLAT") and bool(live_position)
                 and last_decision != str(live_position).upper())
+    if freshness is not None:
+        head = (f"最終更新が{staleness_days:.1f}日前：脳は動いている（心拍{brain_signal_age_s / 60:.0f}分前）が"
+                f"判断を記録していない＝")
+        if mismatch and not bridge_stale:
+            why = "EAが指示を執行しないので待っている。執行一致の🔴を先に確認（MT5のアルゴ取引ON・EAのエラー）"
+        elif bridge_stale or status_missing:
+            why = "EAのstatus／バーが止まっていて判断を見送っている。EA稼働・バーの🔴を先に確認（MT5とEA）"
+        else:
+            why = "判断を見送っている。他の🔴と `docker compose logs --tail 50 fx` で理由を確認"
+        freshness["msg"] = head + why + "（脳の再起動では直らない）"
     if (bridge_stale or brain_dead or (stale_decision and not mismatch)) and live_position:
         # A match computed from a frozen file, or against a decision the brain
         # made days ago, is not a match — and this 🟢 is the documented

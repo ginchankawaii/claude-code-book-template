@@ -71,12 +71,20 @@ docker compose up -d --build
 - **新しい脳が動いているかの確認**（テストの合格だけでは分からない：再ビルドが失敗しても、テストは
   新しいコードで通ってしまう）：
   1. `docker compose up -d --build` が**エラーで終わらず**、最後に fx の `Recreated` / `Started` が出る
-  2. `docker compose logs --tail 30 fx` に、更新案内に書いた `[ai] brain build ...` の行が出ている
-- **再ビルドがエラーで終わったら**：何も壊れていない。古い脳がそのまま動き続けている。
-  `failed to solve`・`ResolutionImpossible`・`CERTIFICATE_VERIFY_FAILED`・`429`・`toomanyrequests` は
-  ネットワークやDocker Hubの混雑で、固定した版の問題ではない（`requirements.txt` / `constraints.txt` は直さない）。
-  まず `docker compose restart fx` で新しいコードを読み込ませ（ライブラリが古いままでも動く）、
-  再ビルドは時間をおいてやり直す。休場中はやり直さない。
+  2. `docker compose ps` で fx が `Up`（running）
+  3. `docker compose logs --tail 30 fx` に、更新案内に書いた `[ai] brain build ...` の行が出ている。
+     無ければ1分待ってもう一度。まだ無ければ `git log -1 --oneline` が更新案内のコミットか確認
+     （違えば `git pull` が失敗している：そのエラーを読み、もう一度 `git pull` してから `docker compose restart fx`）
+- **再ビルドがエラーで終わったら、どこで止まったかで対処が違う**：
+  - **`Recreate` の行より前で止まった**（`failed to solve`・`ResolutionImpossible`・`CERTIFICATE_VERIFY_FAILED`・
+    `429`・`toomanyrequests` など、イメージを作る段階）：古い脳がそのまま動いている。ネットワークやDocker Hubの
+    混雑が原因で、固定した版の問題ではない（`requirements.txt` / `constraints.txt` は直さない）。
+    `docker compose restart fx` で新しいコードを読み込ませ、再ビルドは時間をおいてやり直す（古いライブラリの
+    ままで動くかは更新ごとに案内する。Round-10Cの更新は確認済み）。休場中はやり直さない
+  - **`Recreate` / `Starting` の後で止まった、または `docker compose ps` で fx が `Up` でない・ログが空**：
+    **脳が動いていない**（古いコンテナは消え、新しいコンテナが起動できていない）。その場で Docker Desktop を
+    再起動し、`docker compose up -d fx` を実行して、`docker compose ps` で fx が `Up` になるのを確認してから
+    PCを離れる（`restart fx` ではこの状態から戻らない）。動かないままだと、EAが約2時間で決済する（フェイルセーフ）
 - `.env`（APIキー・パスワード）はイメージに入らない（`.dockerignore`。実行時にマウントと `env_file` から読む）。
 
 ## つまづきポイント

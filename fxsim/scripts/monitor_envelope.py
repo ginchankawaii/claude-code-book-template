@@ -53,9 +53,12 @@ there against 33.9% at the close; Round-10B).
     doubled trade rate RED and delayed the forming-bar defect's RED by months
     (review of dae5183). So: the soft line (上位10%) is the pooled p90 of
     2300-2500; the hard line (過去最多) is the live length's own busiest
-    window; RED needs more than BOTH a quarter above that and the busiest
-    window of 2300-2500. tests/test_monitor.py pins the trade-off at fixed
-    horizons (docs/RESEARCH.md Round-10C has the numbers).
+    window, and the soft line never exceeds it (from 1095 days the pooled p90
+    of 2300-2500 is above SMA2400's own record; there a 2300-like path reads
+    'unprecedented' YELLOW in 29% of windows, never RED); RED needs more than
+    BOTH a quarter above the live length's record and the busiest window of
+    2300-2500. tests/test_monitor.py pins the trade-off at fixed horizons
+    (docs/RESEARCH.md Round-10C has the numbers).
 
 Each table row covers the spans from its own up to the next row's, and holds
 the EXTREME over every whole-day span in that interval (no interpolation can
@@ -308,8 +311,11 @@ def build(count_runs: list[dict], return_runs: list[dict]) -> tuple[tuple, tuple
     own = rows_for(CHANGE_ROWS, window_counts, lambda g: 0.0, np.max, live)
     chg = []
     for (w, sf, hd), (_, _, hd_own) in zip(nb, own):
-        p90 = int(max(math.ceil(v) for v in sf))
-        most = max(int(max(hd_own)), p90)
+        most = int(max(hd_own))
+        # the soft line never above the record it precedes: from 1095 days the
+        # neighbours' pooled p90 exceeds SMA2400's own busiest window, and
+        # lifting 過去最多 to it loosened RED past the documented rule (final pass)
+        p90 = min(int(max(math.ceil(v) for v in sf)), most)
         red = max(math.ceil(most * CHANGES_RED_MARGIN), int(max(hd)))
         chg.append((w, p90, most, red))
     chg = tuple(chg)

@@ -322,9 +322,11 @@ def test_production_never_reads_red_on_its_own_behaviour():
                 f = next(x for x in rep["checks"] if x["name"] == "リターン")["flag"]
                 assert f != RED, (name, W, float(v))
         if n:
-            # the live length: YELLOW stays rare; its busier neighbours sit above
-            # the POOLED top-10% line a little more often, by construction
-            assert yellow / n < (0.12 if name in ("close", "closedbar") else 0.15), (name, yellow / n)
+            # the live length: YELLOW stays rare. Its busier neighbours sit above
+            # the pooled top-10% line more often by construction, and from 1095
+            # days above SMA2400's own record too (SMA2300: 29% of those
+            # windows read 'unprecedented' YELLOW; never RED) — final pass
+            assert yellow / n < (0.12 if name in ("close", "closedbar") else 0.20), (name, yellow / n)
     forming = ME.replay("live", 5)
     counts = ME.window_counts(forming, 365)
     flagged = sum(next(x for x in monitor.build_report(
@@ -431,7 +433,7 @@ def test_envelope_lookup():
     assert monitor.envelope_at(T, 30, "scale") == (16.0, 32.0, 47.0)
     assert monitor.envelope_at(T, 44.9, "scale") == (16.0, 32.0, 47.0)  # a step, not interpolated
     assert monitor.envelope_at(T, 45, "scale") == (19.0, 45.0, 57.0)
-    assert monitor.envelope_at(T, 2920, "scale") == (444.0, 444.0, 556.0)   # counts scale with span
+    assert monitor.envelope_at(T, 2920, "scale") == (404.0, 404.0, 506.0)   # counts scale with span
     R_ = monitor.ENVELOPE_RETURN
     loosest = (min(r[1] for r in R_), min(r[2] for r in R_))
     assert monitor.envelope_at(R_, 5000, "loosest") == loosest         # long runs: never stricter
@@ -458,6 +460,9 @@ def test_overtrading_is_still_caught_while_neighbour_whipsaw_is_not_red():
         return next((d for d in range(30, 3000) if rate * d / 365.25 > math.ceil(
             monitor.envelope_at(monitor.ENVELOPE_CHANGES, float(d), "scale")[2])), None)
     assert first_red_day(2 * 38.3) <= 900          # a steady doubled rate (it never did in Round-10B)
+    # and from the table's end on, RED keeps the documented rule (1.25 x the live length's record)
+    w, p90, most, red = monitor.ENVELOPE_CHANGES[-1]
+    assert p90 <= most and red == max(math.ceil(most * monitor.CHANGES_RED_MARGIN), red)
     assert first_red_day(150) <= 240 and first_red_day(100) <= 600
     def red_starts(r, mult, within):
         t = r["t"].astype("datetime64[s]").astype(np.int64)
@@ -679,6 +684,15 @@ def test_a_stuck_long_stays_an_execution_mismatch_however_old_the_decision():
         assert not any("up -d fx" in c["msg"] for c in fr), (age_h, fr)
         if age_h > 30:
             assert fr and fr[0]["flag"] == RED and "再起動では直らない" in fr[0]["msg"]
+            assert "執行しない" in fr[0]["msg"] and "アルゴ取引" in fr[0]["msg"]
+    # final pass: MT5 closed while FLAT -> the brain is blind on a frozen EA; the
+    # freshness text must name the EA, not "waiting for the EA to close"
+    r = _report(actions=["FLAT"], live_position="FLAT", brain_signal_age_s=60.0,
+                ea_status_age_s=31 * 3600.0, bars_age_h=31.0, bars_count=3000, bars_need=2405,
+                last_decision_age_s=31 * 3600.0, staleness_days=31 / 24.0)
+    fr = next(c for c in r["checks"] if c["name"] == "稼働鮮度")
+    assert "EA稼働" in fr["msg"] and "執行しない" not in fr["msg"] and "up -d fx" not in fr["msg"], fr
+    assert any(c["name"] == "EA稼働" and c["flag"] == RED for c in r["checks"])
     # a dead brain is still sent to the restart, and an agreeing stale decision is still 判定不能
     r = _report(actions=["LONG", "FLAT"], live_position="LONG", brain_signal_age_s=4000.0,
                 ea_status_age_s=20.0, last_decision_age_s=31 * 3600.0, staleness_days=31 / 24.0)
