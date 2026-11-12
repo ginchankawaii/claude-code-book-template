@@ -1,0 +1,1328 @@
+"""run_ai_bridge decision = validated long-or-flat trend edge + Opus veto gate.
+
+The bridge must: stand aside below the trend filter (without even paying for an
+Opus call), trade the deterministic long when Opus is unavailable, let Opus veto
+or size a long when the trend is up, and NEVER short.
+"""
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+
+import scripts.run_ai_bridge as R
+from app import bridge, db
+from app.config import DATA_DIR, Settings
+from app.providers.csv import load_csv_file
+
+_DAILY = load_csv_file(DATA_DIR / "USD_JPY_D.csv", "USD_JPY", "D")
+_UP = [c for c in _DAILY if c.time.year >= 2024]                       # price > SMA90
+_DOWN = [c for c in _DAILY if c.time <= datetime(2011, 8, 1, tzinfo=timezone.utc)]  # price < SMA90
+
+
+class _Dec:
+    def __init__(self, ok, action, conviction):
+        self.ok, self.action, self.conviction = ok, action, conviction
+        self.reason, self.factors, self.plan = "r", [], ""
+
+
+class _Trader:
+    model = "fake"
+
+    def __init__(self, dec):
+        self.dec, self.calls = dec, 0
+
+    def decide(self, ctx):
+        self.calls += 1
+        return self.dec
+
+
+@pytest.fixture
+def wired(monkeypatch):
+    written = []
+    monkeypatch.setattr(bridge, "read_status",
+                        lambda *a, **k: {"balance": 500000.0, "equity": 500000.0, "position_lots": 0.0})
+    monkeypatch.setattr(bridge, "write_signal",
+                        lambda action, lots, base=None, expires_at=None, sl=None,
+                        seq=None: written.append((action, round(lots, 2))))
+    # the bundled test candles are historical: disable the live freshness and
+    # single-bar-jump guards (daily bars legitimately move >3%)
+    monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    monkeypatch.setattr(R, "MAX_BAR_JUMP_PCT", 1e9)
+    # keep the DB out of the unit test
+    monkeypatch.setattr(db, "list_runs", lambda: [])
+    monkeypatch.setattr(db, "create_run", lambda **k: 1)
+    monkeypatch.setattr(db, "record_equity", lambda *a, **k: None)
+    monkeypatch.setattr(db, "load_equity", lambda *a, **k: [])
+    monkeypatch.setattr(db, "record_signal", lambda *a, **k: None)
+    return written
+
+
+def _run(monkeypatch, window, dec, authority="entry", position_lots=None):
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: window)
+    if position_lots is not None:
+        monkeypatch.setattr(bridge, "read_status",
+                            lambda *a, **k: {"balance": 500000.0, "equity": 500000.0,
+                                             "position_lots": position_lots})
+    trader = _Trader(dec)
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0, ai_authority=authority)
+    res = R.decide_once(cfg, "USD_JPY", 0.04, 5.0, str(DATA_DIR / "USD_JPY_D.csv"),
+                        trader, dry=False, trigger="test", granularity="D", sma_n=90)
+    return trader, res
+
+
+def test_trend_down_stands_aside_without_calling_opus(wired, monkeypatch):
+    trader, _ = _run(monkeypatch, _DOWN, _Dec(True, "long", 0.9))
+    assert wired[-1][0] == "FLAT" and wired[-1][1] == 0.0
+    assert trader.calls == 0          # gate short-circuits the (paid) AI call
+
+
+def test_trend_up_no_key_trades_the_deterministic_long(wired, monkeypatch):
+    _run(monkeypatch, _UP, _Dec(False, "flat", 0.0))   # AI unavailable
+    assert wired[-1][0] == "LONG" and wired[-1][1] > 0
+
+
+def test_entry_authority_veto_blocks_fresh_entry(wired, monkeypatch):
+    _run(monkeypatch, _UP, _Dec(True, "flat", 0.0), authority="entry")
+    assert wired[-1][0] == "FLAT"
+
+
+def test_never_shorts_in_any_mode(wired, monkeypatch):
+    # "short" from the AI can at most force FLAT (entry mode) or be logged
+    # (shadow) — a short order is never produced.
+    _run(monkeypatch, _UP, _Dec(True, "short", 0.9), authority="entry")
+    assert wired[-1][0] == "FLAT"
+    _run(monkeypatch, _UP, _Dec(True, "short", 0.9), authority="shadow")
+    assert wired[-1][0] == "LONG"     # advisory dissent, edge decides; never SHORT
+
+
+def test_shadow_authority_veto_is_advisory_only(wired, monkeypatch):
+    # Round-3 inquest: default authority follows the validated edge and only
+    # LOGS the AI's dissent (the veto path is unvalidated and return-negative).
+    _, res = _run(monkeypatch, _UP, _Dec(True, "flat", 0.0), authority="shadow")
+    assert wired[-1][0] == "LONG" and wired[-1][1] > 0
+    assert res["action"] == "LONG"
+
+
+def test_entry_authority_never_liquidates_a_hold(wired, monkeypatch):
+    # An AI veto while a position is OPEN must not flatten it in "entry" mode —
+    # that exit path exists in no backtest.
+    _, res = _run(monkeypatch, _UP, _Dec(True, "flat", 0.0),
+                  authority="entry", position_lots=0.09)
+    assert res["action"] == "LONG"
+    assert wired[-1] == ("LONG", 0.09)          # hold kept at entry size
+
+
+def test_full_authority_veto_can_flatten_a_hold(wired, monkeypatch):
+    # Legacy opt-in keeps the old semantics.
+    _, res = _run(monkeypatch, _UP, _Dec(True, "flat", 0.0),
+                  authority="full", position_lots=0.09)
+    assert res["action"] == "FLAT" and wired[-1][0] == "FLAT"
+
+
+def test_shadow_sizing_pins_reference_conviction(wired, monkeypatch):
+    # Shadow authority sizes at the validated 0.6 reference even when the AI
+    # confirms with a different conviction (conviction scaling is unvalidated).
+    _run(monkeypatch, _UP, _Dec(True, "long", 0.2), authority="shadow")
+    a_shadow = wired[-1]
+    _run(monkeypatch, _UP, _Dec(False, "flat", 0.0), authority="shadow")  # AI down -> 0.6 path
+    assert a_shadow == wired[-1]
+
+
+def test_trend_up_opus_long_sizes_within_leverage_cap(wired, monkeypatch):
+    _run(monkeypatch, _UP, _Dec(True, "long", 0.8))
+    action, lots = wired[-1]
+    assert action == "LONG"
+    # 0.8 conviction * 4% risk, but the 5x leverage cap on a ¥500k book binds:
+    # lots*100k*price <= 5*500k  ->  ~0.16 lots at price ~160
+    assert 0 < lots <= 0.20
+
+
+def test_fresh_entry_carries_a_protective_stop(wired, monkeypatch):
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _UP)
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0)
+    res = R.decide_once(cfg, "USD_JPY", 0.04, 5.0, str(DATA_DIR / "USD_JPY_D.csv"),
+                        _Trader(_Dec(True, "long", 0.8)), dry=False, trigger="test",
+                        granularity="D", sma_n=90)
+    assert res["action"] == "LONG" and res["fresh"] is True
+    assert res["stop"] is not None and res["stop"] < _UP[-1].close
+
+
+def test_holding_keeps_entry_size_and_stop(wired, monkeypatch):
+    # While a long is open, decisions must NOT retarget the size (round-2: the
+    # intra-trade resize loop is net harmful) and must carry the entry stop.
+    monkeypatch.setattr(bridge, "read_status",
+                        lambda *a, **k: {"balance": 500000.0, "equity": 500000.0,
+                                         "position_lots": 0.09})
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _UP)
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0)
+    res = R.decide_once(cfg, "USD_JPY", 0.04, 5.0, str(DATA_DIR / "USD_JPY_D.csv"),
+                        _Trader(_Dec(True, "long", 1.0)), dry=False, trigger="test",
+                        granularity="D", sma_n=90, prev_stop=123.456)
+    assert res["action"] == "LONG" and res["fresh"] is False
+    assert wired[-1] == ("LONG", 0.09)          # held, not retargeted
+    assert res["stop"] == 123.456               # carried, not recomputed
+
+
+def test_flat_decision_clears_the_stop(wired, monkeypatch):
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _DOWN)
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0)
+    res = R.decide_once(cfg, "USD_JPY", 0.04, 5.0, str(DATA_DIR / "USD_JPY_D.csv"),
+                        _Trader(_Dec(True, "long", 0.9)), dry=False, trigger="test",
+                        granularity="D", sma_n=90, prev_stop=123.456)
+    assert res["action"] == "FLAT" and res["stop"] is None
+
+
+def test_trend_gate_probe(monkeypatch):
+    monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    monkeypatch.setattr(R, "MAX_BAR_JUMP_PCT", 1e9)
+    monkeypatch.setattr(bridge, "read_status",
+                        lambda *a, **k: {"balance": 500000.0, "equity": 500000.0,
+                                         "position_lots": 0.05})
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _UP)
+    up, price, pos, st = R._trend_gate("USD_JPY", "D", 90, str(DATA_DIR / "USD_JPY_D.csv"))
+    assert up is True and price == _UP[-1].close and pos == 0.05
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _DOWN)
+    up, _, _, _ = R._trend_gate("USD_JPY", "D", 90, str(DATA_DIR / "USD_JPY_D.csv"))
+    assert up is False
+
+
+# ---- round-9 review: decide on CLOSED bars, place orders at the live price ----
+# The EA exports CopyRates(start=0): its last row is the still-forming bar. The
+# brain used it for the signal and the conviction ramp, so it entered at the
+# first poll after an INTRABAR crossing at ~1x and held that size for the trend
+# (the 2021-09 trade that made the decade: 1.4x instead of the backtest's 5x).
+
+def _bar(t, o, h, l, c):
+    from app.models import Candle
+    return Candle(instrument="USD_JPY", granularity="D", time=t, open=o, high=h, low=l,
+                  close=c, volume=0.0)
+
+
+def _flat_then(forming_close, n=120, level=100.0):
+    from datetime import timedelta
+    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    bars = [_bar(t0 + timedelta(days=i), level, level + 0.2, level - 0.2, level) for i in range(n)]
+    bars.append(_bar(t0 + timedelta(days=n), level, max(level, forming_close) + 0.1,
+                     min(level, forming_close) - 0.1, forming_close))
+    return bars
+
+
+def test_forming_bar_crossing_is_not_a_signal(wired, monkeypatch):
+    feed = _flat_then(101.0)              # closed bars flat AT the SMA; only the forming bar is above
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: feed)
+    up, price, _, _ = R._trend_gate("USD_JPY", "D", 90, "no-such-file.csv")
+    assert up is False and price == 101.0  # signal from the closed bar, live price kept
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0)
+    res = R.decide_once(cfg, "USD_JPY", 0.04, 5.0, "no-such-file.csv",
+                        _Trader(_Dec(True, "long", 1.0)), dry=False, trigger="test",
+                        granularity="D", sma_n=90)
+    assert res["action"] == "FLAT"
+
+
+def test_ramp_is_sized_from_the_closed_bar_and_the_stop_from_the_live_price(wired, monkeypatch):
+    from datetime import timedelta
+    feed = _flat_then(100.0)[:-1]
+    t = feed[-1].time
+    feed.append(_bar(t + timedelta(days=1), 100.0, 104.2, 100.0, 104.0))   # closed: far above the SMA
+    feed.append(_bar(t + timedelta(days=2), 104.0, 104.0, 100.4, 100.5))   # forming: dipped back near it
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: feed)
+    recs = []
+    monkeypatch.setattr(db, "record_signal", lambda *a, **k: recs.append(a[7]))
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0, dyn_leverage=True)
+    res = R.decide_once(cfg, "USD_JPY", 0.04, 5.0, "no-such-file.csv",
+                        _Trader(_Dec(False, "long", 0.0)), dry=False, trigger="test",
+                        granularity="D", sma_n=90)
+    assert res["action"] == "LONG" and res["fresh"] is True
+    # the closed bar is >1.5 ATR above the SMA: the full 5x cap (the forming
+    # bar, ~0.5 above the SMA, would have given ~3x)
+    assert recs[-1]["eff_leverage"] == 5.0
+    assert res["stop"] < 100.5                                # below the LIVE price
+    assert res["stop"] > 100.5 - 3.0                          # one ATR-scaled distance, not from 104
+
+
+def test_bootstrap_csv_rows_are_all_closed(monkeypatch):
+    monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    monkeypatch.setattr(R, "MAX_BAR_JUMP_PCT", 1e9)
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: [])
+    feed, closed = R._load_bars("USD_JPY", "D", 90, str(DATA_DIR / "USD_JPY_D.csv"))
+    assert closed is feed                                     # history: nothing is forming
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _UP)
+    feed, closed = R._load_bars("USD_JPY", "D", 90, "no-such-file.csv")
+    assert closed == _UP[:-1] and feed[-1] is _UP[-1]         # the EA's last row is forming
+
+
+def test_trend_gate_not_ready_returns_none(monkeypatch):
+    monkeypatch.setattr(bridge, "read_status", lambda *a, **k: None)
+    assert R._trend_gate("USD_JPY", "D", 90, "no-such-file.csv") is None
+
+
+# ---- audit fixes (round-2 money-path bug hunt) -----------------------------
+
+def test_stale_bars_are_refused(monkeypatch):
+    # The audit found real orders placeable on a weeks-old fallback CSV. Any
+    # candle set whose last bar is older than MAX_BAR_AGE_H must be refused —
+    # for the probe AND (via the shared loader) for decisions.
+    monkeypatch.setattr(bridge, "read_status",
+                        lambda *a, **k: {"balance": 500000.0, "equity": 500000.0,
+                                         "position_lots": 0.0})
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _UP)
+    assert R._trend_gate("USD_JPY", "D", 90, "no-such-file.csv") is None  # _UP ends years ago
+
+
+def test_short_live_feed_does_not_fall_back_to_csv(monkeypatch):
+    # A truncated/partial live bars file (torn EA write) must SKIP the tick,
+    # never silently substitute the bundled history CSV.
+    monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    monkeypatch.setattr(R, "MAX_BAR_JUMP_PCT", 1e9)
+    monkeypatch.setattr(bridge, "read_bars",
+                        lambda instr="USD_JPY", gran="D", base=None: _UP[:50])  # < sma_n+5
+    assert R._load_bars("USD_JPY", "D", 90, str(DATA_DIR / "USD_JPY_D.csv")) is None
+
+
+def test_dry_run_writes_nothing(monkeypatch):
+    written, recorded = [], []
+    monkeypatch.setattr(bridge, "read_status",
+                        lambda *a, **k: {"balance": 500000.0, "equity": 500000.0,
+                                         "position_lots": 0.0})
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _UP)
+    monkeypatch.setattr(bridge, "write_signal",
+                        lambda *a, **k: written.append(a))
+    monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    monkeypatch.setattr(R, "MAX_BAR_JUMP_PCT", 1e9)
+    monkeypatch.setattr(db, "list_runs", lambda: [])
+    monkeypatch.setattr(db, "create_run",
+                        lambda **k: (_ for _ in ()).throw(AssertionError("dry created a run")))
+    monkeypatch.setattr(db, "record_equity",
+                        lambda *a, **k: recorded.append("equity"))
+    monkeypatch.setattr(db, "load_equity", lambda *a, **k: [])
+    monkeypatch.setattr(db, "record_signal",
+                        lambda *a, **k: recorded.append("signal"))
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0)
+    res = R.decide_once(cfg, "USD_JPY", 0.04, 5.0, str(DATA_DIR / "USD_JPY_D.csv"),
+                        _Trader(_Dec(True, "long", 0.8)), dry=True, trigger="test",
+                        granularity="D", sma_n=90)
+    assert res["action"] == "LONG"
+    assert written == [] and recorded == []   # --dry touches neither EA nor DB
+
+
+def test_hold_with_lost_stop_rearms(wired, monkeypatch):
+    # INVARIANT: an open LONG must carry a stop. If the carried stop was lost
+    # (old records, manual --once, wiped DB), the hold decision re-arms one.
+    monkeypatch.setattr(bridge, "read_status",
+                        lambda *a, **k: {"balance": 500000.0, "equity": 500000.0,
+                                         "position_lots": 0.09})
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _UP)
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0)
+    res = R.decide_once(cfg, "USD_JPY", 0.04, 5.0, str(DATA_DIR / "USD_JPY_D.csv"),
+                        _Trader(_Dec(True, "long", 1.0)), dry=False, trigger="test",
+                        granularity="D", sma_n=90, prev_stop=None)
+    assert res["action"] == "LONG" and res["fresh"] is False
+    assert res["stop"] is not None and res["stop"] < _UP[-1].close
+
+
+def test_restore_state_scans_back_for_the_stop(monkeypatch):
+    # A hold record with stop_price=null must not disarm the restore: the scan
+    # walks back through the unbroken run of LONG decisions to the entry stop.
+    rows = [
+        {"source": "combined", "direction": 1, "time": "2026-07-01T00:00:00+00:00",
+         "components": '{"stop_price": 158.917}'},
+        {"source": "combined", "direction": 1, "time": "2026-07-02T00:00:00+00:00",
+         "components": '{"stop_price": null}'},
+    ]
+    monkeypatch.setattr(db, "list_runs",
+                        lambda: [{"id": 7, "ended_at": None, "granularity": "H1", "params": '{"system": "steady-ai"}'}])
+    monkeypatch.setattr(db, "load_signals", lambda rid: rows)
+    intent, stop, ts = R._restore_state()
+    assert intent == "LONG" and stop == 158.917 and ts > 0
+    # ...but a FLAT after the stop-exit means no stop and FLAT intent
+    rows.append({"source": "combined", "direction": 0, "time": "2026-07-03T00:00:00+00:00",
+                 "components": '{"trigger": "stop"}'})
+    intent, stop, _ = R._restore_state()
+    assert intent == "FLAT" and stop is None
+
+
+def test_restore_state_ignores_blocked_on_lock_rows(monkeypatch):
+    # Round-9 review: a brain that WAITED for the lock writes FLAT
+    # blocked-on-lock rows whatever the book holds. On takeover the newest of
+    # them was restored as the intent: FLAT -> the healthy LONG was closed and
+    # re-entered minutes later (reproduced end to end).
+    def row(day, direction, comp):
+        return {"source": "combined", "direction": direction,
+                "time": f"2026-07-{day:02d}T00:00:00+00:00", "components": comp}
+    blocked = '{"action": "FLAT", "trigger": "blocked-on-lock", "blocked_s": 900}'
+    rows = [row(1, 1, '{"action": "LONG", "stop_price": 158.917}'),
+            row(2, 1, '{"action": "LONG", "stop_price": null}'),
+            row(3, 0, blocked), row(4, 0, blocked)]
+    monkeypatch.setattr(db, "list_runs",
+                        lambda: [{"id": 7, "ended_at": None, "granularity": "H1", "params": '{"system": "steady-ai"}'}])
+    monkeypatch.setattr(db, "load_signals", lambda rid: rows)
+    intent, stop, ts = R._restore_state()
+    assert intent == "LONG" and stop == 158.917
+    assert ts == datetime.fromisoformat("2026-07-02T00:00:00+00:00").timestamp()   # last REAL decision
+    # a blocked row BETWEEN long decisions must not break the stop scan
+    rows[:] = [row(1, 1, '{"action": "LONG", "stop_price": 158.917}'), row(2, 0, blocked),
+               row(3, 1, '{"action": "LONG", "stop_price": null}')]
+    assert R._restore_state()[:2] == ("LONG", 158.917)
+    # a real exit after a wait is still honoured
+    rows[:] = [row(1, 1, '{"action": "LONG", "stop_price": 158.917}'), row(2, 0, blocked),
+               row(3, 0, '{"action": "FLAT", "trigger": "stop"}')]
+    assert R._restore_state()[:2] == ("FLAT", None)
+    # only blocked rows = no decision history at all
+    rows[:] = [row(1, 0, blocked)]
+    assert R._restore_state() == (None, None, 0.0)
+
+
+# ---- round-4 fixes ---------------------------------------------------------
+
+def test_implausible_last_bar_quarantines_feed(monkeypatch):
+    # Round-4 chaos (b): a corrupt print (close=0.001 or a +15% spike) must
+    # quarantine the feed, never reach a trading decision.
+    monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    corrupt = list(_UP)
+    bad = type(corrupt[-1])(instrument="USD_JPY", granularity="D",
+                            time=corrupt[-1].time, open=0.001, high=0.001,
+                            low=0.001, close=0.001, volume=1.0)
+    monkeypatch.setattr(bridge, "read_bars",
+                        lambda instr="USD_JPY", gran="D", base=None: corrupt[:-1] + [bad])
+    assert R._load_bars("USD_JPY", "D", 90, "no-such-file.csv") is None
+    spike = type(corrupt[-1])(instrument="USD_JPY", granularity="D",
+                              time=corrupt[-1].time, open=corrupt[-2].close,
+                              high=corrupt[-2].close * 1.2, low=corrupt[-2].close,
+                              close=corrupt[-2].close * 1.15, volume=1.0)
+    monkeypatch.setattr(bridge, "read_bars",
+                        lambda instr="USD_JPY", gran="D", base=None: corrupt[:-1] + [spike])
+    assert R._load_bars("USD_JPY", "D", 90, "no-such-file.csv") is None
+
+
+def test_find_run_filters_on_granularity(monkeypatch):
+    # Round-4 chaos (d): a restart must never adopt an unrelated old run —
+    # its stale stop instantly liquidated a healthy position in the repro.
+    monkeypatch.setattr(db, "list_runs", lambda: [
+        {"id": 3, "ended_at": None, "granularity": "D",
+         "params": '{"system": "steady-ai"}'},
+        {"id": 9, "ended_at": None, "granularity": "H1",
+         "params": '{"system": "steady-ai"}'},
+    ])
+    assert R._find_run("H1") == 9
+    assert R._find_run("D") == 3
+    assert R._find_run("H4") is None
+
+
+def test_dd_brake_default_off(wired, monkeypatch):
+    # Round-4 equivalence: the live-only brake cost -4.3pp CAGR AND worsened
+    # maxDD when finally backtested -> default follows the validated edge.
+    calls = []
+    from app import adaptive
+    monkeypatch.setattr(adaptive.AdaptiveController, "evaluate",
+                        lambda self, eq, tr: calls.append(1) or (0.5, "", {}))
+    _run(monkeypatch, _UP, _Dec(True, "long", 0.8))
+    assert calls == []                # brake never evaluated by default
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0, dd_brake=True)
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _UP)
+    R.decide_once(cfg, "USD_JPY", 0.04, 5.0, str(DATA_DIR / "USD_JPY_D.csv"),
+                  _Trader(_Dec(True, "long", 0.8)), dry=False, trigger="test",
+                  granularity="D", sma_n=90)
+    assert calls == [1]               # opt-in path still works
+
+
+def test_the_leverage_dial_is_always_a_real_cap(monkeypatch, capsys):
+    """Round-10B: FXSIM_MAX_LEVERAGE=0 (documented as '0 disables') or any
+    negative value removed the cap — risk sizing then set 10-25x at 272,000
+    JPY, breaking I2. Read from .env it must always be a cap in (0, 5]."""
+    from app.ai_trader import size_lots
+    for raw, want in (("0", 1.0), ("-1", 1.0), ("０", 1.0), ("nan", 1.0), ("12", 5.0),
+                      ("inf", 5.0), ("2.5", 2.5), ("２．５", 2.5), ("5", 5.0), ("", 5.0)):
+        monkeypatch.setenv("FXSIM_MAX_LEVERAGE", raw)
+        assert Settings().max_leverage == want, raw
+    assert capsys.readouterr().out.count("WARNING") == 6       # every refusal is loud
+    monkeypatch.delenv("FXSIM_MAX_LEVERAGE")
+    assert Settings().max_leverage == 5.0
+    for raw in ("0", "-1"):                                     # through the real sizing call
+        monkeypatch.setenv("FXSIM_MAX_LEVERAGE", raw)
+        cap = Settings().max_leverage
+        lots = size_lots("long", 1.0, 272_000.0, 0.10, 0.01, 0.04, 100.0,
+                         price=150.0, max_leverage=cap)
+        assert lots * 100_000 * 150.0 <= cap * 272_000.0 + 1e-6, (raw, lots)
+    assert Settings(max_leverage=0.0).max_leverage == 0.0       # explicit (tests/research) untouched
+
+
+def test_on_off_dials_read_what_the_owner_typed(monkeypatch, capsys):
+    # Round-10B: '０' (IME), 'off' and 'False' all read as ON before.
+    for name, attr in (("FXSIM_DD_BRAKE", "dd_brake"), ("FXSIM_DYN_LEVERAGE", "dyn_leverage"),
+                       ("FXSIM_USE_TAKE_PROFIT", "use_take_profit")):
+        for raw in ("0", "０", "off", "OFF", "False", "no", " 0 "):
+            monkeypatch.setenv(name, raw)
+            assert getattr(Settings(), attr) is False, (name, raw)
+        for raw in ("1", "１", "on", "True", "yes"):
+            monkeypatch.setenv(name, raw)
+            assert getattr(Settings(), attr) is True, (name, raw)
+        monkeypatch.delenv(name)
+    assert Settings().dd_brake is False and Settings().dyn_leverage is True
+    monkeypatch.setenv("FXSIM_DD_BRAKE", "maybe")
+    assert Settings().dd_brake is False and "FXSIM_DD_BRAKE" in capsys.readouterr().out
+    # review of dae5183: numbers keep their old meaning, an empty value is said out loud
+    for raw, want in (("1.0", True), ("2", True), ("0.0", False), ("-1", True)):
+        monkeypatch.setenv("FXSIM_DD_BRAKE", raw)
+        assert Settings().dd_brake is want, raw
+    monkeypatch.setenv("FXSIM_DYN_LEVERAGE", "")
+    assert Settings().dyn_leverage is True and "is empty" in capsys.readouterr().out
+    for raw, want in (("Shadow", "shadow"), ("ＥＮＴＲＹ", "entry"), ("full", "full"),
+                      ("none", "shadow"), ("", "shadow")):
+        monkeypatch.setenv("FXSIM_AI_AUTHORITY", raw)
+        assert Settings().ai_authority == want, raw
+
+
+def test_a_non_finite_whole_number_dial_never_crashes_the_import(monkeypatch):
+    # Round-10B: FXSIM_TREND_SMA=nan raised in int() at import -> supervisor restart loop (I6)
+    for raw in ("nan", "inf", "-inf", "0", "-5", "1e400"):
+        monkeypatch.setenv("FXSIM_TREND_SMA", raw)
+        monkeypatch.setenv("FXSIM_MAX_UNITS", raw)
+        st = Settings()
+        assert st.trend_sma == 2400 and st.max_position_units == 100_000, raw
+    monkeypatch.setenv("FXSIM_TREND_SMA", "２４００")
+    assert Settings().trend_sma == 2400
+
+
+def test_dyn_lev_pow_reverted_to_linear():
+    # Round-4 tribunal (pre-registered rule): convex failed its deflated-Sharpe
+    # charge at every assumed N -> the default is the linear ramp again.
+    assert Settings().dyn_lev_pow == 1.0
+
+
+# ---- brain lock: liveness first, age only as fallback ----------------------
+
+def _write_lock(d, pid, poll, host, age_s=0):
+    import os as _os, time as _t
+    p = d / "steady_brain.lock"
+    p.write_text(f"{pid} {int(_t.time()) - age_s} {poll} {host}\n")
+    if age_s:
+        _os.utime(p, (_t.time() - age_s, _t.time() - age_s))
+    return p
+
+
+def test_lock_taken_over_when_predecessor_is_dead(tmp_path, monkeypatch):
+    # A container restart hands the successor the same PID; the old lock looks
+    # fresh but its writer is gone. Waiting 3x poll (30min) left the protective
+    # stop unsupervised — liveness must win over age.
+    import os, socket
+    monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
+    _write_lock(tmp_path, os.getpid(), 600, socket.gethostname(), age_s=5)
+    lock = R._acquire_brain_lock(600)
+    assert lock is not None and str(os.getpid()) in lock.read_text()
+
+
+def test_live_holder_makes_the_challenger_wait_and_never_exit(tmp_path, monkeypatch):
+    # THE regression that mattered most: a challenger that exits on a live-
+    # looking lock hands the supervisor a restart loop, and the account runs
+    # unsupervised for as long as it lasts (12 and 30 minutes, twice, live).
+    # Correct behaviour is to stand by and acquire the moment the holder stops.
+    import os, socket
+    monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
+    _write_lock(tmp_path, 4242, 600, socket.gethostname(), age_s=30)
+    ticks = {"n": 0}
+    monkeypatch.setattr(R, "_holder_is_alive", lambda pid, host: ticks["n"] < 3)
+
+    def fake_sleep(_s):
+        ticks["n"] += 1
+        assert ticks["n"] < 20, "waited without ever re-judging the lock"
+    monkeypatch.setattr(R._time, "sleep", fake_sleep)
+
+    lock = R._acquire_brain_lock(600)                 # no SystemExit, ever
+    assert lock is not None and str(os.getpid()) in lock.read_text()
+    assert ticks["n"] == 3                            # it really did wait
+
+
+def test_lock_taken_over_from_unknowable_holder_after_one_missed_heartbeat(tmp_path, monkeypatch):
+    # Another container's PIDs are invisible: fall back to age, but only one
+    # missed heartbeat + slack (poll+120), not 3x poll.
+    monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
+    monkeypatch.setattr(R._time, "sleep", lambda s: None)
+    # already past the staleness window (poll+120) -> adopted immediately
+    _write_lock(tmp_path, 4242, 600, "other-container", age_s=800)
+    assert R._acquire_brain_lock(600) is not None
+
+
+def test_lock_released_on_graceful_stop(tmp_path, monkeypatch):
+    import os
+    monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
+    lock = R._acquire_brain_lock(600)
+    assert lock.exists()
+    R._release_lock(lock)
+    assert not lock.exists()          # successor starts immediately
+    # a lock owned by someone else is never released by us
+    _write_lock(tmp_path, os.getpid() + 1, 600, "other")
+    R._release_lock(tmp_path / "steady_brain.lock")
+    assert (tmp_path / "steady_brain.lock").exists()
+
+
+def test_legacy_format_lock_is_adopted(tmp_path, monkeypatch):
+    # Pre-upgrade locks have no host field; treating them as "unknowable" left
+    # the operator crash-looping for 12 minutes after upgrading.
+    monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
+    (tmp_path / "steady_brain.lock").write_text("1 1786947797 600\n")   # old format
+    assert R._acquire_brain_lock(600) is not None
+
+
+def test_unknowable_holder_is_waited_out_not_crash_looped(tmp_path, monkeypatch):
+    # A holder in another PID namespace: stand by and watch its heartbeat.
+    # While it keeps beating we wait; when it stops, we take the lock. Never
+    # patch time.time globally here — it hangs pytest.
+    import os as _os, time as _t
+    monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
+    lock = _write_lock(tmp_path, 4242, 1, "other-container", age_s=100)  # poll=1 -> 121s window
+    monkeypatch.setattr(R._time, "sleep", lambda s: None)
+    assert R._acquire_brain_lock(1) is not None          # already lapsed -> ours
+
+    lock = _write_lock(tmp_path, 4242, 1, "other-container")             # fresh
+    ticks = {"n": 0}
+
+    def holder_beats_then_dies(_s):
+        ticks["n"] += 1
+        assert ticks["n"] < 20, "never re-judged the lock"
+        if ticks["n"] < 4:
+            # A real heartbeat rewrites the whole line (see _touch_lock), so
+            # the holder's own stamp advances with the mtime. Touching only the
+            # mtime is not a heartbeat any holder performs.
+            _write_lock(tmp_path, 4242, 1, "other-container")
+        else:
+            _write_lock(tmp_path, 4242, 1, "other-container", age_s=300)
+    monkeypatch.setattr(R._time, "sleep", holder_beats_then_dies)
+
+    assert R._acquire_brain_lock(1) is not None          # waited, then acquired
+    assert ticks["n"] == 4                               # 3 beats survived, 4th lapsed
+
+
+# ---- round-5: order identity (SEQ), the fix for the re-buying EA ------------
+#
+# steady_signal.txt is a STANDING target the EA re-executes every 30s with no
+# memory. Once round-4 gave the broker a real SL, every stop-out was re-bought
+# within 30s from the still-standing LONG line — no decision, no stop. SEQ is
+# what lets the EA tell "the brain ordered this" from "the brain is repeating
+# itself", so these tests pin the property the EA's gate depends on.
+
+def _seq_run(monkeypatch, window, dec, seq, position_lots=None):
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: window)
+    if position_lots is not None:
+        monkeypatch.setattr(bridge, "read_status",
+                            lambda *a, **k: {"balance": 500000.0, "equity": 500000.0,
+                                             "position_lots": position_lots})
+    cfg = Settings(strategy="ai", granularity="D", max_leverage=5.0, ai_authority="entry")
+    return R.decide_once(cfg, "USD_JPY", 0.04, 5.0, str(DATA_DIR / "USD_JPY_D.csv"),
+                         _Trader(dec), dry=False, trigger="test", granularity="D",
+                         sma_n=90, seq=seq, prev_stop=150.0)
+
+
+def test_hold_reuses_the_standing_order_seq(wired, monkeypatch):
+    # THE property the EA's re-open gate rests on: a hold is not a new order.
+    # If a hold minted a new SEQ, the EA would treat the heartbeat as a fresh
+    # entry and re-buy a position the broker stop had just closed.
+    res = _seq_run(monkeypatch, _UP, _Dec(True, "long", 0.9), seq=1234, position_lots=0.5)
+    assert res["action"] == "LONG" and not res["fresh"]
+    assert res["seq"] == 1234
+
+
+def test_fresh_entry_mints_a_new_seq(wired, monkeypatch):
+    res = _seq_run(monkeypatch, _UP, _Dec(True, "long", 0.9), seq=1234, position_lots=0.0)
+    assert res["fresh"] and res["seq"] > 1234
+
+
+def test_flat_mints_a_new_seq(wired, monkeypatch):
+    res = _seq_run(monkeypatch, _DOWN, _Dec(True, "long", 0.9), seq=1234, position_lots=0.5)
+    assert res["action"] == "FLAT" and res["seq"] > 1234
+
+
+def test_seq_is_monotonic_across_restarts():
+    # A counter that restarted at 1 would read to the EA as a brand-new order.
+    import time as _t
+    assert R._next_seq(0) >= int(_t.time())
+    huge = int(_t.time()) + 10_000          # a seq minted by a future restart
+    assert R._next_seq(huge) == huge + 1    # never goes backwards
+    assert R._next_seq(R._next_seq(5)) > R._next_seq(5) - 1
+
+
+def test_signal_seq_round_trips_through_the_bridge(tmp_path):
+    bridge.write_signal("LONG", 0.17, base=tmp_path, expires_at=1786947797,
+                        sl=158.25, seq=999)
+    line = (tmp_path / bridge.SIGNAL_FILE).read_text().strip()
+    assert line == "LONG 0.17 SEQ 999 EXP 1786947797 SL 158.250"
+    got = bridge.read_signal(base=tmp_path)
+    assert got == {"action": "LONG", "lots": 0.17, "seq": 999,
+                   "expires_at": 1786947797, "sl": 158.25}
+    # a signal with no optional tokens still parses, and an absent file is None
+    bridge.write_signal("FLAT", 0.0, base=tmp_path)
+    assert bridge.read_signal(base=tmp_path)["seq"] is None
+    assert bridge.read_signal(base=tmp_path / "nope") is None
+
+
+# ---- round-5: reconciliation of a book that shrank -------------------------
+
+def test_position_shrink_is_adopted_not_refilled():
+    # A partial external close (partial stop fill, manual trim) must not be
+    # re-bought by the heartbeat: intent_lots only ever adopted UPWARD before.
+    intent, intent_lots, pos = "LONG", 1.20, 0.40
+    if intent == "LONG" and pos >= R.FLAT_EPS:
+        if pos < intent_lots - R.FLAT_EPS:
+            intent_lots = pos
+    assert intent_lots == 0.40
+
+
+# ---- round-5: lock verdicts (liveness before age) --------------------------
+
+def test_live_holder_is_never_evicted_by_age(tmp_path, monkeypatch):
+    # Age is a fallback for holders we cannot SEE. Applying it to a holder we
+    # can see evicted a provably-running brain after one missed heartbeat —
+    # e.g. one errored tick — recreating the double-brain the lock prevents.
+    import socket
+    lock = _write_lock(tmp_path, 4242, 600, socket.gethostname(), age_s=99999)
+    monkeypatch.setattr(R, "_holder_is_alive", lambda pid, host: True)
+    verdict, msg = R._lock_verdict(lock, 600)
+    assert verdict == "wait" and "LIVE" in msg
+
+
+def test_unreadable_lock_is_waited_on_not_adopted(tmp_path):
+    # A torn read used to be adopted as a free lock, pre-empting a live brain.
+    lock = tmp_path / "steady_brain.lock"
+    lock.write_text("")
+    assert R._lock_verdict(lock, 600)[0] == "wait"
+    lock.write_text("garbage not a pid\n")
+    assert R._lock_verdict(lock, 600)[0] == "wait"
+
+
+def test_a_lock_naming_no_host_is_never_taken_at_age_zero(tmp_path):
+    # Round-7: the own-PID guard that used to protect this branch is a no-op —
+    # EVERY containerised brain is PID 1, so `pid == os.getpid()` was always
+    # true and the branch answered "gone" and took the lock at age 0. Seventeen
+    # of the 31 truncation points of a LIVE lock line evicted the incumbent.
+    import time as _t
+    lock = tmp_path / "steady_brain.lock"
+    live_line = f"1 {int(_t.time())} 600 some-other-container\n"
+    for cut in range(1, len(live_line)):
+        lock.write_text(live_line[:cut])
+        assert R._lock_verdict(lock, 600)[0] == "wait", f"took a torn live lock at cut {cut}"
+
+
+def test_a_no_host_lock_still_ages_out(tmp_path):
+    # ...but it must not wait forever either (I11): once the holder's stamp is
+    # older than one missed heartbeat, take it.
+    import time as _t
+    lock = tmp_path / "steady_brain.lock"
+    lock.write_text(f"4242 {int(_t.time()) - 800} 600\n")
+    verdict, msg = R._lock_verdict(lock, 600)
+    assert verdict == "take" and "stale" in msg
+
+
+def test_lock_is_not_released_by_a_foreign_host_with_the_same_pid(tmp_path):
+    # Every containerised brain is PID 1: a pid-only ownership check made any
+    # brain delete any other brain's lock on shutdown.
+    import os
+    lock = tmp_path / "steady_brain.lock"
+    lock.write_text(f"{os.getpid()} 1786947797 600 some-other-container\n")
+    R._release_lock(lock)
+    assert lock.exists()                       # not ours: left alone
+    lock.write_text(R._lock_line(600))         # ours: pid AND host match
+    R._release_lock(lock)
+    assert not lock.exists()
+
+
+def test_lock_heartbeat_is_atomic(tmp_path):
+    # An in-place rewrite gave readers a torn line; tmp+rename cannot.
+    lock = tmp_path / "steady_brain.lock"
+    R._touch_lock(lock, 600)
+    assert R._lock_verdict(lock, 600)[0] in ("take", "wait")   # parses cleanly
+    assert not list(tmp_path.glob("*.tmp"))                    # no debris left
+
+
+# ---- round-6: restart settlement happens on a TRUSTED probe, never a raw read
+
+def test_settle_adopts_open_book_under_a_new_id(capsys):
+    intent, lots, stop, seq, seen = R._settle_adopted_book(0.24, 150.5, mint=lambda p: 4242)
+    assert (intent, lots, stop, seq, seen) == ("LONG", 0.24, 150.5, 4242, True)
+
+
+def test_settle_empty_book_becomes_flat_not_a_long_heartbeat():
+    intent, lots, stop, seq, seen = R._settle_adopted_book(0.0, 150.5, mint=lambda p: 4242)
+    assert intent == "FLAT" and lots == 0.0 and stop is None and seen is False
+    assert seq == 4242                            # FLAT still carries an id
+
+
+def test_settle_dust_is_treated_as_empty():
+    assert R._settle_adopted_book(R.FLAT_EPS / 2, 150.5, mint=lambda p: 1)[0] == "FLAT"
+
+
+def test_find_run_ignores_dashboard_backtests(monkeypatch):
+    # A backtest triggered from the (internet-exposed) dashboard writes a run
+    # into the same sqlite file the brain restores from. It must never be
+    # picked as the brain's run, whatever its params say.
+    rows = [
+        {"id": 9, "ended_at": None, "mode": "backtest", "granularity": "H1",
+         "params": '{"system": "steady-ai"}'},
+        {"id": 7, "ended_at": None, "mode": "live", "granularity": "H1",
+         "params": '{"system": "steady-ai"}'},
+    ]
+    monkeypatch.setattr(db, "list_runs", lambda: rows)
+    assert R._find_run("H1") == 7
+
+
+# ---- round-6b: the brain trusts what the EA reports ------------------------
+
+def test_next_seq_steps_over_the_ea_executed_id():
+    # An EA id above the brain's clock (a --once run on the Windows clock, a
+    # hand-edited line the adopt rule committed) held the system flat forever:
+    # every fresh id was "not newer". The floor makes the next mint step over it.
+    import time as _t
+    ea = int(_t.time()) + 5000
+    assert R._next_seq(0, ea) == ea + 1
+    assert R._next_seq(ea + 10, ea) == ea + 11
+    assert R._next_seq(0, 0) >= int(_t.time())
+
+
+def test_settle_reuses_the_ea_executed_id_for_an_open_book():
+    # No fresh mint when the EA says which id opened the book: the first
+    # heartbeat is then a heartbeat to the EA and can never open.
+    intent, lots, stop, seq, seen = R._settle_adopted_book(
+        0.09, 150.5, mint=lambda p: 999, ea_exec_seq=1700000000)
+    assert (intent, lots, seq, seen) == ("LONG", 0.09, 1700000000, True)
+    # pre-r6b EA (no exec_seq): fall back to minting
+    assert R._settle_adopted_book(0.09, 150.5, mint=lambda p: 999)[3] == 999
+    # empty book never reuses anything
+    assert R._settle_adopted_book(0.0, 150.5, mint=lambda p: 999, ea_exec_seq=1700000000)[0] == "FLAT"
+
+
+def test_trend_gate_returns_the_ea_status(monkeypatch):
+    monkeypatch.setattr(bridge, "read_status", lambda *a, **k: {
+        "balance": 272000.0, "equity": 272000.0, "position_lots": 0.09,
+        "exec_seq": 1700000000, "ea_time": 1800000000, "build": "r6b-status"})
+    monkeypatch.setattr(bridge, "read_bars", lambda instr="USD_JPY", gran="D", base=None: _UP)
+    monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    monkeypatch.setattr(R, "MAX_BAR_JUMP_PCT", 1e9)
+    up, price, pos, st = R._trend_gate("USD_JPY", "D", 90, str(DATA_DIR / "USD_JPY_D.csv"))
+    assert pos == 0.09 and st["exec_seq"] == 1700000000 and st["build"] == "r6b-status"
+
+
+# ---- round-6c: EA liveness from its own clock ------------------------------
+
+def test_frozen_status_is_detected_only_when_the_ea_clock_stalls():
+    assert R._status_frozen(1800000600, 1800000600) is True      # no advance in a poll
+    assert R._status_frozen(1800000600, 1800000000) is False
+    assert R._status_frozen(1800000600, None) is False           # first poll
+    assert R._status_frozen(None, None) is False                 # old EA: unknown, not frozen
+    assert R._status_frozen(None, 1800000000) is False           # EA downgraded mid-run
+
+
+def test_skew_sample_is_trusted_only_when_plausible_and_advancing():
+    now = 1800000000.0
+    assert R._skew_from(1800000030, now, 1799999400) == 30.0
+    assert R._skew_from(None, now, 1799999400) is None              # old EA
+    assert R._skew_from(1800, now, 1799999400) is None              # torn: decades off
+    assert R._skew_from(1799999000, now, 1799999400) is None        # clock went backwards
+    assert R._skew_from(1800000000 - 5 * 3600, now, None) == -5 * 3600.0   # a real lag
+
+
+def test_large_but_stable_skew_is_a_real_lag_not_a_torn_row():
+    now = 1800000000.0
+    lag = -30 * 3600                                           # PC slept 30h
+    assert R._skew_from(now + lag, now, None) is None           # first sample: refuse
+    assert R._skew_from(now + lag + 600, now + 600, now + lag, prev_raw=lag) == lag   # stable: accept
+    assert R._skew_from(1800, now, None, prev_raw=lag) is None  # torn: not stable
+
+
+def test_torn_row_is_judged_per_row_and_a_downgrade_falls_back_to_legacy():
+    six = {"build": "r6e-status"}; three = {}
+    torn, seen, streak, note = R._row_trust(six, False, 0)
+    assert (torn, seen, streak) == (False, True, 0)
+    torn, seen, streak, note = R._row_trust(three, seen, streak)      # one torn row
+    assert torn and seen and streak == 1
+    torn, seen, streak, note = R._row_trust(six, seen, streak)        # good row -> trusted again
+    assert (torn, seen, streak) == (False, True, 0)                   # not sticky
+    torn, seen, streak, _ = R._row_trust(three, seen, streak)
+    torn, seen, streak, note = R._row_trust(three, seen, streak)      # second in a row
+    assert not torn and not seen and streak == 0 and "older EA" in note
+    assert R._row_trust(three, False, 0)[0] is False                  # old EA from the start
+
+
+# ---- round-7: an unreadable lock must AGE OUT, not trap the brain ----------
+
+def test_empty_lock_file_is_taken_over_once_it_ages(tmp_path, monkeypatch):
+    # A zero-byte lock parses to no fields and raises nothing, so it fell into
+    # the "unreadable" branch — which sat BEFORE the age check and returned
+    # "wait" unconditionally. Live consequence: the brain waited 68 hours in
+    # _acquire_brain_lock with the account out of the market.
+    import os as _os, time as _t
+    lock = tmp_path / "steady_brain.lock"
+    lock.write_text("")
+    assert R._lock_verdict(lock, 600)[0] == "wait"        # fresh: a torn write may heal
+    old = _t.time() - 800                                  # older than poll + 120
+    _os.utime(lock, (old, old))
+    verdict, msg = R._lock_verdict(lock, 600)
+    assert verdict == "take" and "unreadable" in msg
+
+    lock.write_text("garbage not a pid\n")                 # same for real garbage
+    _os.utime(lock, (old, old))
+    assert R._lock_verdict(lock, 600)[0] == "take"
+
+
+def test_an_unreadable_lock_never_blocks_acquisition_forever(tmp_path, monkeypatch):
+    # End to end: _acquire_brain_lock must return, not spin. Bounded fake sleep.
+    import os, time as _t
+    _os = os
+    monkeypatch.setattr(bridge, "common_files_dir", lambda: tmp_path)
+    lock = tmp_path / "steady_brain.lock"
+    lock.write_text("")
+    ticks = {"n": 0}
+
+    def fake_sleep(_s):
+        ticks["n"] += 1
+        assert ticks["n"] < 50, "brain is stuck waiting on an unreadable lock"
+        if ticks["n"] == 3:                                # it stays unreadable and ages
+            old = _t.time() - 800
+            _os.utime(lock, (old, old))
+    monkeypatch.setattr(R._time, "sleep", fake_sleep)
+    got = R._acquire_brain_lock(600)
+    assert got is not None and str(os.getpid()) in got.read_text()
+
+
+# ---- round-9 review: re-entry after a stop waits for a NEWER closed bar ------
+
+def test_awaiting_new_bar_helper():
+    t1, t2 = datetime(2026, 1, 1, 10, tzinfo=timezone.utc), datetime(2026, 1, 1, 11, tzinfo=timezone.utc)
+    t0 = datetime(2026, 1, 1, 9, tzinfo=timezone.utc)
+    assert R._awaiting_new_bar(None, t1, 0.0) == (False, None)
+    assert R._awaiting_new_bar(t1, t1, 0.0) == (True, t1)        # same bar, still flat: wait
+    assert R._awaiting_new_bar(t1, t2, 0.0) == (False, None)     # a newer closed bar: go
+    assert R._awaiting_new_bar(t1, t1, 0.10) == (False, None)    # not flat: nothing to wait for
+    # an OLDER bar (a torn bars file) or none at all keeps the block (2nd review)
+    assert R._awaiting_new_bar(t1, t0, 0.0) == (True, t1)
+    assert R._awaiting_new_bar(t1, None, 0.0) == (True, t1)
+    # a mark restored from the DB is an ISO string; naive bar times are UTC
+    iso = t1.isoformat()
+    assert R._awaiting_new_bar(iso, t1.replace(tzinfo=None), 0.0) == (True, iso)
+    assert R._awaiting_new_bar(iso, t2.replace(tzinfo=None), 0.0) == (False, None)
+    assert R._awaiting_new_bar("not a time", t1, 0.0) == (False, None)   # unreadable mark: no block
+
+
+@pytest.mark.parametrize("restart_after_poll,fault", [
+    (None, None), (2, None), (4, None),
+    (2, "clock_behind"),      # 3rd review: a restored cooldown in the future held entries back
+    (2, "torn_status"),       # 3rd review: a torn re-read lost the stop row and its mark
+    (2, "lost_stop_row"),     # ...and with no stop row at all, settle must set the mark
+    (None, "blind_daily"),    # Round-10B: a blind poll dropped the block for a due daily
+    (None, "ea_lag_blind"),   # ...and, before the EA closed, re-armed the position it stopped
+])
+def test_resident_loop_reenters_only_after_the_stop_bar_has_closed(tmp_path, monkeypatch,
+                                                                   restart_after_poll, fault):
+    """End to end through main(): a LONG is stopped out by the live price, the
+    price recovers INSIDE the same bar (closed-bar trend still up): the brain
+    must keep the book flat for every poll of that bar — no gate, no daily —
+    and re-enter at the first poll after a newer bar has closed. With a
+    restart (crash, supervisor, lock takeover) inside the stop's bar the block
+    must survive: before the 2nd review it lived only in memory."""
+    import sys as _sys
+    from datetime import timedelta
+    from app.models import Candle
+
+    class _Stop(BaseException):
+        pass
+
+    clock = {"t": 1_790_000_000.0}
+
+    class _FakeTime:
+        @staticmethod
+        def time():
+            return clock["t"]
+
+        @staticmethod
+        def sleep(s):
+            clock["t"] += s
+            state["polls"] += 1
+            script(state["polls"])
+            if state["polls"] > state["limit"]:
+                raise _Stop()
+
+    class _DT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromtimestamp(clock["t"], tz)
+
+    monkeypatch.setattr(R, "_time", _FakeTime)
+    monkeypatch.setattr(R, "datetime", _DT)
+    monkeypatch.setattr(R, "MAX_BAR_AGE_H", 1e9)
+    monkeypatch.setattr(R, "MAX_BAR_JUMP_PCT", 1e9)
+    monkeypatch.setattr(R, "_acquire_brain_lock", lambda poll: tmp_path / "steady_brain.lock")
+    monkeypatch.setattr(R, "_touch_lock", lambda *a, **k: True)
+    monkeypatch.setattr(R, "_release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(R, "get_calendar", lambda *a, **k: type("C", (), {"for_instrument": lambda self, i: []})())
+
+    class _NoAI:
+        model = "none"
+
+        def __init__(self, *a, **k):
+            pass
+
+        def decide(self, ctx):
+            return _Dec(False, "long", 0.0)
+    monkeypatch.setattr(R, "AITrader", _NoAI)
+    dbp = str(tmp_path / "t.db")
+    monkeypatch.setattr(db.settings, "db_path", dbp)
+    db.init_db()
+
+    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def bar(i, c, lo=None):
+        return Candle(instrument="USD_JPY", granularity="H1", time=t0 + timedelta(hours=i),
+                      open=c, high=c + 0.05, low=(lo if lo is not None else c - 0.05), close=c)
+    closed = [bar(i, 140.0 + i * 0.1) for i in range(120)]          # strong up-trend, ~152 at the end
+    state = {"polls": 0, "forming": bar(120, 151.9), "pos": 0.10, "exec_seq": 1_789_999_000,
+             "limit": 14 if restart_after_poll is None else restart_after_poll}
+    writes = []
+
+    def script(n):
+        if n == 1:                                   # the live price falls through the stop
+            state["forming"] = bar(120, 150.9, lo=150.8)
+        elif 2 <= n <= 6:                            # and recovers INSIDE the same bar
+            state["forming"] = bar(120, 152.0)
+        elif n == 7:                                 # that bar closes up; a new one forms
+            closed.append(bar(120, 152.0))
+            state["forming"] = bar(121, 152.1)
+        if n == 2 and fault in ("blind_daily", "ea_lag_blind"):
+            state["torn"] = True                     # the probe's status read fails once
+        if state.get("close_at") and n >= state["close_at"]:
+            state["pos"] = 0.0                       # the lagging EA finally closes
+            state.pop("close_at")
+
+    monkeypatch.setattr(bridge, "read_bars", lambda *a, **k: closed + [state["forming"]])
+    def read_status(*a, **k):
+        if state.pop("torn", False):
+            return None
+        return {"balance": 1_000_000.0, "equity": 1_000_000.0, "position_lots": state["pos"],
+                "exec_seq": state["exec_seq"], "ea_time": int(clock["t"]), "build": bridge.EA_BUILD_EXPECTED}
+    monkeypatch.setattr(bridge, "read_status", read_status)
+    standing = {"action": "LONG", "lots": 0.10, "seq": state["exec_seq"], "sl": 151.0}
+
+    def write_signal(action, lots, base=None, expires_at=None, sl=None, seq=None):
+        writes.append((state["polls"], action, round(lots, 2), seq))
+        standing.update(action=action, lots=lots, seq=seq, sl=sl)
+        if action == "FLAT":
+            if fault == "ea_lag_blind" and state["polls"] == 1:
+                state["close_at"] = 4         # the EA executes the stop's FLAT 3 polls late
+            elif not state.get("close_at"):
+                state["pos"] = 0.0
+            if fault == "torn_status" and state["polls"] == 1:
+                state["torn"] = True          # the very next status read is torn
+        elif action == "LONG" and seq and seq > state["exec_seq"] and state["pos"] == 0.0:
+            state["pos"], state["exec_seq"] = lots, seq
+    monkeypatch.setattr(bridge, "write_signal", write_signal)
+    monkeypatch.setattr(bridge, "read_signal", lambda *a, **k: dict(standing))
+
+    rid = db.create_run(mode="live", instrument="USD_JPY", granularity="H1", initial_balance=1_000_000.0,
+                        params={"system": "steady-ai", "model": "none", "max_risk": 0.04})
+    db.record_signal(rid, datetime.fromtimestamp(clock["t"] - 3600, timezone.utc), "USD_JPY", "combined",
+                     1, 0.0, "entry", {"action": "LONG", "trigger": "gate-entry", "stop_price": 151.0,
+                                       "seq": state["exec_seq"]})
+    argv = ["run_ai_bridge.py", "--poll", "600", "--sma", "90"]
+    if fault in ("blind_daily", "ea_lag_blind"):
+        argv += ["--daily-gap-h", "0.1"]        # a scheduled decision is due at every poll
+    monkeypatch.setattr(_sys, "argv", argv)
+    with pytest.raises(_Stop):
+        R.main()
+    if restart_after_poll is not None:          # the brain dies inside the stop's bar
+        state["limit"] = 14
+        if fault == "clock_behind":
+            clock["t"] -= 3 * 3600                # the container clock reads 3 h behind
+        if fault == "lost_stop_row":
+            import sqlite3
+            con = sqlite3.connect(dbp)
+            con.execute("DELETE FROM signals WHERE components LIKE '%\"trigger\": \"stop\"%'")
+            con.commit(); con.close()
+            standing.update(action="FLAT", seq=0)   # the bridge holds the FLAT, no live order id
+        with pytest.raises(_Stop):
+            R.main()
+
+    longs = [w for w in writes if w[1] == "LONG" and w[3] != 1_789_999_000]
+    assert any(w[1] == "FLAT" for w in writes if w[0] == 1), writes          # stopped at poll 1
+    assert not [w for w in longs if w[0] < 7], writes                         # no re-entry in the stop bar
+    assert [w for w in longs if 7 <= w[0] <= 8], writes                       # re-entered right after it closed
+    if fault in (None, "torn_status"):
+        stops = [r for r in db.load_signals(rid) if '"trigger": "stop"' in str(r.get("components"))]
+        assert stops and '"reentry_bar": "' in str(stops[-1]["components"]), stops   # the mark was kept
+
+
+# ---- round-10: a weekend plus Christmas / New Year must not look like a dead feed ----
+# The 11-year tape holds closures of 76, 78 and 79 hours (bar open to bar open).
+# With the plain 75 h limit the brain went blind for the last hours of those and
+# a healthy long survived only on the grace + signal TTL; 2026-12-25 and
+# 2027-01-01 are Fridays, the 2015 calendar.
+
+def test_holiday_extra_covers_exactly_the_long_closures():
+    from datetime import timedelta
+    U = timezone.utc
+    extra = bridge.holiday_extra_h
+    assert extra(datetime(2015, 12, 24, 18, tzinfo=U), datetime(2015, 12, 27, 22, tzinfo=U)) == 24.0
+    assert extra(datetime(2017, 12, 22, 23, tzinfo=U), datetime(2017, 12, 26, 4, tzinfo=U)) == 24.0
+    assert extra(datetime(2026, 12, 31, 20, tzinfo=U), datetime(2027, 1, 3, 22, tzinfo=U)) == 24.0
+    assert extra(datetime(2026, 12, 24, 18), datetime(2026, 12, 27, 22)) == 24.0         # naive = UTC
+    assert extra(datetime(2026, 11, 6, 23, tzinfo=U), datetime(2026, 11, 9, 0, tzinfo=U)) == 0.0   # a weekend
+    assert extra(datetime(2026, 12, 28, 5, tzinfo=U), datetime(2026, 12, 31, 5, tzinfo=U)) == 0.0  # after it
+    assert extra(datetime(2026, 12, 25, 1, tzinfo=U), datetime(2026, 12, 25, 9, tzinfo=U)) == 0.0  # same day
+    assert extra(datetime(2027, 1, 5, tzinfo=U), datetime(2026, 12, 20, tzinfo=U)) == 0.0          # bar in the future
+    assert extra("2026-12-24", datetime(2026, 12, 27, tzinfo=U)) == 0.0                            # not a datetime
+    # bounded: a feed dead since before the holiday is still refused in the end
+    assert bridge.max_bar_age_h(datetime(2026, 12, 24, 18, tzinfo=U),
+                                datetime(2026, 12, 27, 22, tzinfo=U)) == 99.0
+
+
+def test_a_feed_refused_before_the_holiday_is_never_revived_by_it():
+    """Round-10B: bars dead since Monday 21 December were refused at 75 h on the
+    24th and accepted again at 00:00 UTC on the 25th with no new data — the
+    heartbeat resumed and the health check read GREEN on Christmas Day. The
+    allowance must extend a live feed only, so for any one newest bar a refusal
+    is final."""
+    from datetime import timedelta
+    U = timezone.utc
+    lim = bridge.max_bar_age_h
+    dead = datetime(2026, 12, 21, 20, tzinfo=U)                 # 76 h old at 25 Dec 00:00
+    assert lim(dead, datetime(2026, 12, 24, 23, 30, tzinfo=U)) == 75.0
+    assert lim(dead, datetime(2026, 12, 25, 0, 10, tzinfo=U)) == 75.0
+    alive = datetime(2026, 12, 21, 22, tzinfo=U)                # 74 h old at 25 Dec 00:00
+    assert lim(alive, datetime(2026, 12, 25, 0, 10, tzinfo=U)) == 99.0
+    # property, over three calendars: once refused, never accepted again
+    for start in (datetime(2026, 12, 18, tzinfo=U), datetime(2017, 12, 18, tzinfo=U),
+                  datetime(2026, 12, 26, tzinfo=U)):
+        for h in range(0, 24 * 8, 2):
+            last = start + timedelta(hours=h)
+            refused, now = False, last
+            for _ in range(2 * 24 * 6):                         # 6 days in 30-min steps
+                now += timedelta(minutes=30)
+                ok = (now - last).total_seconds() / 3600.0 <= lim(last, now)
+                assert not (refused and ok), (last, now)
+                refused = refused or not ok
+
+
+@pytest.mark.parametrize("rule", ["fixed", "revival"])
+def test_a_dead_feed_stays_refused_through_christmas_day(tmp_path, monkeypatch, rule):
+    """End to end through main(): LONG 0.08, the bar export died on Monday
+    21 December 20:00 (label) while the EA status kept advancing. The brain
+    goes blind at 75 h on the 24th and withholds the heartbeat; it must stay
+    blind on the 25th. The 'revival' arm runs the first Round-10 rule and
+    proves this test sees the heartbeat come back."""
+    import sys as _sys
+    from datetime import timedelta
+    from app.models import Candle
+
+    class _Stop(BaseException):
+        pass
+
+    U = timezone.utc
+    last_bar = datetime(2026, 12, 21, 20, tzinfo=U)
+    clock = {"t": datetime(2026, 12, 24, 21, 0, tzinfo=U).timestamp()}
+    end = datetime(2026, 12, 25, 6, 0, tzinfo=U).timestamp()
+    xmas = datetime(2026, 12, 25, tzinfo=U).timestamp()
+    state = {"polls": 0}
+
+    class _FakeTime:
+        @staticmethod
+        def time():
+            return clock["t"]
+
+        @staticmethod
+        def sleep(s):
+            clock["t"] += s
+            state["polls"] += 1
+            if clock["t"] >= end or state["polls"] > 500:
+                raise _Stop()
+
+    class _DT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromtimestamp(clock["t"], tz)
+
+    monkeypatch.setattr(R, "_time", _FakeTime)
+    monkeypatch.setattr(R, "datetime", _DT)
+    if rule == "revival":
+        def first_rule(last, now=None):
+            day, stop = last.date() + timedelta(days=1), now.date()
+            while day <= stop:
+                if (day.month, day.day) in ((12, 25), (1, 1)):
+                    return 24.0
+                day += timedelta(days=1)
+            return 0.0
+        monkeypatch.setattr(bridge, "holiday_extra_h", first_rule)
+    monkeypatch.setattr(R, "_acquire_brain_lock", lambda poll: tmp_path / "steady_brain.lock")
+    monkeypatch.setattr(R, "_touch_lock", lambda *a, **k: True)
+    monkeypatch.setattr(R, "_release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(R, "get_calendar", lambda *a, **k: type("C", (), {"for_instrument": lambda self, i: []})())
+
+    class _NoAI:
+        model = "none"
+
+        def __init__(self, *a, **k):
+            pass
+
+        def decide(self, ctx):
+            return _Dec(False, "long", 0.0)
+    monkeypatch.setattr(R, "AITrader", _NoAI)
+    monkeypatch.setattr(db.settings, "db_path", str(tmp_path / "t.db"))
+    db.init_db()
+
+    bars = [Candle(instrument="USD_JPY", granularity="H1", time=last_bar - timedelta(hours=130 - i),
+                   open=150.0 + i * 0.05, high=150.1 + i * 0.05, low=149.95 + i * 0.05,
+                   close=150.05 + i * 0.05) for i in range(131)]
+    seq0 = int(clock["t"]) - 5000
+    writes = []
+    monkeypatch.setattr(bridge, "read_bars", lambda *a, **k: bars)
+    monkeypatch.setattr(bridge, "read_status", lambda *a, **k: {
+        "balance": 272_000.0, "equity": 272_000.0, "position_lots": 0.08, "exec_seq": seq0,
+        "ea_time": int(clock["t"]), "build": bridge.EA_BUILD_EXPECTED})
+    standing = {"action": "LONG", "lots": 0.08, "seq": seq0, "sl": 150.0}
+    monkeypatch.setattr(bridge, "read_signal", lambda *a, **k: dict(standing))
+    monkeypatch.setattr(bridge, "write_signal",
+                        lambda action, lots, base=None, expires_at=None, sl=None, seq=None:
+                        writes.append((clock["t"], action, round(lots, 2), expires_at, seq)))
+    rid = db.create_run(mode="live", instrument="USD_JPY", granularity="H1", initial_balance=272_000.0,
+                        params={"system": "steady-ai", "model": "none", "max_risk": 0.04})
+    db.record_signal(rid, datetime.fromtimestamp(clock["t"] - 7200, U), "USD_JPY", "combined", 1, 0.0,
+                     "entry", {"action": "LONG", "trigger": "gate-entry", "stop_price": 150.0, "seq": seq0})
+    monkeypatch.setattr(_sys, "argv", ["run_ai_bridge.py", "--poll", "600", "--sma", "90"])
+    with pytest.raises(_Stop):
+        R.main()
+
+    assert [w for w in writes if w[0] < xmas - 3600], writes[:3]     # alive before 75 h
+    revived = [w for w in writes if w[0] >= xmas]
+    if rule == "fixed":
+        assert not revived, revived[:3]                               # blind stays blind
+    else:
+        assert revived                                                # the defect, reproduced
+
+
+def test_no_closure_in_the_tape_exceeds_the_limit():
+    # every market closure of the 11-year H1 tape, judged the way the brain judges it
+    from scripts import research_harness as H
+    t = H.pair_arrays("USD_JPY")["t"].reset_index(drop=True)
+    gap_h = t.diff().dt.total_seconds() / 3600.0
+    over_plain = over_new = 0
+    for i in gap_h[gap_h > 40].index:
+        last, reopen = t[i - 1].to_pydatetime(), t[i].to_pydatetime()
+        over_plain += gap_h[i] > bridge.MAX_BAR_AGE_H
+        over_new += gap_h[i] > bridge.max_bar_age_h(last, reopen)
+    assert over_plain == 3          # 76, 78 and 79 hours: the brain used to go blind
+    assert over_new == 0
+
+
+def test_load_bars_accepts_a_holiday_closure_and_still_refuses_a_dead_feed(monkeypatch):
+    from datetime import timedelta
+    from app.models import Candle
+
+    def feed(last):
+        return [Candle(instrument="USD_JPY", granularity="H1", time=last - timedelta(hours=130 - i),
+                       open=150.0, high=150.1, low=149.9, close=150.0) for i in range(131)]
+    U = timezone.utc
+
+    class _DT(datetime):
+        now_value = None
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.now_value
+    monkeypatch.setattr(R, "datetime", _DT)
+    # 77 h after a bar opened on 24 December: the Christmas closure
+    bars = feed(datetime(2026, 12, 24, 18, tzinfo=U))
+    monkeypatch.setattr(bridge, "read_bars", lambda *a, **k: bars)
+    _DT.now_value = datetime(2026, 12, 27, 23, tzinfo=U)
+    assert R._load_bars("USD_JPY", "H1", 90, "no-such-file.csv") is not None
+    _DT.now_value = datetime(2026, 12, 28, 22, tzinfo=U)            # 100 h: dead, holiday or not
+    assert R._load_bars("USD_JPY", "H1", 90, "no-such-file.csv") is None
+    # the same 77 h with no holiday inside is a dead feed
+    bars2 = feed(datetime(2026, 11, 5, 18, tzinfo=U))
+    monkeypatch.setattr(bridge, "read_bars", lambda *a, **k: bars2)
+    _DT.now_value = datetime(2026, 11, 8, 23, tzinfo=U)
+    assert R._load_bars("USD_JPY", "H1", 90, "no-such-file.csv") is None
+
+
+@pytest.mark.parametrize("holiday_aware", [True, False])
+def test_a_long_survives_the_christmas_closure(tmp_path, monkeypatch, holiday_aware):
+    """End to end through main(): LONG 0.08 lots, the market shuts on 24 December
+    18:00 (bar label) and the bars are 78.5 h old by the end of the run. The
+    heartbeat must keep its EXP alive throughout; with the plain limit it is
+    withheld from hour 75.5 and the EXP lapses (the EA then flattens at the
+    reopen) — that arm proves this test can see the failure."""
+    import sys as _sys
+    from datetime import timedelta
+    from app.models import Candle
+
+    class _Stop(BaseException):
+        pass
+
+    U = timezone.utc
+    last_bar = datetime(2026, 12, 24, 18, tzinfo=U)
+    clock = {"t": datetime(2026, 12, 24, 19, 30, tzinfo=U).timestamp()}
+    end = datetime(2026, 12, 28, 0, 30, tzinfo=U).timestamp()      # bars 78.5 h old
+    state = {"polls": 0}
+
+    class _FakeTime:
+        @staticmethod
+        def time():
+            return clock["t"]
+
+        @staticmethod
+        def sleep(s):
+            clock["t"] += s
+            state["polls"] += 1
+            if clock["t"] >= end or state["polls"] > 2000:
+                raise _Stop()
+
+    class _DT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromtimestamp(clock["t"], tz)
+
+    monkeypatch.setattr(R, "_time", _FakeTime)
+    monkeypatch.setattr(R, "datetime", _DT)
+    if not holiday_aware:
+        monkeypatch.setattr(bridge, "holiday_extra_h", lambda last, now=None: 0.0)
+    monkeypatch.setattr(R, "_acquire_brain_lock", lambda poll: tmp_path / "steady_brain.lock")
+    monkeypatch.setattr(R, "_touch_lock", lambda *a, **k: True)
+    monkeypatch.setattr(R, "_release_lock", lambda *a, **k: None)
+    monkeypatch.setattr(R, "get_calendar", lambda *a, **k: type("C", (), {"for_instrument": lambda self, i: []})())
+
+    class _NoAI:
+        model = "none"
+
+        def __init__(self, *a, **k):
+            pass
+
+        def decide(self, ctx):
+            return _Dec(False, "long", 0.0)
+    monkeypatch.setattr(R, "AITrader", _NoAI)
+    dbp = str(tmp_path / "t.db")
+    monkeypatch.setattr(db.settings, "db_path", dbp)
+    db.init_db()
+
+    bars = [Candle(instrument="USD_JPY", granularity="H1", time=last_bar - timedelta(hours=130 - i),
+                   open=150.0 + i * 0.05, high=150.1 + i * 0.05, low=149.95 + i * 0.05,
+                   close=150.05 + i * 0.05) for i in range(131)]
+    seq0 = int(clock["t"]) - 5000
+    writes = []
+    monkeypatch.setattr(bridge, "read_bars", lambda *a, **k: bars)
+    monkeypatch.setattr(bridge, "read_status", lambda *a, **k: {
+        "balance": 272_000.0, "equity": 272_000.0, "position_lots": 0.08, "exec_seq": seq0,
+        "ea_time": int(clock["t"]), "build": bridge.EA_BUILD_EXPECTED})
+    standing = {"action": "LONG", "lots": 0.08, "seq": seq0, "sl": 150.0}
+    monkeypatch.setattr(bridge, "read_signal", lambda *a, **k: dict(standing))
+    monkeypatch.setattr(bridge, "write_signal",
+                        lambda action, lots, base=None, expires_at=None, sl=None, seq=None:
+                        writes.append((clock["t"], action, round(lots, 2), expires_at, seq)))
+    rid = db.create_run(mode="live", instrument="USD_JPY", granularity="H1", initial_balance=272_000.0,
+                        params={"system": "steady-ai", "model": "none", "max_risk": 0.04})
+    db.record_signal(rid, datetime.fromtimestamp(clock["t"] - 7200, U), "USD_JPY", "combined", 1, 0.0,
+                     "entry", {"action": "LONG", "trigger": "gate-entry", "stop_price": 150.0, "seq": seq0})
+    monkeypatch.setattr(_sys, "argv", ["run_ai_bridge.py", "--poll", "600", "--sma", "90"])
+    with pytest.raises(_Stop):
+        R.main()
+
+    assert writes and all(w[1] == "LONG" and w[2] == 0.08 and w[4] == seq0 for w in writes), writes[-3:]
+    last_exp = max(w[3] for w in writes)
+    if holiday_aware:
+        assert last_exp > end                       # the heartbeat never lapsed
+        gaps = [b[0] - a[0] for a, b in zip(writes, writes[1:])]
+        assert max(gaps) <= 1300, max(gaps)         # one beat per poll, all the way through
+    else:
+        assert last_exp < end                       # blind from hour 75: the EXP has lapsed
