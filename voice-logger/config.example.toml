@@ -1,5 +1,9 @@
 # voice-logger 設定ファイル
 # コピーして config.toml として使う: cp config.example.toml config.toml
+#
+# タイムゾーン: 日付の区切り・受信ファイル名・デバイスへ返す時刻は、このプロセスの
+# ローカル時刻（OSの設定、または環境変数 TZ）に従う。Docker では compose が
+# TZ=Asia/Tokyo を渡す（.env の TZ で変更可）。起動時のログに実際の時刻が出る。
 
 [paths]
 # 音声ファイルの投入先。スマホからは Syncthing / AirDrop / SMB 等でここに置く
@@ -12,6 +16,9 @@ state = "~/voice-logger/state"
 obsidian_vault = "~/Obsidian/MyVault"
 # vault 内の Daily Notes フォルダ（相対パス）
 daily_notes_dir = "Daily Notes"
+# 何度やっても処理できない音声の隔離先。省略すると inbox の隣の failed/
+# （inbox の中には置かないこと。再帰スキャンでまた拾ってしまう）
+# failed = "~/voice-logger/failed"
 
 [whisper]
 # 日本語精度重視なら large-v3、速度重視なら large-v3-turbo / distil 系
@@ -19,6 +26,11 @@ model = "large-v3-turbo"
 device = "auto"        # "cuda" / "cpu" / "auto"
 compute_type = "auto"  # "float16" / "int8_float16" / "int8" / "auto"
 language = "ja"
+# モデル取得のための外部通信 (huggingface.co):
+#   "auto" … キャッシュ済みなら一切通信しない。無いときだけ初回ダウンロード（既定）
+#   true   … 常に通信しない（キャッシュに無ければエラーで止まる）
+#   false  … 起動のたびに更新確認に行く
+offline = "auto"
 
 [ollama]
 url = "http://localhost:11434"
@@ -26,6 +38,27 @@ url = "http://localhost:11434"
 model = "qwen3:14b"
 # 長い録音を分割する際の1チャンクの文字数上限
 chunk_chars = 12000
+# コンテキスト長（トークン）。chunk_chars の日本語テキスト + 出力が収まること。
+# CPU 推論や小さいモデルでは num_ctx = 8192 / chunk_chars = 4000 程度に下げる
+num_ctx = 16384
+# 1回の推論を待つ上限（秒）
+timeout_sec = 600
+# 思考モードを持つモデル (qwen3 等) で思考を切るなら false。書かなければモデルの既定
+# think = false
+
+# ---------------------------------------------------------------------------
+# inbox 監視 (`voice-logger watch`) の再試行。省略すれば下の既定値
+# ---------------------------------------------------------------------------
+[watch]
+# 同じ音声の処理がこの回数失敗したら隔離先 ([paths] failed) へ移す。
+# Ollama に繋がらない・モデル未取得・vault に書けない、は回数に数えない
+max_failures = 5
+# 再試行間隔: retry_base_sec × 2^(失敗回数-1) 秒、上限 retry_max_sec
+retry_base_sec = 60
+retry_max_sec = 3600
+# 最終更新からこの秒数たつまでは「コピー途中かもしれない」として触らない。
+# -1 ならスキャン間隔 (--interval) の2倍
+min_age_sec = -1
 
 [diary]
 # Daily Note のファイル名の日付フォーマット（"YYYY-MM-DD.md" なら %Y-%m-%d）
@@ -68,4 +101,8 @@ allowed_networks = ["127.0.0.0/8", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/1
 max_bytes = 134217728
 # この空き容量を切ったら受けない（507 を返し、デバイスは次回に持ち越す）
 min_free_bytes = 536870912
+# 1回の送受信を待つ上限秒（TLSハンドシェイクと、次のリクエストのヘッダが揃うまでの上限でもある）
 socket_timeout_sec = 120
+# ボディ受信に許す最低速度 (バイト/秒)。1リクエストの持ち時間は
+# socket_timeout_sec + Content-Length ÷ この値 秒で、超えた接続はサーバから切る
+min_bytes_per_sec = 8192

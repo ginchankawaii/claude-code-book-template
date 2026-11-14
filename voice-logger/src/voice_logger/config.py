@@ -29,6 +29,12 @@ class PathsConfig:
     state: Path
     obsidian_vault: Path
     daily_notes_dir: str = "Daily Notes"
+    # 何度やっても処理できない音声の隔離先。未指定なら inbox の隣の `failed/`
+    # （inbox の中に置くと再帰スキャンでまた拾ってしまうため、必ず inbox の外）
+    failed: Path | None = None
+
+    def quarantine_dir(self) -> Path:
+        return self.failed if self.failed is not None else self.inbox.parent / "failed"
 
 
 @dataclass
@@ -37,6 +43,11 @@ class WhisperConfig:
     device: str = "auto"
     compute_type: str = "auto"
     language: str = "ja"
+    # モデル取得のための外部通信 (huggingface.co) の扱い:
+    #   "auto" … キャッシュ済みなら一切通信しない。無いときだけ初回ダウンロードする
+    #   true   … 常に通信しない（キャッシュに無ければエラー）
+    #   false  … 起動のたびに huggingface.co へ更新確認に行く（従来の挙動）
+    offline: bool | str = "auto"
 
 
 @dataclass
@@ -44,6 +55,27 @@ class OllamaConfig:
     url: str = "http://localhost:11434"
     model: str = "qwen3:14b"
     chunk_chars: int = 12000
+    # コンテキスト長（トークン）。chunk_chars の日本語テキスト + 出力が収まる値にする。
+    # 大きいほどメモリを食い、CPU推論では遅くなる
+    num_ctx: int = 16384
+    # 1回の推論を待つ上限（秒）
+    timeout_sec: int = 600
+    # 思考モードを持つモデル (qwen3 等) の切替。None なら何も送らずモデルの既定に任せる
+    think: bool | None = None
+
+
+@dataclass
+class WatchConfig:
+    """`voice-logger watch` の再試行と安定判定。"""
+
+    # 同じファイルの処理がこの回数失敗したら隔離ディレクトリへ移す
+    max_failures: int = 5
+    # ファイル単位の再試行間隔: retry_base_sec × 2^(失敗回数-1)、上限 retry_max_sec
+    retry_base_sec: int = 60
+    retry_max_sec: int = 3600
+    # 最終更新からこの秒数たつまでは「コピー途中かもしれない」として触らない。
+    # 負の値ならスキャン間隔の2倍
+    min_age_sec: int = -1
 
 
 @dataclass
@@ -77,8 +109,13 @@ class IngestConfig:
     max_bytes: int = 128 * 1024 * 1024
     # これを下回る空き容量では受けない（507）
     min_free_bytes: int = 512 * 1024 * 1024
-    # ボディ受信のソケットタイムアウト秒
+    # 1回の送受信を待つ上限秒。TLSハンドシェイクと「次のリクエストのヘッダが揃うまで」の
+    # 合計時間の上限にも使う
     socket_timeout_sec: int = 120
+    # ボディ受信に許す最低速度。1リクエストの持ち時間は
+    # socket_timeout_sec + Content-Length / この値 秒で、超えた接続はサーバから切る
+    # （1バイトずつ送り続ける接続に同時接続枠を握られ続けないため）
+    min_bytes_per_sec: int = 8192
 
 
 @dataclass
@@ -94,6 +131,7 @@ class Config:
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
     diary: DiaryConfig = field(default_factory=DiaryConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
+    watch: WatchConfig = field(default_factory=WatchConfig)
 
 
 def _expand(p: str) -> Path:
@@ -126,6 +164,7 @@ def load_config(path: Path) -> Config:
         state=_expand(p.get("state", "~/voice-logger/state")),
         obsidian_vault=_expand(p.get("obsidian_vault", "~/Obsidian")),
         daily_notes_dir=p.get("daily_notes_dir", "Daily Notes"),
+        failed=_expand(p["failed"]) if p.get("failed") else None,
     )
     ingest_raw = dict(raw.get("ingest", {}))
     known = {f.name for f in fields(IngestConfig)}
@@ -137,4 +176,6 @@ def load_config(path: Path) -> Config:
     whisper = WhisperConfig(**raw.get("whisper", {}))
     ollama = OllamaConfig(**raw.get("ollama", {}))
     diary = DiaryConfig(**raw.get("diary", {}))
-    return Config(paths=paths, whisper=whisper, ollama=ollama, diary=diary, ingest=ingest)
+    watch = WatchConfig(**raw.get("watch", {}))
+    return Config(paths=paths, whisper=whisper, ollama=ollama, diary=diary, ingest=ingest,
+                  watch=watch)

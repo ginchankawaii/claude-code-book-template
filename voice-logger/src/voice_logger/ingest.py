@@ -75,6 +75,7 @@ PART_GLOB = ".ingest-*.wav.part"      # 受信中の一時ファイル（iter_au
 DRAIN_MARGIN = 1 << 20                # ボディを読み捨ててでも応答を返す上限の上乗せ分
 UNAUTH_DRAIN_CAP = 1 << 20            # 認証を通る前に読み捨ててよい上限（帯域増幅の防止）
 MAX_AGE_MS = 7 * 24 * 3600 * 1000
+HANDSHAKE_TIMEOUT_SEC = 15            # TLSハンドシェイク全体の持ち時間（socket_timeout_sec が上限）
 NONCE_RE = re.compile(r"^[0-9a-fA-F]{16,64}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -339,6 +340,9 @@ class IngestService:
         self.ledger = ReceiptLedger(self.state)
         self._name_lock = threading.Lock()
         self._reserved: set[str] = set()
+        # 「受信済みか確認 → rename → 台帳に記録」を1本ずつ通すためのロック。
+        # 分けて行うと、同じ内容の同時アップロードが両方とも確認を通過して2本並ぶ
+        self._commit_lock = threading.Lock()
         self._networks = [ipaddress.ip_network(n) for n in self.ic.allowed_networks]
         self.cleanup_stale_parts()
 
@@ -504,6 +508,47 @@ class IngestService:
     def free_bytes(self) -> int:
         return shutil.disk_usage(self.inbox).free
 
+    def commit(self, part: Path, digest: str, device_id: str, length: int,
+               headers: dict, now: datetime) -> tuple[str, bool]:
+        """受信し終えた `.part` を確定し、(保存名, 重複だったか) を返す。
+
+        SPEC §6.4: rename（アトミック）→ ディレクトリ fsync まで終えてから戻るので、
+        呼び出し側はこの後に 200 を返してよい。重複なら何も書かずに既存の名前を返す
+        （`.part` の削除は呼び出し側）。確定処理は短いので全体を1つのロックで直列化する。
+        """
+        with self._commit_lock:
+            dup = self.already_received(digest)
+            if dup:
+                logger.info("重複受信: dev=%s sha=%s… 既存=%s",
+                            device_id, digest[:12], dup.get("stored_name"))
+                return dup.get("stored_name", ""), True
+            start, basis = self.resolve_start_time(headers, now)
+            name = self.reserve_name(start)
+            try:
+                os.rename(part, self.inbox / name)
+                _fsync_dir(self.inbox)
+            finally:
+                self.release_name(name)
+            self._record_receipt(digest, {
+                "stored_name": name, "device": device_id, "bytes": length,
+                "received_at": now.isoformat(timespec="seconds"),
+                "original_name": headers.get("x-mindclip-filename", ""),
+                "name_basis": basis,
+                "duration_ms": headers.get("x-mindclip-duration-ms", ""),
+            })
+        logger.info("受信完了: %s (%d バイト, dev=%s, 命名=%s)", name, length, device_id, basis)
+        return name, False
+
+    def _record_receipt(self, digest: str, entry: dict) -> None:
+        try:
+            self.ledger.record(digest, entry)
+        except OSError:
+            # ファイルは既に inbox にある（＝受理は済んでいる）。ここで 500 を返すと
+            # デバイスが再送し、台帳に無いので重複判定も効かず inbox に2本目が並ぶ。
+            # 台帳は再送回収のための最適化にすぎないので、失敗はログに留めて 200 を返す。
+            logger.exception("受信台帳に記録できませんでした（保存は完了しています）: %s",
+                             entry.get("stored_name"))
+
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "MindClipIngest/1.0"
@@ -556,6 +601,22 @@ class _Handler(BaseHTTPRequestHandler):
     def service(self) -> IngestService:
         return self.server.service  # type: ignore[attr-defined]
 
+    def handle_one_request(self) -> None:
+        # keep-alive の待ち時間 + ヘッダ受信の合計に期限を付ける。ソケットのタイムアウトは
+        # 1回の recv ごとに巻き戻るので、少しずつ送り続ける相手には効かない
+        self.server.set_deadline(self.connection, self.timeout)  # type: ignore[attr-defined]
+        super().handle_one_request()
+
+    def _allow_handling_time(self) -> None:
+        """ヘッダを受け取り終えた時点で期限を張り直す（待ち時間の残りで応答を切られないよう）。"""
+        self.server.set_deadline(self.connection, self.timeout)  # type: ignore[attr-defined]
+
+    def _allow_body_time(self, length: int) -> None:
+        """これから `length` バイトを読む分だけ、この接続の期限を延ばす。"""
+        rate = max(1, self.service.ic.min_bytes_per_sec)
+        self.server.set_deadline(  # type: ignore[attr-defined]
+            self.connection, self.timeout + length / rate)
+
     def _peer_cn(self) -> str | None:
         cert = getattr(self.connection, "getpeercert", lambda: None)()
         if not cert:
@@ -597,6 +658,7 @@ class _Handler(BaseHTTPRequestHandler):
         """
         if length > cap:
             return False
+        self._allow_body_time(length)
         remaining = length
         try:
             while remaining > 0:
@@ -627,6 +689,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         self._responded = False   # keep-alive: 1インスタンスが複数リクエストを捌く
+        self._allow_handling_time()
         path = self.path.split("?", 1)[0]
         # healthz も接続元フィルタの内側に置く（許可範囲外からの生存確認を返さない）
         if not self._guard_client():
@@ -646,13 +709,14 @@ class _Handler(BaseHTTPRequestHandler):
             payload = time_payload()
             logger.info("時刻応答: dev=%s epoch=%d", device, payload["server_epoch"])
             self._send_json(200, payload)
-        except (socket.timeout, TimeoutError, ConnectionError):
+        except (socket.timeout, TimeoutError, ConnectionError, ssl.SSLError):
             self.close_connection = True
         except Exception:  # noqa: BLE001 — 応答を返さずに切らないための最後の砦
             self._fail_internal("時刻応答")
 
     def do_POST(self) -> None:  # noqa: N802
         self._responded = False   # keep-alive: 1インスタンスが複数リクエストを捌く
+        self._allow_handling_time()
         path = self.path.split("?", 1)[0]
         if not self._guard_client():
             return
@@ -662,7 +726,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._handle_ingest(path)
         except (socket.timeout, TimeoutError):
             self._fail(408, "ボディ受信がタイムアウトしました")
-        except ConnectionError as exc:
+        except (ConnectionError, ssl.SSLError) as exc:
             logger.warning("接続が切れました: %s", exc)
             self.close_connection = True
         except Exception:  # noqa: BLE001 — 応答を返さずに切らないための最後の砦
@@ -760,43 +824,11 @@ class _Handler(BaseHTTPRequestHandler):
 
             now = datetime.now()
             # 6) 既に受け取っている sha256 なら書かずに duplicate:true（デバイスは消してよい）
-            dup = svc.already_received(digest)
-            if dup:
-                logger.info("重複受信: dev=%s sha=%s… 既存=%s",
-                            device_id, digest[:12], dup.get("stored_name"))
-                self._send_json(200, {
-                    "ok": True, "sha256": digest, "stored_name": dup.get("stored_name", ""),
-                    "bytes": length, "duplicate": True, **time_payload(now),
-                })
-                return
-
-            start, basis = svc.resolve_start_time(headers, now)
-            name = svc.reserve_name(start)
-            target = svc.inbox / name
-            try:
-                # 7) SPEC §6.4: rename（アトミック）→ ディレクトリ fsync → 200
-                os.rename(part, target)
-                _fsync_dir(svc.inbox)
-            finally:
-                svc.release_name(name)
-
-            try:
-                svc.ledger.record(digest, {
-                    "stored_name": name, "device": device_id, "bytes": length,
-                    "received_at": now.isoformat(timespec="seconds"),
-                    "original_name": headers.get("x-mindclip-filename", ""),
-                    "name_basis": basis,
-                    "duration_ms": headers.get("x-mindclip-duration-ms", ""),
-                })
-            except OSError:
-                # ファイルは既に inbox にある（＝受理は済んでいる）。ここで 500 を返すと
-                # デバイスが再送し、台帳に無いので重複判定も効かず inbox に2本目が並ぶ。
-                # 台帳は再送回収のための最適化にすぎないので、失敗はログに留めて 200 を返す。
-                logger.exception("受信台帳に記録できませんでした（保存は完了しています）: %s", name)
-            logger.info("受信完了: %s (%d バイト, dev=%s, 命名=%s)", name, length, device_id, basis)
+            # 7) そうでなければ rename → ディレクトリ fsync → 台帳。ここまで終えてから 200
+            name, duplicate = svc.commit(part, digest, device_id, length, headers, now)
             self._send_json(200, {
                 "ok": True, "sha256": digest, "stored_name": name,
-                "bytes": length, "duplicate": False, **time_payload(now),
+                "bytes": length, "duplicate": duplicate, **time_payload(now),
             })
         finally:
             part.unlink(missing_ok=True)  # 成功時は rename 済みなので何もしない
@@ -804,6 +836,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _stream_to_part(self, part: Path, length: int) -> tuple[int, str]:
         h = hashlib.sha256()
         received = 0
+        self._allow_body_time(length)
         with open(part, "wb") as f:
             while received < length:
                 chunk = self.rfile.read(min(1 << 16, length - received))
@@ -827,6 +860,13 @@ class IngestHTTPServer(ThreadingHTTPServer):
     させられる。デバイスは 200 を受けるまで SD からファイルを消さないので、受信が
     止まり続けると最終的に SD が埋まって録音自体が止まる（SPEC E2）。
     上限に達した接続は待たせず即座に閉じ、デバイス側は次回同期へ持ち越す。
+
+    accept するのは常に素の TCP ソケットで、TLS ハンドシェイクは接続ごとのスレッドで
+    行う。待ち受けソケット自体を TLS でラップすると、ハンドシェイクが accept() の中
+    ＝唯一の受付スレッドで走り、何も送ってこない接続1本でサーバ全体が止まる。
+
+    枠を取った接続は、時間切れになると `service_actions()` がソケットを shutdown して
+    ハンドラを終わらせる（期限は `set_deadline()` で段階ごとに張り替える）。
     """
 
     daemon_threads = True
@@ -834,10 +874,14 @@ class IngestHTTPServer(ThreadingHTTPServer):
     request_queue_size = 32
 
     def __init__(self, addr, handler, service: IngestService,
-                 max_connections: int = 16) -> None:
+                 max_connections: int = 16, ssl_context: ssl.SSLContext | None = None) -> None:
         self.service = service
+        self.ssl_context = ssl_context
+        self.handshake_timeout = float(HANDSHAKE_TIMEOUT_SEC)
         self._slots = threading.BoundedSemaphore(max_connections)
         self._max_connections = max_connections
+        self._deadlines: dict[socket.socket, float] = {}
+        self._deadline_lock = threading.Lock()
         super().__init__(addr, handler)
 
     def process_request(self, request, client_address) -> None:
@@ -853,12 +897,72 @@ class IngestHTTPServer(ThreadingHTTPServer):
             return
         super().process_request(request, client_address)
 
+    def process_request_thread(self, request, client_address) -> None:
+        # ここに来るのは枠を取った接続だけ。どの経路で抜けても最後に shutdown_request
+        # （→ close_request）を**ちょうど1回**通し、枠を返す。TLS でラップした後は
+        # 元のソケットは抜け殻になるので、閉じる対象は常に「今の」ソケット (conn)。
+        conn = request
+        self.set_deadline(conn, self.handshake_timeout)
+        try:
+            if self.ssl_context is not None:
+                request.settimeout(self.handshake_timeout)
+                conn = self.ssl_context.wrap_socket(
+                    request, server_side=True, do_handshake_on_connect=False)
+                self._move_deadline(request, conn)
+                conn.do_handshake()
+            self.finish_request(conn, client_address)
+        except (ssl.SSLError, socket.timeout, TimeoutError, ConnectionError) as exc:
+            # 大半は TLS ハンドシェイクの失敗（証明書なし・途中で無言になった・ポート
+            # スキャン等）。相手都合の切断なのでトレースバックは出さない
+            logger.warning("接続が異常終了しました: %s (%s)", client_address[0], exc)
+        except Exception:  # noqa: BLE001
+            self.handle_error(conn, client_address)
+        finally:
+            self._clear_deadline(conn)
+            self.shutdown_request(conn)
+
     def close_request(self, request) -> None:
         # 受理した接続は必ずここを1回通るので、枠の返却漏れが起きない
         try:
             super().close_request(request)
         finally:
             self._slots.release()
+
+    # ---- 接続ごとの期限
+
+    def set_deadline(self, conn, seconds: float) -> None:
+        """`conn` を今から `seconds` 秒後に強制切断する（呼ぶたびに張り替え）。"""
+        with self._deadline_lock:
+            self._deadlines[conn] = time.monotonic() + seconds
+
+    def _move_deadline(self, old, new) -> None:
+        with self._deadline_lock:
+            # 既に期限切れで外されていたら 0（＝次の巡回で切断）として引き継ぐ
+            self._deadlines[new] = self._deadlines.pop(old, 0.0)
+
+    def _clear_deadline(self, conn) -> None:
+        # ロックの中で外すので、この後に閉じたソケットを service_actions が触ることはない
+        with self._deadline_lock:
+            self._deadlines.pop(conn, None)
+
+    def service_actions(self) -> None:
+        """期限切れの接続を切る（serve_forever が 0.5 秒ごとに呼ぶ）。
+
+        shutdown するだけで close はしない。ブロック中の recv が EOF/エラーで戻り、
+        ハンドラのスレッドが通常の経路で後始末（close と枠の返却）をする。
+        """
+        now = time.monotonic()
+        with self._deadline_lock:
+            expired = [c for c, deadline in self._deadlines.items() if deadline <= now]
+            for conn in expired:
+                del self._deadlines[conn]
+                logger.warning("持ち時間を超えた接続を切断します")
+                try:
+                    # SSLSocket.shutdown は TLS 状態を別スレッドから書き換えてしまうので、
+                    # 下の TCP だけを落とす
+                    socket.socket.shutdown(conn, socket.SHUT_RDWR)
+                except OSError:
+                    pass
 
 
 def build_ssl_context(ic: IngestConfig) -> ssl.SSLContext | None:
@@ -920,9 +1024,8 @@ def build_server(cfg: Config, host: str | None = None, port: int | None = None) 
             "%s にバインドします。全インターフェースで待ち受けるため、"
             "LANのIPを明示するか allowed_networks / ファイアウォールで必ず絞ること", bind_host
         )
-    server = IngestHTTPServer((bind_host, bind_port), _Handler, service)
-    if ctx is not None:
-        server.socket = ctx.wrap_socket(server.socket, server_side=True)
+    server = IngestHTTPServer((bind_host, bind_port), _Handler, service, ssl_context=ctx)
+    server.handshake_timeout = float(min(HANDSHAKE_TIMEOUT_SEC, ic.socket_timeout_sec))
     server.timeout = ic.socket_timeout_sec
     _Handler.timeout = ic.socket_timeout_sec
     return server

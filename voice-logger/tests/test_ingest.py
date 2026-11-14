@@ -442,6 +442,33 @@ class TestDuplicates(IngestTestBase):
         self.assertEqual(r2["stored_name"], r1["stored_name"])
         self.assertEqual(self.inbox_names(), ["20260827_091500.wav"])
 
+    def test_concurrent_uploads_of_same_bytes_store_one_file(self):
+        """同じ内容の同時アップロード。確認と保存の間に割り込まれても2本目を作らない。"""
+        svc = self.srv.server.service
+        real = svc.already_received
+
+        def slow_check(digest):
+            hit = real(digest)
+            time.sleep(0.3)   # 確認から rename までの隙間を広げる
+            return hit
+
+        svc.already_received = slow_check
+        body = wav_bytes(seed=10)
+        results = []
+        threads = [
+            threading.Thread(target=lambda: results.append(
+                self.srv.post_wav(body, "20260827_091500.wav")))
+            for _ in range(2)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+        self.assertEqual([status for status, _ in results], [200, 200])
+        self.assertEqual(sorted(resp["duplicate"] for _, resp in results), [False, True])
+        self.assertEqual({resp["stored_name"] for _, resp in results}, {"20260827_091500.wav"})
+        self.assertEqual(self.inbox_names(), ["20260827_091500.wav"])
+
     def test_already_processed_by_phase0_is_duplicate(self):
         """Phase 0 が処理して archive へ移した後の再送も duplicate:true（デバイスは消してよい）。"""
         body = wav_bytes(seed=9)
@@ -570,6 +597,65 @@ class TestPathHints(IngestTestBase):
         self.assertNotIn("srv.url", resp["error"])
 
 
+class TestConnectionDeadline(IngestTestBase):
+    """少しずつ送り続ける接続に、同時接続枠を握られ続けない。"""
+
+    ingest_kwargs = {"socket_timeout_sec": 1, "min_bytes_per_sec": 100}
+
+    def _trickle(self, sock: socket.socket, data: bytes, limit_sec: float) -> float:
+        """0.3秒ごとに1バイト送り続け、サーバに切られるまでの秒数を返す。"""
+        started = time.time()
+        sock.settimeout(0.3)
+        for byte in data:
+            if time.time() - started > limit_sec:
+                self.fail("期限を過ぎても接続が切られませんでした")
+            try:
+                sock.sendall(bytes([byte]))
+                if sock.recv(1) == b"":
+                    return time.time() - started
+            except socket.timeout:
+                continue
+            except OSError:
+                return time.time() - started
+        self.fail("送り切るまで接続が切られませんでした")
+
+    def test_trickled_headers_are_cut_off(self):
+        sock = socket.create_connection((self.srv.host, self.srv.port), timeout=5)
+        self.addCleanup(sock.close)
+        # 1回の recv はどれもタイムアウト(1秒)未満で届くので、ソケットのタイムアウトでは切れない
+        elapsed = self._trickle(sock, b"GET /healthz HTTP/1.1\r\n" + b"X-Pad: " + b"a" * 200, 6)
+        self.assertLess(elapsed, 4)
+        self.assertEqual(self.srv.request("GET", "/healthz", key=None)[0], 200)
+
+    def test_trickled_body_is_cut_off_and_leaves_nothing(self):
+        body = wav_bytes(seed=31)[:200]                    # 持ち時間 = 1 + 200/100 = 3秒
+        headers = {
+            "Host": "x", "Content-Type": "audio/wav", "Content-Length": str(len(body)),
+            "X-MindClip-Sha256": hashlib.sha256(body).hexdigest(),
+            "Authorization": build_authorization(KEY, "POST", "/api/v1/ingest", DEVICE, body),
+        }
+        head = "POST /api/v1/ingest HTTP/1.1\r\n" + "".join(
+            f"{k}: {v}\r\n" for k, v in headers.items()) + "\r\n"
+        sock = socket.create_connection((self.srv.host, self.srv.port), timeout=5)
+        self.addCleanup(sock.close)
+        sock.sendall(head.encode("ascii"))
+        elapsed = self._trickle(sock, body, 10)
+        self.assertLess(elapsed, 6)
+        time.sleep(0.3)
+        self.assertEqual(list(self.srv.inbox.iterdir()), [])
+        server = self.srv.server
+        self.assertEqual(server._slots._value, server._max_connections)
+
+    def test_normal_keepalive_session_is_not_cut(self):
+        conn = http.client.HTTPConnection(self.srv.host, self.srv.port, timeout=5)
+        self.addCleanup(conn.close)
+        for _ in range(3):                                 # 合計は期限(1秒)を超える
+            conn.request("GET", "/healthz")
+            resp = conn.getresponse()
+            self.assertEqual((resp.status, json.loads(resp.read())), (200, {"ok": True}))
+            time.sleep(0.6)
+
+
 @unittest.skipUnless(shutil.which("openssl"), "openssl が必要")
 class TestMutualTLS(unittest.TestCase):
     """mTLS: プライベートCAでクライアント証明書を検証する（証明書が無ければ接続を張れない）。"""
@@ -633,6 +719,33 @@ class TestMutualTLS(unittest.TestCase):
         status, _ = self.srv.request("GET", "/api/v1/time", key=None,
                                      ssl_context=self._client_ctx(with_cert=True))
         self.assertEqual(status, 401)
+
+    def test_idle_tcp_connection_does_not_block_other_clients(self):
+        """ClientHello を送らない接続が1本あっても、他のクライアントは受け付けられる。"""
+        idle = socket.create_connection((self.srv.host, self.srv.port), timeout=5)
+        self.addCleanup(idle.close)
+        time.sleep(0.2)   # サーバが accept し終えるのを待つ
+        status, body = self.srv.request("GET", "/healthz", key=None,
+                                        ssl_context=self._client_ctx(with_cert=True))
+        self.assertEqual((status, body), (200, {"ok": True}))
+
+    def test_stalled_handshake_times_out_and_returns_its_slot(self):
+        server = self.srv.server
+        server.handshake_timeout = 0.5
+        stalled = [socket.create_connection((self.srv.host, self.srv.port), timeout=5)
+                   for _ in range(3)]
+        stalled[0].sendall(b"\x16\x03\x01")   # TLSレコードの先頭だけ送って黙る
+        deadline = time.time() + 10
+        while server._slots._value != server._max_connections and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(server._slots._value, server._max_connections)
+        for sock in stalled:
+            sock.settimeout(5)
+            self.assertEqual(sock.recv(1), b"")    # サーバ側から切られている
+            sock.close()
+        status, _ = self.srv.request("GET", "/healthz", key=None,
+                                     ssl_context=self._client_ctx(with_cert=True))
+        self.assertEqual(status, 200)
 
     def test_mtls_requires_client_ca_when_enabled(self):
         work = Path(self._work.name)

@@ -1,11 +1,22 @@
 # voice-logger — Docker Compose 構成 (Windows / Docker Desktop 前提)
 #
-#   docker compose up -d          # ollama + watch + serve を起動
+#   docker compose up -d                    # ollama + watch を起動 (Phase 0)
+#   docker compose --profile device up -d   # 上に加えて受信API (ingest) も起動 (Phase 1)
 #   docker compose run --rm voice-logger process --dry-run /data/inbox/test.m4a
 #
 # ホストに残るのは docker と、下でバインドマウントするフォルダだけ。
 # 他システムへの影響は WSL2 のメモリ上限 (%UserProfile%\.wslconfig) と
-# 下の cpus/mem_limit で抑える。
+# 下の cpus/mem_limit で抑える。mem_limit の合計は約 10.3GB なので、.wslconfig は
+# memory=12GB にする（WSL2 の既定は搭載メモリの半分＝16GB 機で 8GB しかなく、足りない）。
+#
+# モデルを取得し終えたら docker-compose.offline.yml を重ねると、ollama と voice-logger を
+# 外部に出られないネットワークへ閉じ込められる（README「外部通信を遮断する」）。
+
+# コンテナは TZ を渡さないと UTC で動く。日付の区切り・受信ファイル名・デバイスの
+# 時計合わせがすべてずれるので、全サービスに明示する（.env の TZ で変更可）。
+x-timezone: &timezone
+  TZ: ${TZ:-Asia/Tokyo}
+
 services:
   ollama:
     image: ollama/ollama:0.11.8
@@ -13,34 +24,57 @@ services:
       - ollama_models:/root/.ollama
     # ホストにポートを公開しない: パイプラインからサービス名 ollama:11434 で届く。
     # モデル取得は `docker compose exec ollama ollama pull qwen3:4b`
+    environment:
+      <<: *timezone
+      OLLAMA_MAX_LOADED_MODELS: "1"   # 2つ目のモデルを同時に載せない
+      OLLAMA_NUM_PARALLEL: "1"        # 並列数ぶんコンテキスト用メモリが増えるのを防ぐ
+      OLLAMA_KEEP_ALIVE: "2m"         # 分割チャンクの連続処理中は保持し、終われば早めに解放
+    healthcheck:
+      # イメージに curl が無いので同梱の CLI で API の応答を確かめる
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
     restart: unless-stopped
-    mem_limit: 8g
+    cpus: 6            # voice-logger と同じ上限（文字起こしと要約は同時には走らない）
+    mem_limit: 6g      # qwen3:4b (約3GB) + num_ctx 8192 のコンテキスト
 
   voice-logger:
     build: .
     command: ["watch"]
+    environment:
+      <<: *timezone
     volumes:
-      - ./data:/data                 # inbox / archive / state / pki
+      - ./data:/data                 # inbox / archive / failed / state / pki
       - ./config.toml:/app/config.toml:ro
       - whisper_cache:/cache
       # ↓ 自分の Obsidian vault のパスに書き換える (Windows 例)
       - C:/Users/you/Documents/Obsidian/MyVault:/vault
     depends_on:
-      - ollama
+      ollama:
+        condition: service_healthy
     restart: unless-stopped
     cpus: 6            # Pro 9 (12スレッド) の半分。他システムを圧迫しない上限
-    mem_limit: 6g
+    mem_limit: 4g      # large-v3-turbo (int8) で 2GB 弱 + 長時間録音のデコード
 
   ingest:
+    # デバイス (Phase 1) を使うときだけ起動する。鍵・証明書 (data/pki) が無いと
+    # 起動できないので、既定の `docker compose up` には含めない。
+    profiles: ["device"]
     build: .
     command: ["serve"]
+    environment:
+      <<: *timezone
     volumes:
       - ./data:/data
       - ./config.toml:/app/config.toml:ro
     ports:
-      - "8443:8443"                  # デバイスからの受信のみホストに公開
+      # デバイスからの受信のみホストに公開。.env に INGEST_BIND=<このPCのLAN IP> を書いて
+      # 待ち受けるインターフェースを絞ること（未指定だと全インターフェース）。
+      - "${INGEST_BIND:-0.0.0.0}:8443:8443"
     restart: unless-stopped
-    mem_limit: 512m
+    mem_limit: 256m
 
 volumes:
   ollama_models:

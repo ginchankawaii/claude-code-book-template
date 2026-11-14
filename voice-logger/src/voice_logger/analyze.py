@@ -3,6 +3,10 @@
 長時間録音は chunk_chars 単位で分割し、チャンクごとに分析 → 最後に統合する
 （map-reduce）。Ollama の structured outputs (format にJSONスキーマを渡す) を
 使い、出力を必ずJSONで受け取る。
+
+文字起こしは LAN の外に出さない。HTTP クライアントは環境変数のプロキシ設定
+(HTTP_PROXY 等) を**読まない**ようにしてある — 読むと、プロキシが設定された
+マシンでは文字起こし全文がそのプロキシを経由してしまう。
 """
 
 from __future__ import annotations
@@ -12,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from .config import OllamaConfig
+from .errors import ServiceUnavailable
 from .transcribe import Transcript
 
 ANALYSIS_SCHEMA = {
@@ -54,24 +59,70 @@ class Analysis:
     reflection: str = ""
 
 
+def _http():
+    """プロキシ・.netrc など環境由来の設定を一切使わない HTTP セッション。"""
+    import requests
+
+    session = requests.Session()
+    session.trust_env = False
+    return session
+
+
+def _pull_hint(cfg: OllamaConfig) -> str:
+    return (f"`ollama pull {cfg.model}`"
+            f"（Docker の場合は `docker compose exec ollama ollama pull {cfg.model}`）")
+
+
+def _request_body(cfg: OllamaConfig, prompt: str) -> dict:
+    body = {
+        "model": cfg.model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        "stream": False,
+        "format": ANALYSIS_SCHEMA,
+        "options": {"temperature": 0.2, "num_ctx": cfg.num_ctx},
+    }
+    if cfg.think is not None:
+        body["think"] = cfg.think
+    return body
+
+
+def _raise_for_ollama_status(cfg: OllamaConfig, resp) -> None:
+    """Ollama 側の都合による失敗を、次に打つコマンド付きの ServiceUnavailable にする。"""
+    if resp.status_code < 400:
+        return
+    detail = resp.text.strip()[:300]
+    if resp.status_code == 404:
+        raise ServiceUnavailable(
+            f"Ollama にモデル '{cfg.model}' がありません。{_pull_hint(cfg)} で取得してください"
+            f"（応答: {detail}）")
+    if resp.status_code >= 500:
+        raise ServiceUnavailable(
+            f"Ollama がエラーを返しました (HTTP {resp.status_code}: {detail})。"
+            "メモリ不足でモデルをロードできない場合は、より小さいモデルにするか"
+            " [ollama] num_ctx を下げてください")
+    # 残りの 4xx はリクエストの組み立て＝設定の問題で、録音ごとに結果が変わるものではない
+    raise ServiceUnavailable(
+        f"Ollama がリクエストを拒否しました (HTTP {resp.status_code}: {detail})。"
+        "config.toml の [ollama]（model / think など）を確認してください")
+
+
 def _chat_json(cfg: OllamaConfig, prompt: str) -> dict:
     import requests
 
-    resp = requests.post(
-        f"{cfg.url.rstrip('/')}/api/chat",
-        json={
-            "model": cfg.model,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            "stream": False,
-            "format": ANALYSIS_SCHEMA,
-            "options": {"temperature": 0.2, "num_ctx": 16384},
-        },
-        timeout=600,
-    )
-    resp.raise_for_status()
+    url = f"{cfg.url.rstrip('/')}/api/chat"
+    try:
+        with _http() as http:
+            resp = http.post(url, json=_request_body(cfg, prompt), timeout=cfg.timeout_sec)
+    except requests.exceptions.ConnectionError as exc:
+        # ConnectTimeout もここに入る。応答待ちの ReadTimeout は「この録音が重すぎる」
+        # 可能性があるのでファイル単位の失敗として上に伝える
+        raise ServiceUnavailable(
+            f"Ollama ({cfg.url}) に接続できません。起動しているか確認してください: {exc}"
+        ) from exc
+    _raise_for_ollama_status(cfg, resp)
     return json.loads(resp.json()["message"]["content"])
 
 

@@ -1,0 +1,26 @@
+# voice-logger — 外部通信の遮断 (docker-compose.yml に重ねて使う)
+#
+# ollama と voice-logger を `internal: true` のネットワークだけに繋ぎ、コンテナから
+# インターネットへ出る経路そのものを無くす。モデルの取得 (ollama pull と whisper の
+# 初回ダウンロード) には外部通信が要るので、**取得が終わってから**適用する:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.offline.yml up -d
+#
+# 毎回 -f を付けたくなければ .env に次の1行を書く (区切りは Windows が ; 、他は :):
+#   COMPOSE_FILE=docker-compose.yml;docker-compose.offline.yml
+#
+# モデルを入れ替えるときは、このファイルを外して起動 → 取得 → 付け直す。
+# ingest は LAN から届く必要があるので既定のネットワークのまま（Ollama にも
+# 文字起こしにも触れず、外へ接続しに行く処理も持たない）。
+services:
+  ollama:
+    networks: [offline]
+
+  voice-logger:
+    networks: [offline]
+    environment:
+      HF_HUB_OFFLINE: "1"   # 経路が無いのに更新確認へ行って待たされないように
+
+networks:
+  offline:
+    internal: true

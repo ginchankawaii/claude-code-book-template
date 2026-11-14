@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 from .config import Config, find_config_path, load_config
+from .errors import ServiceUnavailable
 from .pipeline import Manifest, iter_audio_files, process_file
+from .watch import Watcher
 
 logger = logging.getLogger("voice_logger")
 
@@ -31,6 +35,22 @@ def _load(args) -> Config:
     return load_config(find_config_path(args.config))
 
 
+def _log_local_time() -> None:
+    """日付の区切り・ファイル名・デバイスへ返す時刻はすべてプロセスのローカル時刻で決まる。
+
+    コンテナは TZ を渡さないと UTC で動き、日本では 09:00 より前の録音が前日の
+    ノートに入る。気付けるよう起動時に必ず表示し、TZ の指定が効いていなければ警告する
+    （glibc は知らないゾーン名を黙って UTC として扱う）。
+    """
+    tz = os.environ.get("TZ", "")
+    logger.info("ローカル時刻: %s (TZ=%s)",
+                datetime.now().astimezone().isoformat(timespec="seconds"), tz or "未設定")
+    zoneinfo = Path("/usr/share/zoneinfo")
+    if tz and "/" in tz and zoneinfo.is_dir() and not (zoneinfo / tz.lstrip(":")).is_file():
+        logger.warning("TZ=%s のタイムゾーン定義が見つかりません。時刻は UTC として扱われます"
+                       "（tzdata をインストールするか、ゾーン名を確認してください）", tz)
+
+
 def cmd_process(args) -> int:
     cfg = _load(args)
     manifest = Manifest(cfg.paths.state)
@@ -45,37 +65,30 @@ def cmd_process(args) -> int:
         try:
             if process_file(cfg, path, manifest, dry_run=args.dry_run):
                 processed += 1
+        except ServiceUnavailable as exc:
+            # 残りのファイルも同じ理由で失敗するので、ここで止める
+            logger.error("%s", exc)
+            logger.info("%d/%d 件を処理しました（中断）", processed, len(files))
+            return 1
         except Exception:
             logger.exception("処理失敗（次のファイルへ進みます）: %s", path)
     logger.info("%d/%d 件を処理しました", processed, len(files))
     return 0
 
 
-def _stable_files(inbox: Path, pending: dict[Path, int]) -> list[Path]:
-    """コピー途中のファイルを掴まないよう、2回のスキャンでサイズ不変のものだけ返す。"""
-    ready = []
-    current = {p: p.stat().st_size for p in iter_audio_files(inbox)}
-    for path, size in current.items():
-        if pending.get(path) == size:
-            ready.append(path)
-    pending.clear()
-    pending.update(current)
-    return ready
-
-
 def cmd_watch(args) -> int:
     cfg = _load(args)
+    _log_local_time()
     cfg.paths.inbox.mkdir(parents=True, exist_ok=True)
-    manifest = Manifest(cfg.paths.state)
+    watcher = Watcher(cfg, Manifest(cfg.paths.state), args.interval)
     logger.info("inbox を監視中: %s（%d秒間隔、Ctrl-Cで終了）", cfg.paths.inbox, args.interval)
-    pending: dict[Path, int] = {}
+    logger.info("処理できない音声の隔離先: %s", cfg.paths.quarantine_dir())
     while True:
         try:
-            for path in _stable_files(cfg.paths.inbox, pending):
-                try:
-                    process_file(cfg, path, manifest)
-                except Exception:
-                    logger.exception("処理失敗: %s", path)
+            try:
+                watcher.scan_once()
+            except Exception:  # noqa: BLE001 — 一時的なI/Oエラーで常駐を落とさない
+                logger.exception("スキャン中に予期しないエラー（次回また試みます）")
             time.sleep(args.interval)
         except KeyboardInterrupt:
             logger.info("終了します")
@@ -93,6 +106,7 @@ def cmd_serve(args) -> int:
         print(secrets.token_hex(32))
         return 0
     cfg = _load(args)
+    _log_local_time()
     if args.allow_plaintext:
         # --allow-plaintext は「試験のため転送路の保護を全部切る」という明示的な意思表示。
         # 平文では mTLS もCN照合も成立しないので、ここで揃えて落とす（設定ファイルに
@@ -106,6 +120,16 @@ def cmd_serve(args) -> int:
         return ingest.serve(cfg, host=args.host, port=args.port)
     except RuntimeError as exc:
         logger.error("%s", exc)
+        return 2
+    except FileNotFoundError as exc:
+        logger.error(
+            "受信APIに必要なファイルがありません: %s — [ingest] の tls_cert / tls_key /"
+            " client_ca / hmac_key_file が指すファイルを用意してください"
+            "（README「PKI の用意」）。受信APIを使わないなら serve を起動する必要はありません",
+            exc.filename or exc)
+        return 2
+    except OSError as exc:  # 証明書が読めない・PEM が壊れている・ポートが使用中 など
+        logger.error("受信APIを起動できません: %s", exc)
         return 2
 
 
