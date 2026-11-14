@@ -3,8 +3,8 @@
   <rect x="0" y="0" width="1000" height="780" fill="#ffffff"/>
 
   <!-- タイトル -->
-  <text x="40" y="48" font-size="26" font-weight="bold" fill="#1a1a1a">MindClip DIY 配線図（v1.5 / 構成 A-1）</text>
-  <text x="40" y="74" font-size="14" fill="#555555">XIAO ESP32S3 Sense ＋ LiPo電池（JST-PH2.0 嵌合）＋ スライドスイッチ ＋ 録音中LED　／　はんだ 10か所</text>
+  <text x="40" y="48" font-size="26" font-weight="bold" fill="#1a1a1a">MindClip DIY 配線図（v1.8 rev2 / 構成 A-1）</text>
+  <text x="40" y="74" font-size="14" fill="#555555">XIAO ESP32S3 Sense ＋ LiPo電池（JST 1.25mm 2ピンで嵌合）＋ スライドスイッチ ＋ 録音中LED　／　はんだ 12か所</text>
 
   <!-- 凡例 -->
   <g>
@@ -31,18 +31,24 @@
   <path d="M214,345 H118 V228 H140" fill="none" stroke="#1a1a1a" stroke-width="3"/>
   <text x="118" y="300" font-size="10.5" fill="#1a1a1a" text-anchor="end">黒 50mm</text>
   <text x="240" y="330" font-size="10.5" fill="#1a1a1a">黒 60mm(allday)/45mm(slim)</text>
-  <!-- 赤/黒: 電池（v1.5: JST-PH2.0 で嵌合する） -->
+  <!-- 赤/黒: 電池（JST 1.25mm 2P で嵌合。ピグテールは短く切って AWG28 に継ぎ足す = 継ぎ目2か所） -->
   <path d="M470,428 V486" fill="none" stroke="#d62828" stroke-width="3"/>
   <path d="M530,428 V486" fill="none" stroke="#1a1a1a" stroke-width="3"/>
   <path d="M470,524 V560" fill="none" stroke="#d62828" stroke-width="3"/>
   <path d="M530,524 V560" fill="none" stroke="#1a1a1a" stroke-width="3"/>
   <rect x="438" y="486" width="124" height="19" rx="3" fill="#f5f5f5" stroke="#616161" stroke-width="1.5"/>
   <rect x="438" y="505" width="124" height="19" rx="3" fill="#e8eaf6" stroke="#616161" stroke-width="1.5"/>
+  <!-- 継ぎ目 2か所（位置を 5mm ずらす。熱収縮チューブで絶縁） -->
+  <rect x="465" y="462" width="10" height="16" rx="3" fill="#ffe082" stroke="#b8860b" stroke-width="1.2"/>
+  <rect x="525" y="448" width="10" height="16" rx="3" fill="#ffe082" stroke="#b8860b" stroke-width="1.2"/>
+  <text x="570" y="449" font-size="10.5" fill="#37474f">AWG28 55mm</text>
+  <text x="570" y="462" font-size="10.5" fill="#8d6e00">継ぎ目 ×2</text>
+  <text x="570" y="475" font-size="10.5" fill="#8d6e00">(5mmずらす)</text>
   <text x="570" y="493" font-size="10.5" fill="#37474f">ピグテール側</text>
-  <text x="570" y="505" font-size="10.5" fill="#37474f">電線 40mm/AWG28</text>
+  <text x="570" y="505" font-size="10.5" fill="#37474f">10/15mmで切る</text>
   <text x="570" y="519" font-size="10.5" fill="#37474f">セル側プラグ</text>
-  <text x="570" y="531" font-size="10.5" fill="#37474f">PH2.0 キー付</text>
-  <text x="420" y="710" font-size="11.5" font-weight="bold" fill="#c62828">⚠ JST嵌合体は 5.8×11.0×4.5mm（assumption）。筐体の上限は allday 8.7 / slim 7.0mm → ノギスで実測</text>
+  <text x="570" y="531" font-size="10.5" fill="#37474f">1.25mm 2ピン</text>
+  <text x="420" y="710" font-size="11.5" font-weight="bold" fill="#c62828">⚠ JST嵌合体は仮寸法 5.8×11.0×4.5mm。上限は厚み allday 5.9 / slim 4.9mm → 手順5-7 で実測（M4）</text>
 
   <!-- ===== XIAO 基板 ===== -->
   <!-- USB-C -->
@@ -121,11 +127,11 @@
   <!-- ===== 電池 ===== -->
   <rect x="420" y="560" width="200" height="95" rx="10" fill="#fff8e1" stroke="#8d6e63" stroke-width="2"/>
   <text x="520" y="595" font-size="14" text-anchor="middle" font-weight="bold" fill="#4e342e">LiPo 802530 / 502530</text>
-  <text x="520" y="615" font-size="12" text-anchor="middle" fill="#4e342e">3.7V 800 / 500mAh・保護回路付き</text>
-  <text x="520" y="633" font-size="11" text-anchor="middle" fill="#8d6e63">31×25×8.0(allday) / 5.0(slim) mm</text>
+  <text x="520" y="615" font-size="12" text-anchor="middle" fill="#4e342e">3.7V 680 / 500mAh・保護回路付き</text>
+  <text x="520" y="633" font-size="11" text-anchor="middle" fill="#8d6e63">32×25×8.0(allday) / 30×25×5.0(slim)</text>
   <text x="470" y="580" font-size="15" font-weight="bold" fill="#d62828" text-anchor="middle">＋</text>
   <text x="530" y="580" font-size="15" font-weight="bold" fill="#1a1a1a" text-anchor="middle">−</text>
-  <text x="420" y="678" font-size="12" fill="#c62828">⚠ 色もコネクタのキーも極性を保証しない（赤黒逆・ハウジング内のコンタクト逆の個体が実在）</text>
+  <text x="420" y="678" font-size="12" fill="#c62828">⚠ 色もキーも極性を保証しない。電池プラグの穴に金属（テスター棒・針金）を入れない</text>
   <text x="420" y="694" font-size="12" font-weight="bold" fill="#c62828">⚠ 嵌合の前に必ずテスタゲート4項目（README §7 手順8-B / SCHEMATIC.md §5.4）</text>
 
   <!-- ===== 注意書き ===== -->

@@ -183,7 +183,7 @@ a { color: var(--accent); }
   <div class="cover-band">組立説明書 別冊</div>
   <div class="cover-in">
     <div class="kicker">MindClip DIY ・ 印刷前の実測</div>
-    <h1>採寸ガイド<small>ノギスで 8 か所。図のとおりに挟んで、数字を入れるだけ</small></h1>
+    <h1>採寸ガイド<small>ノギスで 9 か所。図のとおりに挟んで、数字を入れるだけ</small></h1>
     <p class="lead">筐体の設計には、ネットで裏が取れなかった寸法がいくつか残っています。届いた部品を測って数字を入れてください。各項目の下で、そのまま印刷してよいか判定が出ます。保存した数値は Claude がそのまま読み取って、印刷データを作り直します。</p>
     <ul class="specs"><li>対象：allday（電池 802530）</li><li>単位：mm・小数第2位まで</li><li>所要：20〜30 分</li><li>カバン用の M7 は付ける人だけ</li></ul>
   </div>
@@ -192,7 +192,7 @@ a { color: var(--accent); }
 <section class="board" aria-labelledby="board-h">
   <div class="board-top">
     <h2 id="board-h">進み具合</h2>
-    <span class="board-sum" id="sum">8 項目すべて未測定</span>
+    <span class="board-sum" id="sum">9 項目すべて未測定</span>
   </div>
   <nav class="board-grid" aria-label="項目へ移動">
     <a class="board-item" href="#m1"><span class="bi-no">M1</span><span class="bi-name">XIAO の厚み</span><span class="chip" data-chip="m1">未測定</span></a>
@@ -203,6 +203,7 @@ a { color: var(--accent); }
     <a class="board-item" href="#m6"><span class="bi-no">M6</span><span class="bi-name">スイッチ</span><span class="chip" data-chip="m6">未測定</span></a>
     <a class="board-item" href="#m7"><span class="bi-no">M7</span><span class="bi-name">カバンのストラップ</span><span class="chip" data-chip="m7">未測定</span></a>
     <a class="board-item" href="#m8"><span class="bi-no">M8</span><span class="bi-name">LED</span><span class="chip" data-chip="m8">未測定</span></a>
+    <a class="board-item" href="#m9"><span class="bi-no">M9</span><span class="bi-name">マイクの位置</span><span class="chip" data-chip="m9">未測定</span></a>
   </nav>
   <div class="board-foot">
     <button class="btn" id="copy" type="button">数値をまとめてコピー</button>
@@ -256,7 +257,7 @@ a { color: var(--accent); }
       </ol>
       <div class="caution">
         <svg viewBox="0 0 20 18" aria-hidden="true"><polygon points="10,1 19,17 1,17" class="cmark"/><text x="10" y="15" text-anchor="middle" class="cmark-t">!</text></svg>
-        <p><b>電池を測るときは、金属のジョウを赤・黒の線や端子に当てない。</b>ショートすると発熱します。測るのは電池の本体だけです。</p>
+        <p><b>電池を測るときは、金属のジョウを赤・黒の線や端子に当てない。</b>ショートすると発熱します。測るのは電池の本体だけです。<b>電池のプラグの穴に、ノギスの先・テスターの棒・針金を入れないでください。</b></p>
       </div>
     </div>
   </div>
@@ -294,9 +295,9 @@ a { color: var(--accent); }
         <li>上下からジョウで挟みます。場所を少しずつずらして、<b>いちばん厚い所</b>の数字を書きます。</li>
       </ol>
       <div class="fields">
-        <label class="field" for="in-m1">全体の厚み<span class="row"><input id="in-m1" data-k="m1" type="number" inputmode="decimal" step="0.01" min="0" placeholder="7.50"><span class="unit">mm</span></span></label>
+        <label class="field" for="in-m1">全体の厚み<span class="row"><input id="in-m1" data-k="m1" type="number" inputmode="decimal" step="0.01" min="0" placeholder="8.20"><span class="unit">mm</span></span></label>
       </div>
-      <p class="design">設計の仮定 <b>7.5</b> mm。<b>9.2</b> mm までならケースの外形は変わりません。</p>
+      <p class="design">今の設計値 <b>8.2</b> mm（実測を反映済み）。<b>9.2</b> mm までならケースの外形は変わりません。</p>
       <div class="verdict"><span class="chip" data-chip="m1">未測定</span><span class="msg" data-msg="m1">数字を入れると判定が出ます</span></div>
     </div>
   </div>
@@ -342,11 +343,11 @@ a { color: var(--accent); }
         <p><b>許される誤差は ±0.8 mm しかありません。</b>ずれたまま印刷すると充電ケーブルが挿さりません。パッドが拡張ボードに隠れて見えないとき、ジョウが USB-C に届かないときは、測らずに横から撮った写真を送ってください。</p>
       </div>
       <div class="fields">
-        <label class="field" for="in-m2a">A　下面〜USB-C 上面<span class="row"><input id="in-m2a" data-k="m2a" type="number" inputmode="decimal" step="0.01" min="0" placeholder="4.80"><span class="unit">mm</span></span></label>
+        <label class="field" for="in-m2a">A　下面〜USB-C 上面<span class="row"><input id="in-m2a" data-k="m2a" type="number" inputmode="decimal" step="0.01" min="0" placeholder="4.50"><span class="unit">mm</span></span></label>
         <label class="field" for="in-m2b">B　USB-C の金属の高さ<span class="row"><input id="in-m2b" data-k="m2b" type="number" inputmode="decimal" step="0.01" min="0" placeholder="3.20"><span class="unit">mm</span></span></label>
       </div>
       <p class="derived">中心の高さ　<b data-out="m2c">—</b> mm</p>
-      <p class="design">設計の仮定 <b>3.2</b> mm（下面から USB-C 中心まで）。</p>
+      <p class="design">今の設計値 <b>2.9</b> mm（下面から USB-C 中心まで。実測を反映済み）。ずれてよいのは <b>±0.8</b> mm までです。</p>
       <div class="verdict"><span class="chip" data-chip="m2">未測定</span><span class="msg" data-msg="m2">A と B を入れると判定が出ます</span></div>
     </div>
   </div>
@@ -391,11 +392,11 @@ a { color: var(--accent); }
         <li>ついでに、<b>黄色テープの下に小さな基板が透けて見えるか</b>も確かめてください（保護回路）。</li>
       </ol>
       <div class="fields">
-        <label class="field" for="in-m3l">L 長さ<span class="row"><input id="in-m3l" data-k="m3l" type="number" inputmode="decimal" step="0.01" min="0" placeholder="31.00"><span class="unit">mm</span></span></label>
+        <label class="field" for="in-m3l">L 長さ<span class="row"><input id="in-m3l" data-k="m3l" type="number" inputmode="decimal" step="0.01" min="0" placeholder="32.00"><span class="unit">mm</span></span></label>
         <label class="field" for="in-m3w">W 幅<span class="row"><input id="in-m3w" data-k="m3w" type="number" inputmode="decimal" step="0.01" min="0" placeholder="25.00"><span class="unit">mm</span></span></label>
         <label class="field" for="in-m3t">T 厚み（大きい方）<span class="row"><input id="in-m3t" data-k="m3t" type="number" inputmode="decimal" step="0.01" min="0" placeholder="8.00"><span class="unit">mm</span></span></label>
       </div>
-      <p class="design">仕様表 <b>31 × 25 × 8.0</b> mm。厚みは <b>8.5</b> mm を超えるとケースに入りません。</p>
+      <p class="design">今の設計値 <b>32.0 × 25.0 × 8.0</b> mm（実測を反映済み。仕様表は 31）。長さ <b>33.0</b>・幅 <b>25.3</b>・厚み <b>8.5</b> mm を超えるとケースに入りません。</p>
       <div class="verdict"><span class="chip" data-chip="m3">未測定</span><span class="msg" data-msg="m3">3 つとも入れると判定が出ます</span></div>
     </div>
   </div>
@@ -403,7 +404,7 @@ a { color: var(--accent); }
 
 <!-- ============ M4 ============ -->
 <section class="step" id="m4" aria-labelledby="m4-h">
-  <header class="step-head"><span class="step-no">M4</span><h2 id="m4-h">JST コネクタ（挿した状態）</h2><span class="parts-tag">部品：JST 2ピン オス・メス 1組</span></header>
+  <header class="step-head"><span class="step-no">M4</span><h2 id="m4-h">JST コネクタ（挿した状態）</h2><span class="parts-tag">部品：JST 1.25mm 2ピン オス・メス 1組</span></header>
   <div class="step-body">
     <figure class="fig">
       <svg viewBox="0 0 360 262" role="img" aria-label="オスとメスのコネクタを挿し合わせた状態。上から見て長さLと幅W、横から見て高さHを測る。長さは線の根元から反対側の線の根元まで。">
@@ -431,7 +432,7 @@ a { color: var(--accent); }
     </figure>
     <div class="howto">
       <ol>
-        <li>ピグテールのオスとメスを<b>カチッと奥まで</b>挿します。</li>
+        <li>ピグテールのオスとメスを<b>指先の軽い力で奥まで</b>挿します。電池は使いません（電池に合うかの確かめ方は組み立てガイドの手順5）。<b>軽い力で入らないものは種類違いです。押し込まないでください。</b></li>
         <li><b>L</b>：挿す向きの長さ。片側の線の根元から、反対側の線の根元まで。</li>
         <li><b>W</b>：2 本の線が並んでいる向きの幅。<b>H</b>：残りの向き（平らに置いたときの高さ）。</li>
       </ol>
@@ -440,7 +441,7 @@ a { color: var(--accent); }
         <label class="field" for="in-m4w">W 幅<span class="row"><input id="in-m4w" data-k="m4w" type="number" inputmode="decimal" step="0.01" min="0" placeholder="5.80"><span class="unit">mm</span></span></label>
         <label class="field" for="in-m4h">H 高さ<span class="row"><input id="in-m4h" data-k="m4h" type="number" inputmode="decimal" step="0.01" min="0" placeholder="4.50"><span class="unit">mm</span></span></label>
       </div>
-      <p class="design">設計の仮定 <b>11.0 × 5.8 × 4.5</b> mm（2.0mm 用）。上限は長さ <b>11.6</b>・高さ <b>8.7</b> mm。1.25mm 品なら余裕で収まるはずです。</p>
+      <p class="design">設計の仮定 <b>11.0 × 5.8 × 4.5</b> mm（以前の 2.0mm 品を想定した仮の値）。上限は長さ <b>11.1</b>・幅 <b>5.8</b>・高さ <b>5.9</b> mm（薄型 slim は 4.9）。買い直した 1.25mm 品はまだ測れていません。</p>
       <div class="verdict"><span class="chip" data-chip="m4">未測定</span><span class="msg" data-msg="m4">3 つとも入れると判定が出ます</span></div>
     </div>
   </div>
@@ -474,7 +475,7 @@ a { color: var(--accent); }
       <div class="fields">
         <label class="field" for="in-m5">外径<span class="row"><input id="in-m5" data-k="m5" type="number" inputmode="decimal" step="0.01" min="0" placeholder="1.20"><span class="unit">mm</span></span></label>
       </div>
-      <p class="design">上限 <b>1.3</b> mm。太いと XIAO が浮いて、M2 の USB-C の高さがずれます。</p>
+      <p class="design">記録用です（合否はありません）。ピグテールの線は根元で短く切って細い線（AWG28）に継ぎ足すのが標準の手順になったので、太くても問題ありません。XIAO の下を通せるのは <b>1.3</b> mm までです。</p>
       <div class="verdict"><span class="chip" data-chip="m5">未測定</span><span class="msg" data-msg="m5">数字を入れると判定が出ます</span></div>
     </div>
   </div>
@@ -482,10 +483,10 @@ a { color: var(--accent); }
 
 <!-- ============ M6 ============ -->
 <section class="step" id="m6" aria-labelledby="m6-h">
-  <header class="step-head"><span class="step-no">M6</span><h2 id="m6-h">スライドスイッチ</h2><span class="parts-tag">部品：SS-12D00</span></header>
+  <header class="step-head"><span class="step-no">M6</span><h2 id="m6-h">スライドスイッチ</h2><span class="parts-tag">部品：SS-12D00G3</span></header>
   <div class="step-body">
     <figure class="fig">
-      <svg viewBox="0 0 360 226" role="img" aria-label="スライドスイッチを横から見た図。ピンが出ている面から本体の上面までをC、ピンが出ている面からレバーの先までをDとして測る。">
+      <svg viewBox="0 0 360 226" role="img" aria-label="スライドスイッチを横から見た図。ピンが出ている面から本体の上面までをC、ピンが出ている面からレバーの先までをD、レバーがスライドする向きのレバー自身の幅をWとして測る。">
         <defs><marker id="a6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L10,5 L0,9 z" class="ahead"/></marker></defs>
         <rect x="110" y="90" width="140" height="56" class="part2"/>
         <rect x="168" y="58" width="24" height="32" class="part"/>
@@ -499,6 +500,9 @@ a { color: var(--accent); }
         <line x1="192" y1="58" x2="278" y2="58" class="ext"/><line x1="250" y1="146" x2="278" y2="146" class="ext"/>
         <text x="282" y="100" class="tdl">D</text><text x="282" y="116" class="ts">全体</text>
         <text x="200" y="74" class="ts">レバー</text>
+        <line x1="168" y1="46" x2="192" y2="46" class="dim" marker-start="url(#a6)" marker-end="url(#a6)"/>
+        <line x1="168" y1="42" x2="168" y2="58" class="ext"/><line x1="192" y1="42" x2="192" y2="58" class="ext"/>
+        <text x="180" y="34" text-anchor="middle" class="tdl">W レバーの幅</text>
         <text x="180" y="212" text-anchor="middle" class="ts">下の基準 ＝ ピンが生えている面（ピンの先ではない）</text>
       </svg>
       <figcaption>横から見た図。レバーの出っぱりは D − C で計算されます。</figcaption>
@@ -507,14 +511,16 @@ a { color: var(--accent); }
       <ol>
         <li><b>C</b>：ピンが生えている面から、本体の上面（レバーの付け根）まで。</li>
         <li><b>D</b>：ピンが生えている面から、レバーの先まで。レバーはどちらに寄せていても同じです。</li>
+        <li><b>W</b>：レバーそのものの幅。<b>レバーが動く向き</b>（ピン 3 本が並んでいる向き）に、レバーの左右を挟みます。</li>
       </ol>
       <div class="fields">
-        <label class="field" for="in-m6c">C 本体<span class="row"><input id="in-m6c" data-k="m6c" type="number" inputmode="decimal" step="0.01" min="0" placeholder="3.50"><span class="unit">mm</span></span></label>
-        <label class="field" for="in-m6d">D 全体<span class="row"><input id="in-m6d" data-k="m6d" type="number" inputmode="decimal" step="0.01" min="0" placeholder="5.50"><span class="unit">mm</span></span></label>
+        <label class="field" for="in-m6c">C 本体<span class="row"><input id="in-m6c" data-k="m6c" type="number" inputmode="decimal" step="0.01" min="0" placeholder="4.00"><span class="unit">mm</span></span></label>
+        <label class="field" for="in-m6d">D 全体<span class="row"><input id="in-m6d" data-k="m6d" type="number" inputmode="decimal" step="0.01" min="0" placeholder="7.00"><span class="unit">mm</span></span></label>
+        <label class="field" for="in-m6w">W レバーの幅<span class="row"><input id="in-m6w" data-k="m6w" type="number" inputmode="decimal" step="0.01" min="0" placeholder="2.00"><span class="unit">mm</span></span></label>
       </div>
       <p class="derived">レバーの出っぱり　<b data-out="m6lev">—</b> mm</p>
-      <p class="design">設計の仮定 本体 <b>3.5</b> mm・レバー <b>2.0</b> mm。レバーが 3 mm の個体も出回っています。</p>
-      <div class="verdict"><span class="chip" data-chip="m6">未測定</span><span class="msg" data-msg="m6">C と D を入れると判定が出ます</span></div>
+      <p class="design">今の設計値 本体 <b>4.0</b> mm・レバー <b>3.0</b> mm（実測を反映済み）。レバーの幅は <b>2.0</b> mm と仮定していて、まだ測れていません（<b>2.6</b> mm までなら今の穴で足ります）。</p>
+      <div class="verdict"><span class="chip" data-chip="m6">未測定</span><span class="msg" data-msg="m6">C・D・W を入れると判定が出ます</span></div>
     </div>
   </div>
 </section>
@@ -558,7 +564,7 @@ a { color: var(--accent); }
         <label class="field" for="in-m7w">幅<span class="row"><input id="in-m7w" data-k="m7w" type="number" inputmode="decimal" step="0.1" min="0" placeholder="38.0"><span class="unit">mm</span></span></label>
         <label class="field" for="in-m7t">厚み<span class="row"><input id="in-m7t" data-k="m7t" type="number" inputmode="decimal" step="0.01" min="0" placeholder="2.00"><span class="unit">mm</span></span></label>
       </div>
-      <p class="design">今のデータは幅 <b>38</b>・厚み <b>2.5</b> mm まで。幅 <b>38.6</b> mm・厚み <b>4.0</b> mm までなら作り直しで対応できます。</p>
+      <p class="design">今のデータは幅 <b>38</b>・厚み <b>2.5</b> mm まで。幅 <b>39.6</b> mm・厚み <b>4.0</b> mm までなら作り直しで対応できます。</p>
       <div class="verdict"><span class="chip" data-chip="m7">未測定</span><span class="msg" data-msg="m7">付けるかどうかを選ぶと判定が出ます</span></div>
     </div>
   </div>
@@ -598,13 +604,56 @@ a { color: var(--accent); }
         <li><b>H</b>：ツバだけの厚み。ジョウの先でツバの縁をつまみます。</li>
       </ol>
       <div class="fields">
-        <label class="field" for="in-m8e">E ツバの直径<span class="row"><input id="in-m8e" data-k="m8e" type="number" inputmode="decimal" step="0.01" min="0" placeholder="3.90"><span class="unit">mm</span></span></label>
-        <label class="field" for="in-m8g">G 全体<span class="row"><input id="in-m8g" data-k="m8g" type="number" inputmode="decimal" step="0.01" min="0" placeholder="5.50"><span class="unit">mm</span></span></label>
-        <label class="field" for="in-m8h">H ツバの厚み<span class="row"><input id="in-m8h" data-k="m8h" type="number" inputmode="decimal" step="0.01" min="0" placeholder="1.00"><span class="unit">mm</span></span></label>
+        <label class="field" for="in-m8e">E ツバの直径<span class="row"><input id="in-m8e" data-k="m8e" type="number" inputmode="decimal" step="0.01" min="0" placeholder="3.40"><span class="unit">mm</span></span></label>
+        <label class="field" for="in-m8g">G 全体<span class="row"><input id="in-m8g" data-k="m8g" type="number" inputmode="decimal" step="0.01" min="0" placeholder="5.00"><span class="unit">mm</span></span></label>
+        <label class="field" for="in-m8h">H ツバの厚み<span class="row"><input id="in-m8h" data-k="m8h" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.50"><span class="unit">mm</span></span></label>
       </div>
       <p class="derived">F（ツバの上〜先端）　<b data-out="m8f">—</b> mm</p>
-      <p class="design">設計の仮定 E <b>3.9</b>・F <b>4.5</b> mm。この値でフタの面より 0.2 mm 奥に収まります。</p>
+      <p class="design">今の設計値 E <b>3.4</b>・F <b>4.5</b> mm（実測を反映済み）。ツバが窓の穴と同じ太さなので、フタを伏せて LED の先端を机に当てて止め、先端をフタの面にそろえます。</p>
       <div class="verdict"><span class="chip" data-chip="m8">未測定</span><span class="msg" data-msg="m8">3 つとも入れると判定が出ます</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ M9 ============ -->
+<section class="step" id="m9" aria-labelledby="m9-h">
+  <header class="step-head"><span class="step-no">M9</span><h2 id="m9-h">マイクの穴の位置</h2><span class="parts-tag">部品：XIAO ESP32S3 Sense（重ねたまま）</span></header>
+  <div class="step-body">
+    <figure class="fig">
+      <svg viewBox="0 0 360 236" role="img" aria-label="拡張ボードを上にしたXIAOを真上から見た図。USB-Cを右に向け、USBと反対側の基板の端から、マイクの小さな金属の箱の遠い側の辺までをJ、箱の幅をKとして測る。箱の中心までの距離はJ引くKの半分。">
+        <defs><marker id="a9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L10,5 L0,9 z" class="ahead"/></marker></defs>
+        <rect x="60" y="70" width="230" height="110" rx="12" class="part2"/>
+        <rect x="290" y="100" width="26" height="50" rx="4" class="part"/>
+        <text x="322" y="129" class="t">USB</text>
+        <rect x="92" y="84" width="96" height="60" class="part"/>
+        <text x="140" y="118" text-anchor="middle" class="ts">SDスロット</text>
+        <rect x="160" y="152" width="26" height="18" class="work"/>
+        <text x="196" y="200" class="t">マイク（小さな金属の箱）</text><line x1="194" y1="194" x2="178" y2="170" class="ext"/>
+        <line x1="60" y1="46" x2="186" y2="46" class="dim" marker-start="url(#a9)" marker-end="url(#a9)"/>
+        <line x1="60" y1="42" x2="60" y2="70" class="ext"/><line x1="186" y1="42" x2="186" y2="152" class="ext"/>
+        <text x="123" y="36" text-anchor="middle" class="tdl">J（端〜箱の遠い側の辺）</text>
+        <line x1="160" y1="222" x2="186" y2="222" class="dim" marker-start="url(#a9)" marker-end="url(#a9)"/>
+        <line x1="160" y1="170" x2="160" y2="226" class="ext"/><line x1="186" y1="170" x2="186" y2="226" class="ext"/>
+        <text x="150" y="226" text-anchor="end" class="tdl">K 箱の幅</text>
+        <line x1="173" y1="58" x2="173" y2="152" class="dimx"/>
+        <text x="20" y="129" class="ts">USB の</text><text x="20" y="145" class="ts">反対の端</text>
+      </svg>
+      <figcaption>真上から見た図（拡張ボードが上）。部品の並びは目安です。マイクは穴の開いた小さな金属の箱で、実物の場所は図と違うことがあります。</figcaption>
+    </figure>
+    <div class="howto">
+      <ol>
+        <li>XIAO と拡張ボードは<b>重ねたまま</b>、拡張ボードを上にして、<b>USB-C を右</b>に向けて置きます。</li>
+        <li>拡張ボードの上で、<b>小さな穴が 1 つ開いた銀色の金属の箱</b>（3〜4 mm 角）を探します。これがマイクです。</li>
+        <li><b>J</b>：USB と反対側の基板の端（いちばん外の端）から、マイクの箱の<b>遠い側（USB 側）の辺</b>まで。片方のジョウを基板の端に、もう片方を箱の辺に当てます。</li>
+        <li><b>K</b>：マイクの箱そのものの幅（同じ左右の向き）。</li>
+      </ol>
+      <div class="fields">
+        <label class="field" for="in-m9j">J 端〜箱の遠い辺<span class="row"><input id="in-m9j" data-k="m9j" type="number" inputmode="decimal" step="0.01" min="0" placeholder="12.00"><span class="unit">mm</span></span></label>
+        <label class="field" for="in-m9k">K 箱の幅<span class="row"><input id="in-m9k" data-k="m9k" type="number" inputmode="decimal" step="0.01" min="0" placeholder="3.50"><span class="unit">mm</span></span></label>
+      </div>
+      <p class="derived">端〜マイクの中心　<b data-out="m9c">—</b> mm</p>
+      <p class="design">設計の仮定 <b>10.1</b> mm（測って決めた値ではありません）。ケースの上面の穴 3 つは端から <b>6.6 / 10.1 / 13.6</b> mm の位置にあります。</p>
+      <div class="verdict"><span class="chip" data-chip="m9">未測定</span><span class="msg" data-msg="m9">J と K を入れると判定が出ます</span></div>
     </div>
   </div>
 </section>
@@ -620,7 +669,7 @@ a { color: var(--accent); }
 <script>
 (function () {
   "use strict";
-  var KEYS = ["m1","m2a","m2b","m3l","m3w","m3t","m4l","m4w","m4h","m5","m6c","m6d","m7r","m7w","m7t","m8e","m8g","m8h"];
+  var KEYS = ["m1","m2a","m2b","m3l","m3w","m3t","m4l","m4w","m4h","m5","m6c","m6d","m6w","m7r","m7w","m7t","m8e","m8g","m8h","m9j","m9k"];
   var LS_KEY = "mindclip-measure-draft";
   var inputs = {};
   KEYS.forEach(function (k) { inputs[k] = document.querySelector('[data-k="' + k + '"]'); });
@@ -639,43 +688,47 @@ a { color: var(--accent); }
     m1: function () {
       var x = num("m1"); if (!has(x)) return { s: "todo" };
       if (x < 4 || x > 15) return { s: "ng", m: "値を確かめてください（XIAO と拡張ボードを重ねた全体の厚みです）" };
-      if (Math.abs(x - 7.5) <= 0.2) return { s: "ok", m: "設計どおり。このまま印刷できます" };
-      if (x <= 9.2) return { s: "adj", m: "設計値と " + sgn(x - 7.5) + " mm 違います。CAD を実測に合わせます（外形は変わりません）" };
+      if (Math.abs(x - 8.2) <= 0.2) return { s: "ok", m: "設計どおり（8.2 mm）。このまま印刷できます" };
+      if (x <= 9.2) return { s: "adj", m: "設計値 8.2 mm と " + sgn(x - 8.2) + " mm 違います。CAD を実測に合わせます（外形は変わりません）" };
       return { s: "ng", m: "9.2 mm を超えるとケースが厚くなります。作り直す前に相談させてください" };
     },
     m2: function () {
       var a = num("m2a"), b = num("m2b"); if (!has(a, b)) return { s: "todo" };
       if (b < 1.5 || b > 5 || a <= b) return { s: "ng", m: "A と B を確かめてください（A は B より大きくなります）" };
-      var c = a - b / 2, d = c - 3.2;
-      if (Math.abs(d) <= 0.2) return { s: "ok", m: "設計どおり。USB-C の穴はこのままで合います" };
+      var c = a - b / 2, d = c - 2.9;
+      if (Math.abs(d) <= 0.2) return { s: "ok", m: "設計どおり（中心 2.9 mm）。USB-C の穴はこのままで合います" };
       if (Math.abs(d) <= 0.8) return { s: "adj", m: "設計と " + sgn(d) + " mm 違います。このままでも挿さる範囲ですが、CAD で穴の位置を合わせます" };
       return { s: "adj", m: "設計と " + sgn(d) + " mm 違います。このまま印刷するとケーブルが挿さりません。CAD で穴を移動します" };
     },
     m3: function () {
       var l = num("m3l"), w = num("m3w"), t = num("m3t"); if (!has(l, w, t)) return { s: "todo" };
       if (t > 8.5) return { s: "ng", m: "厚み " + f2(t) + " mm は上限 8.5 mm を超えていて、ケースに入りません。相談させてください" };
-      if (l > 32 || w > 26) return { s: "ng", m: "長さか幅が大きすぎて、ケースに入りません（余裕は 1 mm まで）" };
-      if (l > 31.5 || w > 25.5) return { s: "adj", m: "入る範囲ですが余裕が小さいので、CAD で確かめます" };
-      return { s: "ok", m: "ケースに入ります" };
+      if (l > 33.0 || w > 25.3) return { s: "ng", m: "長さか幅が大きすぎて、ケースに入りません（上限は長さ 33.0・幅 25.3 mm）" };
+      if (l > 32.3 || w > 25.2 || t > 8.3) return { s: "adj", m: "入る範囲ですが余裕が小さいので、CAD で確かめます" };
+      return { s: "ok", m: "ケースに入ります（設計値 32.0 × 25.0 × 8.0 mm）" };
     },
     m4: function () {
       var l = num("m4l"), w = num("m4w"), h = num("m4h"); if (!has(l, w, h)) return { s: "todo" };
-      if (l > 11.6) return { s: "ng", m: "長さが上限 11.6 mm を超えています。置き場所を見直すので相談させてください" };
-      if (h > 8.7) return { s: "ng", m: "高さが上限 8.7 mm を超えていて、フタが閉まりません" };
-      if (l <= 11.0 && w <= 5.8 && h <= 4.5) return { s: "ok", m: "設計の想定より小さいので、そのまま収まります" };
-      return { s: "adj", m: "上限の内側です。CAD に実測値を入れて周りとの隙間を確かめます" };
+      if (l > 11.1) return { s: "ng", m: "長さが上限 11.1 mm を超えています。置き場所を見直すので相談させてください" };
+      if (h > 5.9) return { s: "ng", m: "高さが上限 5.9 mm を超えています。上に載せる継ぎ目がフタに当たるので相談させてください" };
+      if (w > 5.8) return { s: "adj", m: "幅が想定の 5.8 mm より広いので、CAD で LED の穴の位置を合わせます（フタを作り直し）" };
+      if (l <= 11.0 && h <= 4.5) return { s: "ok", m: "設計の想定より小さいので、そのまま収まります" };
+      return { s: "adj", m: "上限の内側です（薄型 slim は高さ 4.9 mm まで）。CAD に実測値を入れて周りとの隙間を確かめます" };
     },
     m5: function () {
       var x = num("m5"); if (!has(x)) return { s: "todo" };
-      if (x > 1.3) return { s: "ng", m: "太すぎます（上限 1.3 mm）。AWG28 などの細い線に替えてください" };
-      if (x < 0.5) return { s: "ng", m: "値を確かめてください（被覆を含めた外径です）" };
-      return { s: "ok", m: "細さは十分です" };
+      if (x < 0.5 || x > 3) return { s: "ng", m: "値を確かめてください（被覆を含めた外径です）" };
+      if (x > 1.3) return { s: "ok", m: "記録しました。XIAO の下は通せない太さですが問題ありません。標準の手順どおり、根元で切って細い線（AWG28）に継ぎ足します" };
+      return { s: "ok", m: "記録しました。細い線ですが、標準の手順どおり根元で切って AWG28 に継ぎ足します" };
     },
     m6: function () {
-      var c = num("m6c"), d = num("m6d"); if (!has(c, d)) return { s: "todo" };
+      var c = num("m6c"), d = num("m6d"), w = num("m6w"); if (!has(c, d)) return { s: "todo" };
       if (d <= c) return { s: "ng", m: "D は C より大きくなります。測り直してください" };
       var lev = d - c;
-      if (Math.abs(c - 3.5) <= 0.3 && Math.abs(lev - 2.0) <= 0.5) return { s: "ok", m: "設計どおり" };
+      if (!has(w)) return { s: "todo", m: "本体 " + f2(c) + "・レバー " + f2(lev) + " mm。あと W（レバーの幅）を入れてください" };
+      if (w < 0.5 || w > 6) return { s: "ng", m: "W の値を確かめてください（レバーが動く向きの、レバー自身の幅です）" };
+      if (w > 2.6) return { s: "adj", m: "レバーの幅 " + f2(w) + " mm は今の穴（2.6 mm まで）に対して広いので、CAD で穴を広げます（本体を作り直し）" };
+      if (Math.abs(c - 4.0) <= 0.3 && Math.abs(lev - 3.0) <= 0.5) return { s: "ok", m: "設計どおり（本体 4.0・レバー 3.0 mm、レバーの幅も今の穴で足ります）" };
       return { s: "adj", m: "本体 " + f2(c) + "・レバー " + f2(lev) + " mm。スロットの深さを CAD で合わせます" };
     },
     m7: function () {
@@ -684,7 +737,7 @@ a { color: var(--accent); }
       if (r === "skip") return { s: "skip", m: "服のクリップだけで使うので、測らなくて大丈夫です" };
       if (r === "no") return { s: "ng", m: "両端が縫い付けだと編み込めません。別の留め方を考えるので相談させてください" };
       var w = num("m7w"), t = num("m7t"); if (!has(w, t)) return { s: "todo", m: "幅と厚みを入れてください" };
-      if (w > 38.6) return { s: "ng", m: "幅 " + f2(w) + " mm は本体より広く、この板では付きません。相談させてください" };
+      if (w > 39.6) return { s: "ng", m: "幅 " + f2(w) + " mm は本体より広く、この板では付きません。相談させてください" };
       if (t > 4.0) return { s: "ng", m: "厚み " + f2(t) + " mm は厚すぎます（4.0 mm まで）。相談させてください" };
       if (w <= 38 && t <= 2.5) return { s: "ok", m: "今のデータのまま使えます" };
       return { s: "adj", m: "幅 " + f2(w) + "・厚み " + f2(t) + " mm に合わせて、板を作り直します" };
@@ -694,8 +747,15 @@ a { color: var(--accent); }
       if (h >= g) return { s: "ng", m: "H は G より小さくなります。測り直してください" };
       var f = g - h, dome = (f - 4.5) - 0.2;
       var thin = e < 3.45 ? "ツバが窓の穴（3.4 mm）とほぼ同じ太さなので、組み立てではフタを伏せて LED の先端を机に当てて止めます。" : "";
-      if (Math.abs(f - 4.5) <= 0.2) return { s: thin ? "adj" : "ok", m: thin + "長さは設計どおりで、先端はフタの面とそろいます" };
+      if (Math.abs(f - 4.5) <= 0.2) return { s: "ok", m: thin + "長さは設計どおりで、先端はフタの面とそろいます" };
       return { s: "adj", m: thin + "このままだと先端がフタの面から " + (dome <= 0 ? f2(-dome) + " mm 奥に沈みます" : f2(dome) + " mm 出ます") + "。沈め量を CAD で合わせます" };
+    },
+    m9: function () {
+      var j = num("m9j"), k = num("m9k"); if (!has(j, k)) return { s: "todo" };
+      if (k < 1.5 || k > 6 || j <= k || j > 21) return { s: "ng", m: "J と K を確かめてください（J は基板の端から箱の遠い辺まで、K は箱の幅。基板の長さは 21 mm です）" };
+      var c = j - k / 2;
+      if (c >= 6.6 && c <= 13.6) return { s: "ok", m: "中心は端から " + f2(c) + " mm。穴 3 つの並び（6.6〜13.6 mm）の内側なので、このまま印刷できます" };
+      return { s: "adj", m: "中心は端から " + f2(c) + " mm。穴の並び（6.6〜13.6 mm）から外れているので、CAD で穴を移動します（本体を作り直し）" };
     }
   };
   var LABEL = { todo: "未測定", ok: "そのまま", adj: "CAD を合わせる", ng: "要相談", skip: "対象外" };
@@ -704,10 +764,12 @@ a { color: var(--accent); }
 
   function derived() {
     var a = num("m2a"), b = num("m2b"), c = num("m6c"), d = num("m6d"), g = num("m8g"), h = num("m8h");
+    var j = num("m9j"), k = num("m9k");
     return {
       m2c: has(a, b) && a > b ? f2(a - b / 2) : null,
       m6lev: has(c, d) && d > c ? f2(d - c) : null,
-      m8f: has(g, h) && g > h ? f2(g - h) : null
+      m8f: has(g, h) && g > h ? f2(g - h) : null,
+      m9c: has(j, k) && j > k ? f2(j - k / 2) : null
     };
   }
   function results() {
@@ -724,10 +786,10 @@ a { color: var(--accent); }
     Object.keys(der).forEach(function (k) { var el = document.querySelector('[data-out="' + k + '"]'); if (el) el.textContent = der[k] || "—"; });
     var n = { todo: 0, ok: 0, adj: 0, ng: 0, skip: 0 };
     Object.keys(res).forEach(function (k) { n[res[k].s]++; });
-    var done = 8 - n.todo, sum = document.getElementById("sum");
-    if (done === 0) sum.textContent = "8 項目すべて未測定";
+    var total = Object.keys(res).length, done = total - n.todo, sum = document.getElementById("sum");
+    if (done === 0) sum.textContent = total + " 項目すべて未測定";
     else if (n.todo === 0) sum.textContent = n.ng ? "全部そろいました。要相談が " + n.ng + " 件あります" : "全部そろいました。チャットで「採寸おわった」と送ってください";
-    else sum.textContent = "8 項目中 " + done + " 項目済み（そのまま " + n.ok + "・CAD を合わせる " + n.adj + "・要相談 " + n.ng + "）";
+    else sum.textContent = total + " 項目中 " + done + " 項目済み（そのまま " + n.ok + "・CAD を合わせる " + n.adj + "・要相談 " + n.ng + "）";
     return res;
   }
 
@@ -792,7 +854,7 @@ a { color: var(--accent); }
   }
 
   // ---- まとめてコピー ----
-  var NAMES = { m1: "M1 XIAO の厚み", m2: "M2 USB-C の高さ", m3: "M3 電池", m4: "M4 JST", m5: "M5 電線", m6: "M6 スイッチ", m7: "M7 ストラップ", m8: "M8 LED" };
+  var NAMES = { m1: "M1 XIAO の厚み", m2: "M2 USB-C の高さ", m3: "M3 電池", m4: "M4 JST", m5: "M5 電線", m6: "M6 スイッチ", m7: "M7 ストラップ", m8: "M8 LED", m9: "M9 マイクの位置" };
   function summaryText() {
     var v = values(), der = derived(), res = results(), L = ["MindClip 採寸結果"];
     function g(k) { return v[k] != null ? v[k] : "—"; }
@@ -801,10 +863,11 @@ a { color: var(--accent); }
     L.push(NAMES.m3 + ": L " + g("m3l") + " / W " + g("m3w") + " / T " + g("m3t") + " mm [" + LABEL[res.m3.s] + "]");
     L.push(NAMES.m4 + ": L " + g("m4l") + " / W " + g("m4w") + " / H " + g("m4h") + " mm [" + LABEL[res.m4.s] + "]");
     L.push(NAMES.m5 + ": " + g("m5") + " mm [" + LABEL[res.m5.s] + "]");
-    L.push(NAMES.m6 + ": C " + g("m6c") + " / D " + g("m6d") + " → レバー " + (der.m6lev || "—") + " mm [" + LABEL[res.m6.s] + "]");
+    L.push(NAMES.m6 + ": C " + g("m6c") + " / D " + g("m6d") + " → レバー " + (der.m6lev || "—") + " mm / レバーの幅 W " + g("m6w") + " mm [" + LABEL[res.m6.s] + "]");
     var r7 = { yes: "付ける・抜ける", no: "両端縫い付け", skip: "付けない", "": "未選択" }[inputs.m7r ? inputs.m7r.value : ""];
     L.push(NAMES.m7 + ": " + r7 + " / 幅 " + g("m7w") + " / 厚み " + g("m7t") + " mm [" + LABEL[res.m7.s] + "]");
     L.push(NAMES.m8 + ": E " + g("m8e") + " / G " + g("m8g") + " / H " + g("m8h") + " → F " + (der.m8f || "—") + " mm [" + LABEL[res.m8.s] + "]");
+    L.push(NAMES.m9 + ": J " + g("m9j") + " / K " + g("m9k") + " → 中心 " + (der.m9c || "—") + " mm [" + LABEL[res.m9.s] + "]");
     return L.join("\n");
   }
   var copyBtn = document.getElementById("copy"), box = document.getElementById("copybox");
