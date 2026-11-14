@@ -1422,9 +1422,9 @@ def build_strapplate():
 # strapplate と同じリム + 磁石 2 個で載せる。本体は服用・カバン用と共通のまま付け替えられる。
 # 座標: 板中心 = 原点 = リング中心 = 本体中心。z=0 がスマホ側 (ベッド面)、z=MS_T が本体側。
 # リングは製品ごとに寸法が違うため環境変数で合わせる (買ったリングをノギスで測って入れる)。
-MS_RING_OD = float(os.environ.get("MINDCLIP_MS_RING_OD", "56.0"))   # リング外径
-MS_RING_ID = float(os.environ.get("MINDCLIP_MS_RING_ID", "46.0"))   # リング内径
-MS_RING_T = float(os.environ.get("MINDCLIP_MS_RING_T", "2.0"))      # リング厚 (粘着層込み)
+MS_RING_OD = float(os.environ.get("MINDCLIP_MS_RING_OD", "54.9"))   # リング外径 (ESR HaloLock 2Z515 実測)
+MS_RING_ID = float(os.environ.get("MINDCLIP_MS_RING_ID", "46.1"))   # リング内径 (外径 − 輪の幅 4.4 x 2)
+MS_RING_T = float(os.environ.get("MINDCLIP_MS_RING_T", "0.6"))      # リング厚 (粘着層込み、実測)
 MS_RING_FIT = 0.5           # 溝の径方向の余裕 (片側 0.25)
 MS_RING_PROUD = 0.1         # リングを板の面からわずかに出す (磁石面を確実にケースへ当てる)
 MS_WEB = 1.0                # リング溝の天井 / 磁石ポケットの底に残す肉
