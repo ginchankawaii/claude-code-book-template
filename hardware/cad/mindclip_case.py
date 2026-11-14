@@ -1416,6 +1416,78 @@ def build_strapplate():
 
 
 # ---------------------------------------------------------------------------
+# magsafeplate (v1.10: スマホ背面の MagSafe に付ける取り付け板)
+# ---------------------------------------------------------------------------
+# 板のスマホ側の面に市販の「貼り付け式 MagSafe 磁石リング」を沈めて貼り、反対の面に本体を
+# strapplate と同じリム + 磁石 2 個で載せる。本体は服用・カバン用と共通のまま付け替えられる。
+# 座標: 板中心 = 原点 = リング中心 = 本体中心。z=0 がスマホ側 (ベッド面)、z=MS_T が本体側。
+# リングは製品ごとに寸法が違うため環境変数で合わせる (買ったリングをノギスで測って入れる)。
+MS_RING_OD = float(os.environ.get("MINDCLIP_MS_RING_OD", "56.0"))   # リング外径
+MS_RING_ID = float(os.environ.get("MINDCLIP_MS_RING_ID", "46.0"))   # リング内径
+MS_RING_T = float(os.environ.get("MINDCLIP_MS_RING_T", "2.0"))      # リング厚 (粘着層込み)
+MS_RING_FIT = 0.5           # 溝の径方向の余裕 (片側 0.25)
+MS_RING_PROUD = 0.1         # リングを板の面からわずかに出す (磁石面を確実にケースへ当てる)
+MS_WEB = 1.0                # リング溝の天井 / 磁石ポケットの底に残す肉
+MS_EDGE = 1.6               # リング溝の外側に残す壁
+MS_T = round(max(MS_RING_T - MS_RING_PROUD, MAG_T + 0.2) + MS_WEB, 2)   # 板厚 (リム除く)
+MS_DISC_R = round(MS_RING_OD / 2 + MS_RING_FIT / 2 + MS_EDGE, 2)        # 円板の半径
+
+
+def check_magsafeplate():
+    assert MS_RING_ID < MS_RING_OD and 1.0 <= MS_RING_T <= 3.5, "MagSafe ring dims out of range"
+    # 本体用の磁石ポケットはリングの内側に収まる (溝と平面で重ならない = 板厚を足さずに済む)
+    for mx, my in SP_MAGS:
+        r = math.hypot(mx, my) + _SP_MAG_R
+        assert r + 0.8 <= MS_RING_ID / 2 - MS_RING_FIT / 2 + 1e-6, (
+            f"body magnet pocket (r={r:.1f}) overlaps the MagSafe ring groove "
+            f"(inner r={MS_RING_ID / 2:.1f})")
+    assert MS_RING_PROUD < MS_RING_T, "ring thinner than its protrusion"
+    print(f"[magsafe] plate dia {2 * MS_DISC_R:.1f} + body nest {SP_OUT_W:.1f} x {SP_OUT_H:.1f}, "
+          f"thickness {MS_T:.1f} (+rim {SP_RIM_H}) | ring {MS_RING_OD:.0f}/{MS_RING_ID:.0f} x "
+          f"{MS_RING_T:.1f} | stack on phone case: {MS_T + MS_RING_PROUD + TOTAL_D:.1f} mm")
+
+
+def build_magsafeplate():
+    # 円板 (リングを抱える) と角丸矩形 (本体の座) の和。本体の四隅は円板からはみ出すため。
+    ms = (cq.Workplane("XY").circle(MS_DISC_R).extrude(MS_T)
+          .union(rounded_slab(SP_OUT_W, SP_OUT_H, SP_R, MS_T, 0, 0, 0)))
+    ring = rounded_slab(SP_OUT_W, SP_OUT_H, SP_R, SP_RIM_H, 0, 0, MS_T)
+    ring = ring.cut(rounded_slab(W + 2 * SP_RIM_CLR, H + 2 * SP_RIM_CLR,
+                                 R_OUT + SP_RIM_CLR, SP_RIM_H + 1.0, 0, 0, MS_T - 0.5))
+    ring = ring.edges(">Z").fillet(0.4)             # 切り欠き前に掛ける (strapplate と同じ理由)
+    ring = ring.cut(cq.Workplane(obj=bbox_solid(
+        (W / 2 - 1.0, SP_USB_NOTCH[0], SP_OUT_W / 2 + 1.0, SP_USB_NOTCH[1],
+         MS_T - 0.5, MS_T + SP_RIM_H + 0.5))))
+    assert ring.val().isValid(), "magsafe-plate rim solid is invalid"
+    ms = ms.union(ring)
+    # MagSafe リングの溝 (スマホ側の面から)。天井は幅 5mm 強の環状ブリッジで、サポート不要
+    depth = MS_RING_T - MS_RING_PROUD
+    groove = (cq.Workplane("XY").workplane(offset=-0.5)
+              .circle(MS_RING_OD / 2 + MS_RING_FIT / 2)
+              .circle(MS_RING_ID / 2 - MS_RING_FIT / 2).extrude(depth + 0.5))
+    ms = ms.cut(groove)
+    for mx, my in SP_MAGS:                          # 本体用の磁石 (本体側から圧入)
+        ms = ms.cut(cq.Workplane(obj=cq.Solid.makeCylinder(
+            _SP_MAG_R, MAG_T + 0.2 + 0.5, cq.Vector(mx, my, MS_T - MAG_T - 0.2))))
+    _bb = ms.val().BoundingBox()
+    assert ms.val().isValid() and abs(_bb.zmax - (MS_T + SP_RIM_H)) < 1e-3, \
+        "magsafe-plate rim missing after union"
+    return ms
+
+
+def check_magsafeplate_fit(body, ms):
+    """strapplate と同じ実形状検査: 載せて干渉 0、横ずれはリムが止める (陽性対照)。"""
+    def overlap(dx, dy):
+        r = body.translate(cq.Vector(-CX + dx, -H / 2 + dy, MS_T)).intersect(ms)
+        return sum(s.Volume() for s in r.solids().vals())
+    assert overlap(0.0, 0.0) < 1e-3, "body interferes with magsafe plate when seated"
+    shift = SP_RIM_CLR + 0.3
+    for dx, dy in ((shift, 0), (-shift, 0), (0, shift), (0, -shift)):
+        assert overlap(dx, dy) > 1e-3, f"magsafe rim does not stop a shift at ({dx:+.1f},{dy:+.1f})"
+    print(f"[magsafe] fit: seated overlap 0, rim stops a {shift:.1f} mm shift in all 4 directions")
+
+
+# ---------------------------------------------------------------------------
 # 出力
 # ---------------------------------------------------------------------------
 def export_all():
@@ -1434,10 +1506,14 @@ def export_all():
     print("[build] strapplate ...")
     strapplate = build_strapplate()
     check_strapplate_fit(body, strapplate)
+    check_magsafeplate()
+    print("[build] magsafeplate ...")
+    magsafeplate = build_magsafeplate()
+    check_magsafeplate_fit(body, magsafeplate)
 
     paths = {}
     for name, wp in (("body", body), ("lid", lid), ("backplate", backplate),
-                     ("strapplate", strapplate)):
+                     ("strapplate", strapplate), ("magsafeplate", magsafeplate)):
         p = os.path.join(STL_DIR, f"mindclip_{name}.stl")
         cq.exporters.export(wp, p, tolerance=0.05, angularTolerance=0.2)
         paths[name] = p
@@ -1461,7 +1537,7 @@ def verify_and_render(paths):
         m = trimesh.load_mesh(p)
         meshes[name] = m
         mass = m.volume * PETG_RHO
-        if name != "strapplate":        # backplate と差し替えて使う別マウント (合算しない)
+        if name not in ("strapplate", "magsafeplate"):   # backplate と差し替える別マウント (合算しない)
             total_print_mass += mass
         print(f"[verify] {name}: watertight={m.is_watertight}  "
               f"volume={m.volume/1000.0:.2f} cm3  mass(PETG)={mass:.1f} g  "
@@ -1888,6 +1964,55 @@ def verify_and_render(paths):
     fig.savefig(os.path.join(REN_DIR, "strapplate.png"), bbox_inches="tight")
     plt.close(fig)
     print("[render] strapplate.png")
+
+    # ---- magsafeplate.png (v1.10: 板の両面 + スマホ背面に付けた見え方) ----
+    #   スマホの外形・カメラ台座は目安の作図 (寸法の根拠にしない)。
+    from matplotlib.patches import FancyBboxPatch, Circle
+    msm = meshes["magsafeplate"]
+    fig = plt.figure(figsize=(15, 6.4), dpi=140)
+    axa = fig.add_subplot(1, 3, 1, projection="3d")
+    draw_scene(axa, [(msm, C_BP, 1.0)])
+    finish(axa, msm.vertices, elev=50, azim=-58, zoom=1.15)
+    axa.set_title("body side: rim + 2 magnets\n(the clip snaps in here)", fontsize=10)
+    axb = fig.add_subplot(1, 3, 2, projection="3d")
+    flip = msm.copy()
+    flip.apply_transform(np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, MS_T], [0, 0, 0, 1.0]]))
+    draw_scene(axb, [(flip, C_BP, 1.0)])
+    finish(axb, flip.vertices, elev=50, azim=-58, zoom=1.15)
+    axb.set_title(f"phone side: groove for a stick-on MagSafe ring\n"
+                  f"(dia {MS_RING_OD:.0f}/{MS_RING_ID:.0f} x {MS_RING_T:.1f} mm)", fontsize=10)
+    axc = fig.add_subplot(1, 3, 3)
+    PW, PH = 71.9, 150.0                      # iPhone 17 Pro の外形 (目安)
+    axc.add_patch(FancyBboxPatch((-PW / 2, -PH / 2), PW, PH, boxstyle="round,pad=0,rounding_size=9",
+                                 fc="#d9d6d0", ec="#555", lw=1.2))
+    axc.add_patch(FancyBboxPatch((-PW / 2 + 2, PH / 2 - 40), PW - 4, 38,
+                                 boxstyle="round,pad=0,rounding_size=7", fc="#bdb9b1", ec="#555", lw=0.8))
+    for cx_, cy_ in ((-20, PH / 2 - 13), (-20, PH / 2 - 29), (-5, PH / 2 - 21)):
+        axc.add_patch(Circle((cx_, cy_), 6.5, fc="#33363b", ec="#111"))
+    axc.text(8, PH / 2 - 21, "camera\n(approx.)", fontsize=7, va="center")
+    MSY = -8.0                                # MagSafe 中心の高さ (目安)
+    axc.add_patch(Circle((0, MSY), MS_DISC_R, fc="#8c8c94", ec="#333", lw=1.0))
+    axc.add_patch(FancyBboxPatch((-SP_OUT_W / 2, MSY - SP_OUT_H / 2), SP_OUT_W, SP_OUT_H,
+                                 boxstyle=f"round,pad=0,rounding_size={SP_R}", fc="#8c8c94", ec="#333", lw=1.0))
+    axc.add_patch(FancyBboxPatch((-W / 2, MSY - H / 2), W, H,
+                                 boxstyle=f"round,pad=0,rounding_size={R_OUT}", fc="#2b2d31", ec="#000", lw=1.0))
+    for mxh in MIC_X_ON_BOARD:
+        axc.add_patch(Circle((xiao[0] + mxh - CX, MSY + H / 2 - 1.0), 0.75, fc="#888", ec="none"))
+    axc.add_patch(Circle((LED_POS[0] - CX, MSY + LED_POS[1] - H / 2), LED_WIN_R, fc="#55585e", ec="none"))
+    axc.annotate("mic ports (top edge)", xy=(xiao[0] + MIC_X_ON_BOARD[1] - CX, MSY + H / 2),
+                 xytext=(12, MSY + H / 2 + 14), fontsize=7, arrowprops=dict(arrowstyle="-", lw=0.6))
+    axc.annotate("USB-C", xy=(W / 2, MSY + USB_CY - H / 2), xytext=(W / 2 + 6, MSY + USB_CY - H / 2),
+                 fontsize=7, va="center", arrowprops=dict(arrowstyle="-", lw=0.6))
+    axc.text(0, MSY - 4, "MindClip", color="#9a9da3", fontsize=8, ha="center")
+    axc.text(0, -PH / 2 + 8, f"sticks out {MS_T + MS_RING_PROUD + TOTAL_D:.1f} mm from the case",
+             fontsize=8, ha="center")
+    axc.set_aspect("equal"); axc.set_xlim(-PW / 2 - 8, PW / 2 + 22); axc.set_ylim(-PH / 2 - 6, PH / 2 + 6)
+    axc.set_axis_off()
+    axc.set_title("on the back of an iPhone 17 Pro (to scale, layout approximate)", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(os.path.join(REN_DIR, "magsafeplate.png"), bbox_inches="tight")
+    plt.close(fig)
+    print("[render] magsafeplate.png")
 
 
 if __name__ == "__main__":
