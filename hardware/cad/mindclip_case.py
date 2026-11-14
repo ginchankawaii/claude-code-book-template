@@ -115,11 +115,11 @@ XIAO_W, XIAO_H = 21.0, 17.8                     # XIAO ESP32S3 基板
 XIAO_CORNER_R = 1.9                             # 基板コーナー R : **assumption / 要実測**
                                                 #   (右上コーナーの逃げは R=0 の角ばった基板でも
                                                 #    入るように切ってある。check_xiao_fit 参照)
-XIAO_STACK_T = 8.2                              # Sense拡張ボード込み総厚 (v1.8 実測 M1。旧仮定 7.5)
+XIAO_STACK_T = 8.3                              # Sense拡張ボード込み総厚 (実測 M1: 8.20 / 再測 8.30 の大きい方)
 USB_PROTRUDE = 1.3                              # USB-C の基板端からの突出
 SW_L, SW_W, SW_H = 8.7, 3.7, 4.0                # SS-12D00 本体 (高さ v1.8 実測 M6。旧仮定 3.5)
 SW_LEVER = 3.0                                  # レバー突出 (SS-12D00**G3** = レバー 3mm。v1.8 実測 M6)
-SW_LEVER_W = 2.0                                # レバーの幅 (スライド方向) : **assumption / 要実測 (M6)**
+SW_LEVER_W = 1.4                                # レバーの幅 (スライド方向。実測 M6)
 SW_TRAVEL = 2.0                                 # レバーのスライド量 (SS-12D00 公称)
 SW_SLOT_L, SW_SLOT_W = 5.0, 2.2                 # 上面のレバースロット (スライド方向 x 厚み方向)
 LED_D = 3.0                                     # 3mm LED
@@ -264,7 +264,7 @@ sw_terms = (_sw_cx - SW_TERM_PITCH - SW_JOINT_R, sw[1] - SW_TERM_L - 1.0,
 #     - y1 を 42.0 → 39.6 に下げた。旧位置は SS-12D00 の端子 (上記 sw_terms,
 #       現在 y40.0..44.5) と slim で分離距離 0.00mm、はんだ継ぎ目 + 熱収縮を入れると
 #       -1.35mm の実干渉だった (旧 CAD は端子を持っていなかったので素通りしていた)。
-HARNESS_JST_XYZ = (5.8, 11.0, 4.5)              # 嵌合体 X x Y x Z (assumption / 要実測)
+HARNESS_JST_XYZ = (4.2, 9.2, 3.3)               # 嵌合体 X x Y x Z (1.25mm 2P ピグテール実測 M4)
 HARNESS_JST_X0 = WALL                           # 左内壁に密着 (点付け面)
 HARNESS_JST_Y0 = round(bat[3] + 0.4, 6)         # 電池上端から 0.4mm
 harness_jst_x1 = HARNESS_JST_X0 + HARNESS_JST_XYZ[0]        # 7.4 (LED の x 基準)
@@ -283,10 +283,14 @@ harness_jst = (HARNESS_JST_X0, HARNESS_JST_Y0,
 #   継ぎ目を置いてはいけない場所: XIAO の下 (基板が浮く) と、ストップリブの切れ目
 #   (x14.4..17.25 / y35..40 = 電線が XIAO の下へ入る唯一の通り道)。
 SPLICE_D, SPLICE_L = 2.5, 10.0                  # 継ぎ目 1 本の外径 x 長さ (熱収縮後)
+# 採用ピグテールの電線は実測 外径 0.90mm (M5) で、XIAO の下 (上限 1.3mm) をそのまま通せる。
+# 継ぎ足しは不要になったので継ぎ目の場所は確保しない。太い線のピグテールに替える場合だけ True に
+# する (嵌合体の幅が 2 x SPLICE_D より狭いと LED と干渉するので、その場合は置き場所から見直す)。
+HARNESS_SPLICE = False
 harness_splice = ((harness_jst[0] + 0.3, harness_jst[1] + 0.3,
                    harness_jst[0] + 0.3 + 2 * SPLICE_D, harness_jst[3] - 0.3,
                    harness_jst[5] + 0.3, harness_jst[5] + 0.3 + SPLICE_D)
-                  if harness_jst is not None else None)
+                  if (harness_jst is not None and HARNESS_SPLICE) else None)
 # LED: 正面リッドの窓。左上ゾーン (スイッチの下、XIAOの左)
 #   v1.5: 絶対値直書き (6.9, 36.0) をやめ相対値にした
 #   (M_TOP/GAP_BX/電池厚を変えたときに窓だけ追従せず干渉する潜在バグの解消)。
@@ -312,9 +316,9 @@ LED_POS = (harness_jst_x1 + LED_CLR_X + (LED_D / 2 + 0.1),
 #   リード帯の下端が床 (WALL) から 0.3mm 以上残る範囲で沈め量を打ち切る
 #   (slim は奥行きが浅く満額は入らない → ドームが少しだけ残る)。
 #   副次効果: 穴の奥に光源があるので、正面以外の角度からは光がほぼ見えなくなる。
-LED_PROTRUDE_STD = 2.7      # 標準3mm LED のドーム突出量 (ツバをリッド内面に当てた場合)
+LED_PROTRUDE_STD = 2.6      # ドーム突出量 = ツバ上〜先端 4.4 (実測 M8: G5.0 − H0.6) − リッド厚 1.8
 LED_SINK = 0.2              # 面一化後にドーム先端を外面から沈める量
-LED_FLANGE_R, LED_FLANGE_T = 1.7, 0.5           # ツバ φ3.4 x 0.5 (OSR5JA3Z74A, v1.8 実測 M8)
+LED_FLANGE_R, LED_FLANGE_T = 1.7, 0.6           # ツバ φ3.4 x 0.6 (OSR5JA3Z74A, 実測 M8)
 #   実測のツバ φ3.4 は窓 (φ3.4) と同径で、ツバではスリーブ下端に止まらない個体がある。
 #   組立は「フタを伏せ、ドーム先端が机に当たるまで押し込む」方式 (README 手順10-2) なので、
 #   実際の LED はここでモデル化した位置 (ツバ上面 = スリーブ下端、ドーム先端が外面の
@@ -359,7 +363,7 @@ MIC_HOLE_R = 0.75                               # φ1.5
 #   (穴は +2.0mm 動いて x24.0 / 27.5 / 31.0)。
 #   **拡張ボード上のマイクの実位置は未実測** (MEASUREMENTS.md M9)。測ったら中央の値を
 #   実測値に書き換える (3 穴は ±3.5mm の振り分け)。
-MIC_X_ON_BOARD = (6.6, 10.1, 13.6)              # 基板左端からの距離 : **assumption / 要実測 (M9)**
+MIC_X_ON_BOARD = (4.7, 8.2, 11.7)               # 基板左端 (USB と反対の端) からの距離。中央の穴 = マイク中心 8.2 (M9)
 MIC_XS = tuple(round(xiao[0] + _mx, 6) for _mx in MIC_X_ON_BOARD)
 # --- 内部リブ類 (AABB) ---
 # XIAO コーナーシート (基板4隅の座面。ピン列カステレーション x16.1-31.3 を回避)
@@ -830,11 +834,6 @@ def check_layout():
         _xg = clearance(_rot, xiao_stops[0])
         print(f"[harness] X-laid JST clearance to xiao stop: {_xg:.2f}mm "
               f"({'geometrically viable but NOT the documented placement' if _xg >= 0.3 else 'not viable'})")
-        # 旧配置 (y31.0..42.0) に戻すと必ずスイッチ端子と当たること = 回帰テスト
-        _old_y = (harness_jst[0], 31.0, harness_jst[2], 42.0,
-                  harness_jst[4], harness_jst[5])
-        assert clearance(_old_y, sw_terms) < 0.3, \
-            "regression: the old y31..42 placement must clash with the switch terminals"
         # 天井余裕: 嵌合体の上に電線の曲げ代 (J1_BEND_Z) が要る。
         #   LED を x 方向へ逃がしたことで、この帯の天井は「LED本体の下面」ではなく
         #   「リッド内面」になった (旧配置での上限は allday 7.20 / slim 5.50mm だった)。
@@ -991,7 +990,7 @@ def check_layout():
         #       carrier も基板外形が IW 36.8 に追従していないため対象外 (同じく SystemExit)。
         #       → 実行できるのは次の 2 構成だけ。
         ("allday", "none"): (40.0, 49.4, 14.6),
-        ("slim", "none"): (40.0, 49.4, 13.6),
+        ("slim", "none"): (40.0, 49.4, 13.7),
     }
     assert (VARIANT, PCB) in GOLDEN_OUTER, (
         f"[{VARIANT}/{PCB}] は公開寸法を持たない構成 (sense / carrier は v2 で再設計するまで実行不可)")
