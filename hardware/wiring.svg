@@ -3,8 +3,8 @@
   <rect x="0" y="0" width="1000" height="780" fill="#ffffff"/>
 
   <!-- タイトル -->
-  <text x="40" y="48" font-size="26" font-weight="bold" fill="#1a1a1a">MindClip DIY 配線図（v1.8 rev2 / 構成 A-1）</text>
-  <text x="40" y="74" font-size="14" fill="#555555">XIAO ESP32S3 Sense ＋ LiPo電池（JST 1.25mm 2ピンで嵌合）＋ スライドスイッチ ＋ 録音中LED　／　はんだ 12か所</text>
+  <text x="40" y="48" font-size="26" font-weight="bold" fill="#1a1a1a">MindClip DIY 配線図（v1.11 / 構成 A-1）</text>
+  <text x="40" y="74" font-size="14" fill="#555555">XIAO ESP32S3 Sense ＋ LiPo電池（JST 1.25mm 2ピンで嵌合）＋ スライドスイッチ ＋ 録音中LED　／　はんだ 10か所</text>
 
   <!-- 凡例 -->
   <g>
@@ -31,24 +31,20 @@
   <path d="M214,345 H118 V228 H140" fill="none" stroke="#1a1a1a" stroke-width="3"/>
   <text x="118" y="300" font-size="10.5" fill="#1a1a1a" text-anchor="end">黒 50mm</text>
   <text x="240" y="330" font-size="10.5" fill="#1a1a1a">黒 60mm(allday)/45mm(slim)</text>
-  <!-- 赤/黒: 電池（JST 1.25mm 2P で嵌合。ピグテールは短く切って AWG28 に継ぎ足す = 継ぎ目2か所） -->
+  <!-- 赤/黒: 電池（JST 1.25mm 2P で嵌合。ピグテールの線は約60/65mm に切ってそのまま使う = 継ぎ目なし。v1.11） -->
   <path d="M470,428 V486" fill="none" stroke="#d62828" stroke-width="3"/>
   <path d="M530,428 V486" fill="none" stroke="#1a1a1a" stroke-width="3"/>
   <path d="M470,524 V560" fill="none" stroke="#d62828" stroke-width="3"/>
   <path d="M530,524 V560" fill="none" stroke="#1a1a1a" stroke-width="3"/>
   <rect x="438" y="486" width="124" height="19" rx="3" fill="#f5f5f5" stroke="#616161" stroke-width="1.5"/>
   <rect x="438" y="505" width="124" height="19" rx="3" fill="#e8eaf6" stroke="#616161" stroke-width="1.5"/>
-  <!-- 継ぎ目 2か所（位置を 5mm ずらす。熱収縮チューブで絶縁） -->
-  <rect x="465" y="462" width="10" height="16" rx="3" fill="#ffe082" stroke="#b8860b" stroke-width="1.2"/>
-  <rect x="525" y="448" width="10" height="16" rx="3" fill="#ffe082" stroke="#b8860b" stroke-width="1.2"/>
-  <text x="570" y="449" font-size="10.5" fill="#37474f">AWG28 55mm</text>
-  <text x="570" y="462" font-size="10.5" fill="#8d6e00">継ぎ目 ×2</text>
-  <text x="570" y="475" font-size="10.5" fill="#8d6e00">(5mmずらす)</text>
+  <text x="570" y="462" font-size="10.5" fill="#37474f">ピグテールの線</text>
+  <text x="570" y="475" font-size="10.5" fill="#37474f">(継ぎ足さない)</text>
   <text x="570" y="493" font-size="10.5" fill="#37474f">ピグテール側</text>
-  <text x="570" y="505" font-size="10.5" fill="#37474f">10/15mmで切る</text>
+  <text x="570" y="505" font-size="10.5" fill="#37474f">約60/65mmで切る</text>
   <text x="570" y="519" font-size="10.5" fill="#37474f">セル側プラグ</text>
   <text x="570" y="531" font-size="10.5" fill="#37474f">1.25mm 2ピン</text>
-  <text x="420" y="710" font-size="11.5" font-weight="bold" fill="#c62828">⚠ JST嵌合体は仮寸法 5.8×11.0×4.5mm。上限は厚み allday 5.9 / slim 4.9mm → 手順5-7 で実測（M4）</text>
+  <text x="420" y="710" font-size="11.5" font-weight="bold" fill="#c62828">JST嵌合体は実測 9.2×4.2×3.3mm・線の外径 0.90mm（M4・M5）。＋の線は手順5-4 の測定で決める</text>
 
   <!-- ===== XIAO 基板 ===== -->
   <!-- USB-C -->
