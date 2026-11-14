@@ -48,10 +48,14 @@ static void sha256Bytes(const uint8_t *p, size_t n, char *hexOut) {
   toHex(d, 32, hexOut);
 }
 
-// ファイル全体のSHA-256。ストリーミングで読む（RAMに載せない）
+// ファイル全体のSHA-256。ストリーミングで読む（RAMに載せない）。
+// **サイズぶん読み切れなかったら失敗にする**。SD の読み出しエラーは read() が 0 以下を返す
+// だけで EOF と区別できないので、ここで打ち切った分を「全体」として返すと、先頭だけを
+// 送ってサーバがその sha256 を ACK し、SD.remove() が**残りごと**消してしまう。
 static bool sha256File(const char *path, char *hexOut, uint32_t *sizeOut) {
   File f = SD.open(path, FILE_READ);
   if (!f) return false;
+  uint32_t expect = (uint32_t)f.size();
   mbedtls_sha256_context c;
   mbedtls_sha256_init(&c);
   mbedtls_sha256_starts(&c, 0);
@@ -62,11 +66,13 @@ static bool sha256File(const char *path, char *hexOut, uint32_t *sizeOut) {
     if (n <= 0) break;
     mbedtls_sha256_update(&c, buf, (size_t)n);
     total += (uint32_t)n;
+    ledTick();                 // 19MB のファイルでは十秒単位で掛かる。表示を止めない
   }
   uint8_t d[32];
   mbedtls_sha256_finish(&c, d);
   mbedtls_sha256_free(&c);
   f.close();
+  if (total != expect) return false;
   toHex(d, 32, hexOut);
   if (sizeOut) *sizeOut = total;
   return true;
@@ -161,6 +167,18 @@ static int wifiConnect(bool (*abortCb)()) {
   return WiFi.status() == WL_CONNECTED ? 1 : 0;
 }
 
+// ms だけ待つ。待ちの間も LED を進め、abortCb があればスイッチ ON (E8) を見る。
+// ms = 0 でも中断判定は1回行う。戻り値: true = 中断された
+static bool waitTicking(uint32_t ms, bool (*abortCb)()) {
+  uint32_t t0 = millis();
+  for (;;) {
+    if (abortCb && abortCb()) return true;
+    ledTick();
+    if (millis() - t0 >= ms) return false;
+    delay(20);
+  }
+}
+
 static void wifiOff() {
   s_http.setReuse(false);      // keep-alive を解除してから本当に閉じる
   s_http.end();
@@ -199,6 +217,33 @@ static int fetchTime() {
 // 通信失敗まで「このファイル固有の問題」と誤判定してセッションを止められなくなる。
 static const int LOCALERR_BEGIN = -1001;   // http.begin() 失敗
 static const int LOCALERR_OPEN  = -1002;   // SD.open() 失敗
+static const int LOCALERR_READ  = -1003;   // 送信中に SD から宣言ぶんを読めなかった
+
+// HTTPClient::sendRequest(Stream*) に渡す File の薄い包み。目的は2つ:
+// ・HTTPClient は1チャンク(約1.4KB)ごとに readBytes() を呼ぶ。ここだけが送信中に
+//   こちらのコードへ戻ってくる場所なので、LED の同期表示(1Hz)をここで進める。
+// ・要求ぶん読めなかったこと（SD の読み出しエラー）を覚えておく。HTTPClient は送信バイト数の
+//   不一致を「送信失敗」としか返さず、サーバ障害と区別できないため。
+//   なお短い読み出しのまま 200 が返ることは無い（Content-Length に届かないのでサーバは
+//   応答できず、HTTPClient も応答を読まずに接続を切る）。削除には進まない。
+class UploadStream : public Stream {
+ public:
+  explicit UploadStream(File &f) : _f(f) {}
+  bool shortRead = false;
+  int available() override { return _f.available(); }
+  int read() override      { return _f.read(); }
+  int peek() override      { return _f.peek(); }
+  size_t write(uint8_t) override { return 0; }
+  using Stream::readBytes;
+  size_t readBytes(char *buffer, size_t length) override {
+    ledTick();
+    size_t n = _f.read((uint8_t *)buffer, length);
+    if (n != length) shortRead = true;
+    return n;
+  }
+ private:
+  File &_f;
+};
 
 // POST /api/v1/ingest。戻り値: HTTPステータス（負値は通信失敗 or 上のローカル失敗）
 static int postFile(const String &path, const String &name, const char *shaHex,
@@ -227,7 +272,14 @@ static int postFile(const String &path, const String &name, const char *shaHex,
   const char *collect[] = {"Content-Type"};
   http.collectHeaders(collect, 1);
 
-  int code = http.sendRequest("POST", &f, bytes);
+  UploadStream body(f);
+  int code = http.sendRequest("POST", &body, bytes);
+  if (body.shortRead) {
+    // 宣言したバイト数を送れていない。応答が何であれ信用せず、このファイルだけ持ち越す。
+    http.end();
+    f.close();
+    return LOCALERR_READ;
+  }
   if (code == 200) {
     String body = http.getString();
     String s;
@@ -291,34 +343,48 @@ static void markBad400(const String &full) {
   else                                      mcLogf("[SYNC] E16 rename failed: %s", full.c_str());
 }
 
-SyncResult syncRun(bool (*abortCb)()) {
-  s_sent = 0; s_carry = 0;
-
+// セッションの前半: WiFi接続 → TLS設定 → GET /api/v1/time。SD には一切触れない。
+// SYNC_OK のときだけ無線と TLS を生かしたまま返す（それ以外は落としてから返す）。
+static SyncResult openSession(bool (*abortCb)()) {
   if (!settingsIsProvisioned()) return SYNC_NOT_PROVISIONED;   // E11
   if (!g_cfg.hmacSet) return SYNC_NOT_PROVISIONED;             // 無認証で送らない（要件7）
   if (!g_cfg.srvUrl.startsWith("https://")) return SYNC_NOT_PROVISIONED;
 
-  clockMarkPreSync();          // settimeofday する前に「未同期クロック」の基準を取る
   int wc = wifiConnect(abortCb);
   if (wc < 0)  { wifiOff(); return SYNC_ABORT_SWITCH; }       // E8: 接続待ち中にスイッチ ON
   if (wc == 0) { wifiOff(); return SYNC_NO_WIFI; }            // E4: リトライしない
   tlsSetup();
 
-  uint32_t sess0 = millis();
   // /time もファイル送信と同じ 0/1s/3s の3回リトライを掛ける。
   // WiFi接続直後の最初のTLSリクエストは、APのDHCP/ARP収束やサーバのコールドスタートで
   // 一過性に落ちやすい。ここを1発勝負にすると、その一度の失敗で**その夜の同期が
   // まるごと持ち越し**になり、日記が丸1日遅れる（データは失われないが価値が落ちる）。
+  // サーバが落ちていると1試行が接続＋TLSのタイムアウトまで戻らないので、試行の合間
+  // （と待ちの間）に必ずスイッチを見る。見ないと最悪80秒ほど録音に戻れない（E8）。
   int tcode = 0;
   for (int attempt = 0; attempt < FILE_RETRY_MAX; attempt++) {
-    delay(RETRY_BACKOFF_MS[attempt]);
+    if (waitTicking(RETRY_BACKOFF_MS[attempt], abortCb)) { wifiOff(); return SYNC_ABORT_SWITCH; }
     tcode = fetchTime();
     if (tcode == 200 || tcode == 401 || tcode == 403) break;  // 成功／認証不正は再試行しない
   }
   if (tcode == 401 || tcode == 403) { wifiOff(); return SYNC_AUTH_FAIL; }   // E6
   if (tcode != 200)                 { wifiOff(); return SYNC_SERVER_FAIL; } // E5
+  return SYNC_OK;
+}
 
-  SyncResult res = SYNC_OK;
+SyncResult syncProbeServer() {
+  s_sent = 0; s_carry = 0;
+  SyncResult res = openSession(nullptr);
+  if (res == SYNC_OK) wifiOff();
+  return res;
+}
+
+SyncResult syncRun(bool (*abortCb)()) {
+  s_sent = 0; s_carry = 0;
+
+  uint32_t sess0 = millis();
+  SyncResult res = openSession(abortCb);
+  if (res != SYNC_OK) return res;
 
   // バッチを回し切ったら listFiles をやり直す。1バッチで1件も削除できなかったら終了
   // （＝残りは全部持越し）。これで打ち切りによる恒久的な滞留が起きない。
@@ -336,6 +402,8 @@ SyncResult syncRun(bool (*abortCb)()) {
       String full = String(REC_DIR) + "/" + s_names[i];
       char shaHex[65];
       uint32_t bytes = 0;
+      // 読み切れない（SD の読み出しエラー）・短すぎるファイルは送らず、消さず、持ち越す。
+      // 同じバッチ内では二度と見ないので、ここで回り続けることは無い。
       if (!sha256File(full.c_str(), shaHex, &bytes) || bytes < 45) { s_carry++; continue; }
 
       uint32_t durMs = (bytes > 44) ? (uint32_t)(((uint64_t)(bytes - 44) * 1000ULL) / AUDIO_BYTES_SEC) : 0;
@@ -345,7 +413,7 @@ SyncResult syncRun(bool (*abortCb)()) {
         File f = SD.open(full.c_str(), FILE_READ);
         time_t mt = f ? f.getLastWrite() : 0;
         if (f) f.close();
-        if (!clockUnsyncAgeMs(mt, &ageMs)) {
+        if (!clockUnsyncAgeMs(s_names[i], mt, &ageMs)) {
           ageMs = 0;                                    // 不明ならヘッダを付けない
         } else {
           // FAT の mtime は最後の f_sync/close の時刻＝**録音の終了時刻**。
@@ -359,7 +427,8 @@ SyncResult syncRun(bool (*abortCb)()) {
       bool done = false;
       int lastCode = 0;
       for (int attempt = 0; attempt < FILE_RETRY_MAX && !done; attempt++) {
-        delay(RETRY_BACKOFF_MS[attempt]);   // 0 / 1s / 3s（SPEC §6.3）
+        // 0 / 1s / 3s（SPEC §6.3）。送信中のファイルは完了させる約束 (E8) なので中断は見ない
+        waitTicking(RETRY_BACKOFF_MS[attempt], nullptr);
         String ackSha;
         int code = postFile(full, s_names[i], shaHex, bytes, durMs, unsynced, ageMs, &ackSha);
         lastCode = code;
@@ -386,7 +455,7 @@ SyncResult syncRun(bool (*abortCb)()) {
       if (!done) {
         // 400 は「このファイル固有の問題」。ここでセッションを止めると、壊れた1本で
         // 以後の全ファイルが永久に送れなくなる（head-of-line ブロッキング）ので飛ばす。
-        // ローカル失敗（http.begin / SD.open）も同じくファイル固有なので同じ扱いにする。
+        // ローカル失敗（http.begin / SD.open / 送信中の読み出し）も同じくファイル固有なので同じ扱いにする。
         // 通信のエラーコード（-1/-11 など）は「次のファイルでも同じ結果」なので含めない。
         if (lastCode == 400 || lastCode <= LOCALERR_BEGIN) {
           if (lastCode == 400) markBad400(full);   // E16: .wav → .b1 → .b2 → .bad

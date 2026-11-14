@@ -37,6 +37,12 @@ static const uint32_t PREROLL_MS      = 500;     // SPEC §3.1 語頭欠け防�
 // E15: readBytes() が 0 を返し続けたら I2S を死んだとみなすまでの時間（SPEC §7 = 5秒）
 static const uint32_t I2S_STALL_MS    = 5000;
 static const uint32_t MIN_FILE_MS     = 2000;    // SPEC §3.2 最小長
+// SPEC §5.3: 電源断から復旧した .wav.rec を残す最小長。MIN_FILE_MS より短くしてあるのは、
+// 復旧対象が「物音の誤検出」ではなく「電源断で途中まで書けた発話」だからである。
+static const uint32_t RECOVER_MIN_MS  = 1000;
+// SPEC §5.2 規定1: ドレイン中に flush＋ヘッダ更新を挟む間隔。1回のコストは 32KB 書込 1回と
+// 同程度（seek 2往復＋fsync 2回）なので、チャンクごとではなく時間で間引く。
+static const uint32_t HDR_CHECKPOINT_MS = 1000;
 static const uint64_t SD_FREE_MIN     = 50ULL * 1024 * 1024;  // E2 閾値 50MB
 
 // ---- ファイル/ディレクトリ -------------------------------------------------
@@ -72,6 +78,23 @@ static const uint32_t SYNC_GRACE_MS = 1500;
 // cfg.led_mode: dark = 録音中は完全消灯（既定）/ normal = SPEC §2.1 の全パターンを表示
 static const uint8_t LED_MODE_DARK   = 0;
 static const uint8_t LED_MODE_NORMAL = 1;
+// 同期失敗の理由を sleep 前に点滅で示す時間（SPEC §7）。この間もスイッチ ON は見る（E8）。
+static const uint32_t ERR_BLINK_MS = 10000;
+// PROVISION の無入力タイムアウト（SPEC §10.2）。USB の先のホストが起動直後に勝手に何か
+// 送ってきただけ、という場合に録音しないまま居座らないための上限。
+static const uint32_t PROVISION_IDLE_MS = 5UL * 60UL * 1000UL;
+
+// ---- 未同期クロックの「時刻基準の区間」（SPEC §3.4）-------------------------
+// st.boot_count が firstBoot 以降（次の区間の手前まで）の起動は同じ時計の基準を共有する。
+// known なら「その基準の時刻 + offSec = 真の時刻」。UNSYNC ファイルの Age-Ms 算出に使う。
+// NVS に blob のまま置くので、詰め物が入らない並び（8+4+4）を崩さないこと。
+static const int CLK_SEG_MAX = 6;
+struct ClockSeg {
+  int64_t  offSec;
+  uint32_t firstBoot;
+  uint32_t known;
+};
+static_assert(sizeof(ClockSeg) == 16, "ClockSeg is stored as a raw NVS blob");
 
 // ---- NVS 設定値（SPEC §10.1）----------------------------------------------
 // 秘密はここに既定値を持たない。空なら「未プロビジョニング」(E11)。
@@ -97,6 +120,8 @@ struct Settings {
   uint8_t  wifiToS;       // cfg.wifi_to_s  既定30 秒
 
   uint64_t lastEpoch;     // clk.last_epoch
+  ClockSeg clkSeg[CLK_SEG_MAX];  // clk.segs  古い順
+  uint8_t  clkSegN;
   uint32_t bootCount;     // st.boot_count
 };
 

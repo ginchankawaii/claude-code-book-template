@@ -6,17 +6,23 @@
 #include <WiFi.h>
 #include <bootloader_random.h>
 
-static String readLineBlocking() {
-  String line;
+// 1行読む。PROVISION_IDLE_MS のあいだ1バイトも来なければ false（＝CLI を抜ける）。
+// 起動直後にホスト側（モデム探索など）が勝手に数バイト送っただけで入ってしまった場合に、
+// 誰も操作しないまま録音せずに居座り続けるのを防ぐ。
+static bool readLine(String &line) {
+  line = String();
+  uint32_t idle0 = millis();
   for (;;) {
     ledTick();
     while (Serial.available()) {
+      idle0 = millis();
       char c = (char)Serial.read();
       if (c == '\r') continue;
-      if (c == '\n') { return line; }
+      if (c == '\n') { return true; }
       if (c == 8 || c == 127) { if (line.length()) line.remove(line.length() - 1); continue; }
       if (line.length() < 4200) line += c;
     }
+    if (millis() - idle0 >= PROVISION_IDLE_MS) return false;
     delay(5);
   }
 }
@@ -46,31 +52,34 @@ static void printHelp() {
     "  test server                GET /api/v1/time を実行（TLS/HMACの確認）\n"
     "  save                       NVSへ反映（set/paste は即時保存済み。再読込を行う）\n"
     "  erase                      全消去（工場出荷状態）\n"
-    "  reboot                     再起動"));
+    "  reboot                     再起動\n"
+    "  ※ 5分間入力が無いと自動で通常動作（録音）に戻ります"));
 }
 
-// PEM 貼り付け: "." だけの行で終了
-static void doPaste(const String &key) {
+// PEM 貼り付け: "." だけの行で終了。戻り値: false = 無入力タイムアウト（何も保存しない）
+static bool doPaste(const String &key) {
   if (key != "srv.ca" && key != "dev.crt" && key != "dev.key") {
     Serial.println(F("ERR: paste は srv.ca / dev.crt / dev.key のみ"));
-    return;
+    return true;
   }
   Serial.printf("PEM を貼り付けてください。最後に \".\" だけの行で終了します (%s)\n", key.c_str());
   String pem;
   for (;;) {
-    String l = readLineBlocking();
+    String l;
+    if (!readLine(l)) return false;
     if (l == ".") break;
     pem += l;
     pem += "\n";
-    if (pem.length() > 4000) { Serial.println(F("ERR: 4000バイトを超えました。中止")); return; }
+    if (pem.length() > 4000) { Serial.println(F("ERR: 4000バイトを超えました。中止")); return true; }
   }
-  if (pem.indexOf("-----BEGIN") < 0) { Serial.println(F("ERR: PEM に見えません（-----BEGIN が無い）")); return; }
+  if (pem.indexOf("-----BEGIN") < 0) { Serial.println(F("ERR: PEM に見えません（-----BEGIN が無い）")); return true; }
   if (settingsSetBlob(key, (const uint8_t *)pem.c_str(), pem.length())) {
     Serial.printf("OK: %s に %u バイト保存\n", key.c_str(), (unsigned)pem.length());
     settingsLoad();
   } else {
     Serial.println(F("ERR: NVS書込に失敗"));
   }
+  return true;
 }
 
 static void doGenHmac() {
@@ -110,9 +119,11 @@ static void doTestServer() {
   if (!g_cfg.srvUrl.startsWith("https://")) { Serial.println(F("ERR: srv.url は https:// で始める必要があります")); return; }
   if (!g_cfg.hmacSet) { Serial.println(F("ERR: hmac.key が未設定（gen hmac を実行）")); return; }
   Serial.println(F("GET /api/v1/time ..."));
-  SyncResult r = syncRun(nullptr);     // ファイルが無ければ /time だけ実行される
+  // PROVISION は SD をマウントする前に入るので syncRun() は使えない（/rec を開けず SD_FAIL に
+  // なる）。確認したいのは TLS と HMAC だけなので、録音に触れない /time 単体の経路を使う。
+  SyncResult r = syncProbeServer();
   Serial.printf("result=%s sent=%d carry=%d\n", syncResultName(r), syncSentCount(), syncCarryCount());
-  if (r == SYNC_OK || r == SYNC_CARRY_OVER) {
+  if (r == SYNC_OK) {
     time_t lt = time(nullptr);
     Serial.printf("OK: TLS/HMAC 検証成功。server epoch=%lld\n", (long long)lt);
   }
@@ -125,7 +136,8 @@ void provisionRun() {
   printHelp();
   for (;;) {
     Serial.print(F("mindclip> "));
-    String line = readLineBlocking();
+    String line;
+    if (!readLine(line)) break;
     line.trim();
     Serial.println(line);
     if (line.length() == 0) continue;
@@ -145,7 +157,7 @@ void provisionRun() {
       if (settingsSetString(k, v)) { settingsLoad(); Serial.printf("OK: %s\n", k.c_str()); }
       else                          Serial.println(F("ERR: 未知のキー、または書込失敗"));
     }
-    else if (cmd == "paste")  { doPaste(rest); }
+    else if (cmd == "paste")  { if (!doPaste(rest)) break; }
     else if (cmd == "gen")    { if (rest == "hmac") doGenHmac(); else Serial.println(F("ERR: gen hmac")); }
     else if (cmd == "test")   { if (rest == "wifi") doTestWifi(); else if (rest == "server") doTestServer();
                                 else Serial.println(F("ERR: test wifi | test server")); }
@@ -154,4 +166,9 @@ void provisionRun() {
     else if (cmd == "reboot") { Serial.println(F("rebooting...")); Serial.flush(); delay(200); ESP.restart(); }
     else                      { Serial.println(F("ERR: 未知のコマンド。help を参照")); }
   }
+  // 無入力タイムアウト。再起動はしない: 再起動するとまた3秒の受付窓が開き、同じホストが
+  // また何か送ってきて入り直す、を繰り返しうる。そのまま通常の BOOT へ進ませる。
+  Serial.println();
+  Serial.printf("[PROV] %lu 秒間入力が無いため通常動作に戻ります\n", (unsigned long)(PROVISION_IDLE_MS / 1000));
+  ledSetPattern(LEDP_OFF);
 }

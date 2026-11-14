@@ -12,4 +12,6 @@
 #include "config.h"
 
 bool provisionShouldEnter(uint32_t windowMs);  // 起動後 windowMs 以内のシリアル受信を待つ
-void provisionRun();                           // reboot するまで戻らない
+// reboot するか、PROVISION_IDLE_MS のあいだ無入力が続くまで戻らない。
+// 戻った場合は呼び出し元がそのまま通常の BOOT を続けること。
+void provisionRun();

@@ -64,7 +64,13 @@ static char     s_pathRec[80];
 static uint32_t s_dataBytes    = 0;       // ヘッダに宣言済みのバイト数
 static uint32_t s_writtenBytes = 0;       // 実際にファイルへ書いたバイト数
 static uint32_t s_fileStartMs  = 0;
+static uint32_t s_hdrMs        = 0;       // 最後にヘッダを前進させた時刻（SPEC §5.2 規定1）
 static bool     s_wasSpeech    = false;
+// ハード上限(split_sec)で切った続きのファイルは、長さに関係なく残す（SPEC §3.2）。
+// 「2秒未満は捨てる」は物音の誤検出のための規則で、切られた発話の尻尾は本物の音声だから。
+static bool     s_contPending  = false;   // ハード分割した後、まだ無音分割ぶんの無音を挟んでいない
+static bool     s_nextCont     = false;   // s_nextStem のファイルが続きかどうか
+static bool     s_fileCont     = false;   // 現ファイルが続きかどうか
 
 // ---- 状態 ------------------------------------------------------------------
 static FaultCause s_fault      = FAULT_NONE;
@@ -225,10 +231,12 @@ static bool updateHeaderSizes(uint32_t dataBytes) {
   if (s_file.write(v, 4) != 4) return false;
   s_file.flush();
   s_dataBytes = dataBytes;
+  s_hdrMs = millis();
   return s_file.seek(44 + dataBytes);
 }
 
-static bool openWithStem(const char *stem) {
+// cont: ハード分割の直接の続きとして開くか（最小長による削除の対象から外す）
+static bool openWithStem(const char *stem, bool cont) {
   if (!s_sdMounted) { s_fault = FAULT_SD; return false; }
   if (recorderFreeBytes() < SD_FREE_MIN) { s_fault = FAULT_SD; return false; }   // E2
 
@@ -255,7 +263,9 @@ static bool openWithStem(const char *stem) {
   s_file.flush();
   freeConsume(44);
   s_dataBytes = 0; s_writtenBytes = 0; s_fileStartMs = millis(); s_fileWriteErr = false;
+  s_hdrMs = s_fileStartMs;
   s_fileOpen = true; s_closeReq = false;
+  s_fileCont = cont;
   return true;
 }
 
@@ -329,8 +339,8 @@ static void finalizeClose() {
   memcpy(pathDone, s_pathRec, plen + 1);
   pathDone[plen - 4] = 0;                       // ".wav.rec" → ".wav"
 
-  if (bytes < (MIN_FILE_MS * AUDIO_BYTES_SEC / 1000)) {
-    SD.remove(s_pathRec);                       // 2秒未満は捨てる（SPEC §3.2）
+  if (bytes < (MIN_FILE_MS * AUDIO_BYTES_SEC / 1000) && !(s_fileCont && bytes > 0)) {
+    SD.remove(s_pathRec);                       // 2秒未満は捨てる（SPEC §3.2。分割の続きは除く）
   } else if (s_fileCount++, !SD.rename(s_pathRec, pathDone)) {
     for (int n = 1; n < 100; n++) {             // 名前衝突なら連番を足して再試行
       char alt[80];
@@ -354,8 +364,21 @@ static void abortCurrentFile() {
   finalizeClose();
 }
 
-// recorderPump / recorderFinishAndClose から呼ぶ「1回分」の書込サービス
-static void serviceDrainInner(size_t chunk) {
+// recorderPump / recorderFinishAndClose から呼ぶ「1回分」の書込サービス。
+// checkpoint: この呼び出しを「ドレイン途中のヘッダ前進」に使ってよいか。
+static void serviceDrainInner(size_t chunk, bool checkpoint) {
+
+  // SPEC §5.2 規定1: 長いドレインの途中でも HDR_CHECKPOINT_MS ごとに flush＋ヘッダ更新を挟む。
+  // ディレクトリエントリのサイズは fsync でしか進まないので、これが無いと 1.4MB のバーストの
+  // 途中で電源が落ちたとき SD 上は「44バイトのファイル」に見え、復旧(§5.3)でも救えない。
+  // **この回はデータを書かない**: ヘッダ更新は seek 2往復＋fsync 2回で 32KB 書込 1回と同程度
+  // 掛かりうるので、同じ周回に重ねると DMA(90ms) の持ち時間を食い潰す。
+  if (checkpoint && s_fileOpen && s_segBytes > 0 && s_writtenBytes > s_dataBytes
+      && (millis() - s_hdrMs) >= HDR_CHECKPOINT_MS) {
+    s_file.flush();
+    if (!updateHeaderSizes(s_writtenBytes)) s_fileWriteErr = true;
+    return;
+  }
 
   if (s_fileOpen) {
     if (s_segBytes > 0) {
@@ -371,7 +394,7 @@ static void serviceDrainInner(size_t chunk) {
 
   if (!s_fileOpen) {
     if (s_bufFill > 0 && s_nextStemValid) {
-      if (openWithStem(s_nextStem)) { s_nextStemValid = false; s_segBytes = s_bufFill; }
+      if (openWithStem(s_nextStem, s_nextCont)) { s_nextStemValid = false; s_segBytes = s_bufFill; }
       else { s_bufTail = s_bufHead; s_bufFill = 0; s_segBytes = 0; }   // 開けない=FAULT。捨てる
     } else if (s_bufFill > 0) {
       s_bufTail = s_bufHead; s_bufFill = 0; s_segBytes = 0;            // 行き先が無い（起こらない）
@@ -382,10 +405,10 @@ static void serviceDrainInner(size_t chunk) {
 
 // SPEC §4.2 の計器: SPI稼働時間(D_spiの分子)と「1バーストの最大所要ms」をここで測る。
 // flush_ms_max が DMA の 90ms に近付いていたら、書込がDMAを溢れさせかけている証拠。
-static void serviceDrain(size_t chunk) {
+static void serviceDrain(size_t chunk, bool checkpoint) {
   if (!s_drainActive) return;
   uint32_t t0 = micros();
-  serviceDrainInner(chunk);
+  serviceDrainInner(chunk, checkpoint);
   uint32_t dt = micros() - t0;
   s_spiBusyUs += dt;
   uint32_t ms = dt / 1000;
@@ -422,7 +445,7 @@ static void bufAppend(const uint8_t *p, size_t n) {
     if (s_bufFill == s_bufCap) {                 // 満杯: 同期的に少しだけ吐き出す
       size_t before = s_bufFill;
       s_drainActive = true;
-      serviceDrain(DRAIN_CHUNK);
+      serviceDrain(DRAIN_CHUNK, false);          // ここは必ずデータを進める（ヘッダ更新に使わない）
       if (s_bufFill >= before) { s_overflowDrops += n; return; }   // 進めない → 新しい音を捨てる
     }
     size_t room = s_bufCap - s_bufFill;
@@ -442,14 +465,20 @@ static void bufAppend(const uint8_t *p, size_t n) {
 static void ensureTarget() {
   if (s_fault != FAULT_NONE) return;
   if (s_closeReq) {
-    if (!s_nextStemValid) { clockMakeStem(s_nextStem, sizeof(s_nextStem)); s_nextStemValid = true; }
+    if (!s_nextStemValid) {
+      clockMakeStem(s_nextStem, sizeof(s_nextStem));
+      s_nextStemValid = true;
+      s_nextCont = s_contPending; s_contPending = false;
+    }
     return;
   }
   if (s_fileOpen) return;
-  if (s_nextStemValid) { if (openWithStem(s_nextStem)) s_nextStemValid = false; return; }
+  if (s_nextStemValid) { if (openWithStem(s_nextStem, s_nextCont)) s_nextStemValid = false; return; }
   char stem[40];
   clockMakeStem(stem, sizeof(stem));
-  openWithStem(stem);
+  bool cont = s_contPending;
+  s_contPending = false;
+  openWithStem(stem, cont);
 }
 
 // ---------------------------------------------------------------------------
@@ -458,6 +487,7 @@ void recorderEnterRecording() {
   s_bufHead = s_bufTail = s_bufFill = s_segBytes = 0;
   s_preLen = 0; s_preHead = 0; s_wasSpeech = false;
   s_drainActive = false; s_closeReq = false; s_nextStemValid = false;
+  s_contPending = false; s_nextCont = false; s_fileCont = false;
   s_carryBytes = 0;
   s_i2sLastOkMs = millis();
   s_fileWriteErr = false;
@@ -499,17 +529,25 @@ void recorderPump() {
     }
     s_wasSpeech = sp;
 
+    // 無音分割と同じ長さの無音を挟んだら、次の発話はもう「続き」ではない
+    bool gapSilence = !sp && vadSilenceMs() >= (uint32_t)g_cfg.gapSec * 1000;
+    if (gapSilence) s_contPending = false;
+
     if (s_fileOpen && !s_closeReq) {
       // 分割条件1: 無音が gap_sec 続いた（ファイル内の時刻ずれを±gap_secに封じる）
-      if (!sp && vadSilenceMs() >= (uint32_t)g_cfg.gapSec * 1000) { requestClose(); continue; }
-      // 分割条件2: ハード上限 split_sec
-      if ((millis() - s_fileStartMs) >= (uint32_t)g_cfg.splitSec * 1000) { requestClose(); continue; }
+      if (gapSilence) { requestClose(); continue; }
+      // 分割条件2: ハード上限 split_sec。この先に続く音声は同じ発話の続きとして扱う
+      if ((millis() - s_fileStartMs) >= (uint32_t)g_cfg.splitSec * 1000) {
+        requestClose();
+        s_contPending = true;
+        continue;
+      }
     }
   }
   if (s_carryBytes > 0) memmove(s_chunk, (const uint8_t *)s_chunk + used, s_carryBytes);
 
   // 1周につき1回だけ、32KBを上限にSDへ流す（DMA 90ms を溢れさせない）
-  serviceDrain(DRAIN_CHUNK);
+  serviceDrain(DRAIN_CHUNK, true);
 
   // 空き容量の見張り（E2）。推定値なので f_getfree は呼ばない
   if (recorderFreeBytes() < SD_FREE_MIN) {
@@ -529,11 +567,12 @@ void recorderFinishAndClose() {
     s_drainActive = true;
     size_t beforeFill = s_bufFill;
     bool   wasOpen    = s_fileOpen;
-    serviceDrain(DRAIN_CHUNK);
+    serviceDrain(DRAIN_CHUNK, true);
     if (!s_fileOpen && s_bufFill == beforeFill && wasOpen == s_fileOpen) break;   // 進まない
   }
   s_bufHead = s_bufTail = s_bufFill = s_segBytes = 0;
   s_drainActive = false; s_nextStemValid = false;
+  s_contPending = false; s_nextCont = false;
   s_preLen = 0; s_preHead = 0;
 }
 
@@ -572,12 +611,12 @@ void recorderRecoverRecFiles() {
     uint32_t avail = (fsize > 44) ? (fsize - 44) : 0;
     // SPEC §5.2 の不変条件「宣言サイズ ≤ 実バイト数」が常に成り立つので、
     // filesize-44 は常に安全な下界である。min(header, avail) を採ってはならない:
-    // ヘッダ更新は1バーストにつき1回しか行われないため、ドレイン中に電池が切れると
-    // 実体は最大47秒あるのに hdr=0 となり、min() では 0 → 1秒未満とみなして
-    // **ファイルごと削除**してしまう（§7 共通ルール「消す方向に倒さない」に反する）。
+    // ヘッダはドレイン中 HDR_CHECKPOINT_MS ごとにしか進まないので、宣言値は実体より
+    // 最大でその間隔ぶん小さい。開いた直後なら hdr=0 のこともあり、min() では
+    // 書けていた音声を**ファイルごと削除**してしまう（§7 共通ルール「消す方向に倒さない」に反する）。
     (void)hdr;
     uint32_t fixed = avail;
-    if (fixed >= AUDIO_BYTES_SEC) {                    // 1秒以上あれば救う
+    if (fixed >= RECOVER_MIN_MS * AUDIO_BYTES_SEC / 1000) {   // 復旧は1秒以上あれば救う（§5.3）
       uint8_t v[4];
       put32(v, 36 + fixed); f.seek(4);  f.write(v, 4);
       put32(v, fixed);      f.seek(40); f.write(v, 4);
@@ -596,7 +635,7 @@ void recorderRecoverRecFiles() {
       }
     } else {
       f.close();
-      SD.remove(victims[i].c_str());                   // 1秒未満は削除（§5.3）
+      SD.remove(victims[i].c_str());                   // RECOVER_MIN_MS 未満は削除（§5.3）
     }
   }
   recorderRefreshFreeSpace();

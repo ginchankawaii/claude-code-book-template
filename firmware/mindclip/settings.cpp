@@ -63,6 +63,14 @@ void settingsLoad() {
   g_cfg.wifiToS      = clampv<uint8_t>(p.getUChar("cfg.wifi_to_s", 30), 5, 120);
 
   g_cfg.lastEpoch = p.getULong64("clk.last_epoch", 0);
+  // 長さが構造体の整数倍でない blob（別版の形式）は読まない。区間が無ければ Age-Ms を
+  // 付けないだけなので、安全側に倒れる。
+  size_t segLen = p.getBytesLength("clk.segs");
+  g_cfg.clkSegN = 0;
+  if (segLen > 0 && segLen <= sizeof(g_cfg.clkSeg) && segLen % sizeof(ClockSeg) == 0
+      && p.getBytes("clk.segs", g_cfg.clkSeg, segLen) == segLen) {
+    g_cfg.clkSegN = (uint8_t)(segLen / sizeof(ClockSeg));
+  }
   g_cfg.bootCount = p.getULong("st.boot_count", 0);
   p.end();
 }
@@ -135,6 +143,14 @@ void settingsPutEpoch(uint64_t epoch) {
   g_cfg.lastEpoch = epoch;
 }
 
+void settingsPutClockSegs() {
+  Preferences p;
+  if (!p.begin(NS, false)) return;
+  if (g_cfg.clkSegN == 0) p.remove("clk.segs");
+  else p.putBytes("clk.segs", g_cfg.clkSeg, (size_t)g_cfg.clkSegN * sizeof(ClockSeg));
+  p.end();
+}
+
 uint32_t settingsBumpBootCount() {
   Preferences p;
   if (!p.begin(NS, false)) return g_cfg.bootCount;
@@ -178,5 +194,6 @@ void settingsDump(Stream &out) {
   out.printf("cfg.vad_clamp    = %u\n", g_cfg.vadHardclamp);
   out.printf("cfg.wifi_to_s    = %u\n", g_cfg.wifiToS);
   out.printf("clk.last_epoch   = %llu\n", (unsigned long long)g_cfg.lastEpoch);
+  out.printf("clk.segs         = %u\n", (unsigned)g_cfg.clkSegN);
   out.printf("st.boot_count    = %lu\n", (unsigned long)g_cfg.bootCount);
 }

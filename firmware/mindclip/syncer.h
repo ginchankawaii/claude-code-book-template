@@ -20,8 +20,12 @@ enum SyncResult {
   SYNC_SD_FAIL          // /rec を開けない（送信対象の有無すら確認できない）
 };
 
-// abortCb: ファイル境界ごとに呼ばれ、true を返すと中断して SYNC_ABORT_SWITCH を返す。
+// abortCb: WiFi接続待ち・/time の試行の合間・ファイル境界で呼ばれ、true を返すと
+// 中断して SYNC_ABORT_SWITCH を返す。
 SyncResult syncRun(bool (*abortCb)());
+// プロビジョニングの `test server` 用。WiFi接続 → GET /api/v1/time だけを行い、TLS と HMAC が
+// 通るかを返す。**SD に触れない**（マウント前に呼ばれる）ので、録音の送信も削除もしない。
+SyncResult syncProbeServer();
 const char *syncResultName(SyncResult r);
 int  syncSentCount();
 int  syncCarryCount();

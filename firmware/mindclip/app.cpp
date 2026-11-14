@@ -127,12 +127,18 @@ static void goToDeepSleep() {
   esp_deep_sleep_start();   // ここから戻らない
 }
 
-// エラー種別に応じて sleep 前に10秒だけ理由を点滅で示す（SPEC §7）
-static void blinkThenSleep(LedPattern p) {
+// エラー種別に応じて sleep 前に10秒だけ理由を点滅で示す（SPEC §7）。
+// 点滅中もスイッチを見る。ON に戻されたら sleep せず true を返す（E8: 呼び出し元が録音へ戻す）。
+// 見ないと「同期失敗 → すぐ録音したい」ときに最大10秒ぶん録り逃す。
+static bool blinkThenSleep(LedPattern p) {
   ledSetPattern(p);
   uint32_t t0 = millis();
-  while (millis() - t0 < 10000) { ledTick(); delay(10); }
+  while (millis() - t0 < ERR_BLINK_MS) {
+    ledTick();
+    if (swReadBlocking()) return true;       // 40ms 止まる。これが点滅の刻みを兼ねる
+  }
   goToDeepSleep();
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -274,29 +280,33 @@ static void stateSyncing() {
   recorderRefreshFreeSpace();
   mcLogf("[SYNC] %s sent=%d carry=%d", syncResultName(r), syncSentCount(), syncCarryCount());
 
+  // 理由の点滅中にスイッチが ON に戻ったら、E8 と同じ手順で録音へ戻る
+  // （無線は syncRun() が落とし済み。SD はマウントしたまま）。
+  bool backOn = false;
   switch (r) {
     case SYNC_ABORT_SWITCH:                        // E8: 録音へ復帰
-      resumeRecording();
-      return;
+      backOn = true;
+      break;
     case SYNC_AUTH_FAIL:                           // E6
-      blinkThenSleep(LEDP_ERR5);
-      return;
+      backOn = blinkThenSleep(LEDP_ERR5);
+      break;
     case SYNC_NO_WIFI:                             // E4
     case SYNC_SERVER_FAIL:                         // E5
     case SYNC_CARRY_OVER:
-      blinkThenSleep(LEDP_ERR2);
-      return;
+      backOn = blinkThenSleep(LEDP_ERR2);
+      break;
     case SYNC_SD_FAIL:                             // /rec が読めない = E1相当。無警告に寝ない
-      blinkThenSleep(LEDP_FAULT);
-      return;
+      backOn = blinkThenSleep(LEDP_FAULT);
+      break;
     case SYNC_NOT_PROVISIONED:                     // E11
-      blinkThenSleep(LEDP_ERR5);
-      return;
+      backOn = blinkThenSleep(LEDP_ERR5);
+      break;
     case SYNC_OK:
     default:
       goToDeepSleep();
       return;
   }
+  if (backOn) resumeRecording();
 }
 
 // ---------------------------------------------------------------------------
@@ -385,7 +395,8 @@ void setup() {
   // PROVISION: 起動後3秒以内にUSBシリアル受信があればCLIへ。
   // ただし EXT0（スイッチON）で起きたときは待たない — 待つと毎回3秒ぶん録り逃す。
   uint32_t provWin = (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) ? 0 : 3000;
-  if (provisionShouldEnter(provWin)) provisionRun();        // reboot するまで戻らない
+  // provisionRun() が戻るのは無入力タイムアウトだけ。そのまま通常の BOOT に進む。
+  if (provisionShouldEnter(provWin)) provisionRun();
 
   s_state = ST_BOOT;
   stateBoot();
@@ -400,6 +411,6 @@ void loop() {
     case ST_BOOT:      stateBoot();      break;
     case ST_FLUSHING:  s_state = ST_RECORDING; break;   // 書込は recorderPump 内で完結する
     case ST_SLEEP:     goToDeepSleep();  break;
-    case ST_PROVISION: provisionRun();   break;
+    case ST_PROVISION: provisionRun(); s_state = ST_BOOT; break;
   }
 }
