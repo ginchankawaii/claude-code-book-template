@@ -1428,7 +1428,9 @@ MS_RING_T = float(os.environ.get("MINDCLIP_MS_RING_T", "0.6"))      # リング�
 MS_RING_FIT = 0.5           # 溝の径方向の余裕 (片側 0.25)
 MS_RING_PROUD = 0.1         # リングを板の面からわずかに出す (磁石面を確実にケースへ当てる)
 MS_WEB = 1.0                # リング溝の天井 / 磁石ポケットの底に残す肉
-MS_EDGE = 1.6               # リング溝の外側に残す壁
+MS_EDGE = 1.0               # リング溝の外側に残す壁。iPhone 17 Pro + MagSafe ケースの実測で
+#   リング上端〜カメラ台座 (段差 4mm) のすき間が 3mm しかないため細くしてある
+MS_CAMERA_GAP = 3.0         # リング外周からカメラ台座までのすき間 (実測)
 MS_T = round(max(MS_RING_T - MS_RING_PROUD, MAG_T + 0.2) + MS_WEB, 2)   # 板厚 (リム除く)
 MS_DISC_R = round(MS_RING_OD / 2 + MS_RING_FIT / 2 + MS_EDGE, 2)        # 円板の半径
 
@@ -1442,6 +1444,12 @@ def check_magsafeplate():
             f"body magnet pocket (r={r:.1f}) overlaps the MagSafe ring groove "
             f"(inner r={MS_RING_ID / 2:.1f})")
     assert MS_RING_PROUD < MS_RING_T, "ring thinner than its protrusion"
+    # 正立時、板の最上端 (円板) と本体の座の上辺がカメラ台座に 1.5mm 以上届かないこと
+    _cam = MS_RING_OD / 2 + MS_CAMERA_GAP
+    _top = max(MS_DISC_R, SP_OUT_H / 2)
+    assert _cam - _top >= 1.5 - 1e-6, (
+        f"plate top {_top:.1f} is within 1.5mm of the camera plateau at {_cam:.1f}")
+    print(f"[magsafe] clearance to camera plateau when upright: {_cam - _top:.2f} mm")
     print(f"[magsafe] plate dia {2 * MS_DISC_R:.1f} + body nest {SP_OUT_W:.1f} x {SP_OUT_H:.1f}, "
           f"thickness {MS_T:.1f} (+rim {SP_RIM_H}) | ring {MS_RING_OD:.0f}/{MS_RING_ID:.0f} x "
           f"{MS_RING_T:.1f} | stack on phone case: {MS_T + MS_RING_PROUD + TOTAL_D:.1f} mm")
