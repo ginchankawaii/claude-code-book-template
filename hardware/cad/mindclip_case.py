@@ -4,18 +4,21 @@
 MindClip DIY — クリップ型音声ロガー筐体 パラメトリックCADモデル (CadQuery 2.8)
 
 バリアント (環境変数 MINDCLIP_VARIANT):
-  - allday (既定) : LiPo 802530 (680mAh, 実寸31x25x8)。外形 39.0 x 49.4 x 14.6 mm
-  - slim          : LiPo 502530 (500mAh)。外形 39.0 x 49.4 x 12.9 mm
+  - allday (既定) : LiPo 802530 (680mAh, 実測 32.0x25.0x8.0)。外形 40.0 x 49.4 x 14.6 mm
+  - slim          : LiPo 502530 (500mAh)。外形 40.0 x 49.4 x 13.6 mm
 
 基板オプション (環境変数 MINDCLIP_PCB, v1.5 で追加):
-  - none (既定) : 基板なし = 採用案 A-1 (ハーネス v1.5)。**v1.4 と完全に同一形状**
-                  (STL がバイト一致することを回帰確認済み)。SCHEMATIC.md §5.5 が
-                  確定した JST 嵌合体の置き場所を harness_jst として毎回検算する。
-  - sense       : MC-SENSE-A (10.0 x 15.6 x 0.8t) を左ポケット床に置く。
-                  allday は外形不変 (39.0 x 49.4 x 14.6)。slim は J1 の天井余裕が
-                  足りず 14.2mm に膨らむ = 非推奨。
-  - carrier     : MC-CARRIER-A (34.2 x 21.0 x 0.8t)。外形 39.0 x 51.2 x 14.9 mm。
-                  XIAO 位置決めリブ一式を基板シェルフ + 取付ボス2本に置換する。
+  - none (既定) : 基板なし = 採用案 A-1 (ハーネス)。**いま実行できるのはこの構成だけ**
+                  (allday/none と slim/none の 2 構成)。SCHEMATIC.md §5.5 が確定した
+                  JST 嵌合体の置き場所を harness_jst、ピグテールの継ぎ足し (AWG28 への
+                  継ぎ目 2 か所) を harness_splice として毎回検算する。
+  - sense       : MC-SENSE-A (10.0 x 15.6 x 0.8t) を左ポケット床に置く v2 検討用。
+                  v1.8 の実測スイッチ (本体高さ 4.0) でポケットが不足するため、
+                  **読み込み時にメッセージを出して終了する** (基板の再設計待ち)。
+  - carrier     : MC-CARRIER-A (34.2 x 21.0 x 0.8t) に XIAO を直はんだする v2 検討用。
+                  v1.8 で内寸幅が 36.8 になり XIAO が 2.0mm 右へ動いたのに、基板は
+                  左アンカーのまま (XIAO フットプリント右端 x36.4) で食い違うため、
+                  **読み込み時にメッセージを出して終了する** (基板外形の再生成待ち)。
 
   出力は ../stl/<tag>/ と ../renders/<tag>/ (tag = variant または variant_pcb)。
 
@@ -36,7 +39,7 @@ MindClip DIY — クリップ型音声ロガー筐体 パラメトリックCAD�
     に 2.4mm のリード曲げチャネルを確保。x/y 位置決めリブ + リッド側押さえリブで拘束。
   - v1.5 rev2: 「箱にならない部品」を AABB でモデル化した (sw_terms = スライドスイッチの
     端子3本+はんだ+φ3熱収縮 / led_leads = 90度に曲げた LED リード+220Ω+継ぎ目)。
-    これに伴い JST-PH2.0 嵌合体を左内壁密着・y28.6..39.6 へ、LED 窓を x6.9 → 9.8 へ
+    これに伴い JST 嵌合体を左内壁密着・y28.6..39.6 へ、LED 窓を x6.9 → 9.8 へ
     移した (旧配置はスイッチ端子と slim で 0.00mm、LED リードとは 1.0〜2.0mm の実干渉)。
     LED 窓は φ3.2 → φ3.4 (FDM の穴縮み 0.1〜0.3mm に対する救済。MECHANICAL.md §5)。
   - v1.3: 電池厚をバリアント化したのに伴い、電池と右リッド lip が干渉したため内寸幅を
@@ -49,19 +52,26 @@ MindClip DIY — クリップ型音声ロガー筐体 パラメトリックCAD�
   z=0 が背面(服に当たる面)、z+ が正面(リッド側)
 
 実行:
-  python3 mindclip_case.py                       # allday / 基板なし (v1.5 採用構成)
-  MINDCLIP_PCB=sense python3 mindclip_case.py    # allday / サテライト基板
-  MINDCLIP_PCB=carrier python3 mindclip_case.py  # キャリア基板 (筐体作り直し)
+  python3 mindclip_case.py                       # allday / 基板なし (採用構成)
+  MINDCLIP_VARIANT=slim python3 mindclip_case.py # slim / 基板なし
+  (MINDCLIP_PCB=sense / carrier は現在どちらもメッセージを出して終了する)
   → ../stl/*.stl と ../renders/*.png を生成し、干渉チェック(assert)と
     watertight 検証結果をログ出力する。
 
 寸法出典:
   - XIAO ESP32S3 基板 21.0 x 17.8 mm : Seeed 公式値 (Web検証済み)
-  - Sense拡張ボード込みスタック総厚 7.5 mm (カメラ除く) : **assumption** (Web未検証)
-  - PDMマイク位置 : 拡張ボード上、正面向き : **assumption** → 上面開口+前面キャビティで導音
+  - Sense拡張ボード込みスタック総厚 8.2 mm (カメラ除く) : v1.8 実測 (MEASUREMENTS.md M1)
+  - USB-C 中心 : スタック下面から 2.9 mm : v1.8 実測 (M2)
+  - PDMマイク位置 : 拡張ボード上、正面向き : **assumption** → 上面開口+前面キャビティで導音。
+    穴の x は MIC_X_ON_BOARD (基板左端からの距離) で持つ。**基板上の実位置は未実測 (M9)**
+  - XIAO 基板のコーナー R : XIAO_CORNER_R = 1.9 : **assumption / 要実測**
   - LiPo 502530 : 30 x 25 x 5.0 mm (公称)
-  - LiPo 802530 : 31 x 25 x 8.0 mm (採用品 HXJNLDC のメーカー仕様表。商品画像で確認済み)
-  - SS-12D00 : 本体 8.7 x 3.7 mm (Web検証済み)、高さ3.5 mm・レバー突出2 mm : **assumption**
+  - LiPo 802530 : 32.0 x 25.0 x 8.0 mm / 11 g (採用品 HXJNLDC。v1.8 実測 M3。
+    電池側コネクタは 1.25mm ピッチ 2P)
+  - SS-12D00G3 : 本体 8.7 x 3.7 mm (Web検証済み)、本体高さ 4.0 mm・レバー突出 3.0 mm
+    (v1.8 実測 M6)。レバーの幅 (スライド方向) SW_LEVER_W = 2.0 : **assumption / 要実測**
+  - LED OSR5JA3Z74A : ツバ φ3.4 x 0.5、ツバ上面〜ドーム先端 4.5 mm (v1.8 実測 M8)
+  - JST 嵌合体 (ピグテール + 電池プラグ) : 5.8 x 11.0 x 4.5 : **assumption / 要実測 (M4)**
   - ネオジム磁石 φ6 x 2 mm x 4個
 """
 import os
@@ -102,10 +112,16 @@ else:
     BAT_W, BAT_H, BAT_T = 32.0, 25.0, 8.0      # LiPo 802530 (680mAh, 実測32mm)
     BAT_LABEL, BAT_MAH = "LiPo 802530 (680mAh)", 680
 XIAO_W, XIAO_H = 21.0, 17.8                     # XIAO ESP32S3 基板
+XIAO_CORNER_R = 1.9                             # 基板コーナー R : **assumption / 要実測**
+                                                #   (右上コーナーの逃げは R=0 の角ばった基板でも
+                                                #    入るように切ってある。check_xiao_fit 参照)
 XIAO_STACK_T = 8.2                              # Sense拡張ボード込み総厚 (v1.8 実測 M1。旧仮定 7.5)
 USB_PROTRUDE = 1.3                              # USB-C の基板端からの突出
 SW_L, SW_W, SW_H = 8.7, 3.7, 4.0                # SS-12D00 本体 (高さ v1.8 実測 M6。旧仮定 3.5)
 SW_LEVER = 3.0                                  # レバー突出 (SS-12D00**G3** = レバー 3mm。v1.8 実測 M6)
+SW_LEVER_W = 2.0                                # レバーの幅 (スライド方向) : **assumption / 要実測 (M6)**
+SW_TRAVEL = 2.0                                 # レバーのスライド量 (SS-12D00 公称)
+SW_SLOT_L, SW_SLOT_W = 5.0, 2.2                 # 上面のレバースロット (スライド方向 x 厚み方向)
 LED_D = 3.0                                     # 3mm LED
 MAG_D, MAG_T = 6.0, 2.0                         # ネオジム磁石 φ6 x 2
 MAG_FIT = 0.2                                   # 圧入ポケット径方向余裕 (φ6.2)
@@ -115,20 +131,36 @@ MAG_PITCH = 18.0                                # 磁石2個の中心間距離
 # --- 基板オプション (v1.5, 環境変数 MINDCLIP_PCB) ---------------------------
 # v1.5 の採用構成は「案A-1 = 基板を作らない」(pcb/LAYOUT.md §0)。既定値 none は
 # v1.4 と完全に同一形状で、基板を入れる場合だけ筐体側のフィーチャが増える。
-#   none    (既定) : 基板なし。JST-PH2.0 ピグテール + 空中配線 (はんだ10点)。
-#                    §5.5 で確定した JST 嵌合体の置き場所を harness_jst として検算する。
-#   sense   : MC-SENSE-A (10.0 x 15.6 x 0.8t) を左ポケット床に寝かせる。
-#             VBUS検出 + 電池電圧監視。allday 推奨 (slim は J1 の天井余裕が足りない)。
-#   carrier : MC-CARRIER-A (34.2 x 21.0 x 0.8t) に XIAO をカステレーション直はんだ。
-#             筐体は作り直し (外形高さ 49.4 -> 51.2 / 奥行き 14.6 -> 14.9)。
-# 切替: MINDCLIP_PCB=sense python3 mindclip_case.py
+#   none    (既定) : 基板なし。JST ピグテール (電池側プラグと同じ 1.25mm ピッチ 2P) +
+#                    空中配線 (はんだ12点 = 従来の10点 + ピグテールを AWG28 へ継ぐ2点)。
+#                    §5.5 で確定した JST 嵌合体の置き場所を harness_jst、継ぎ目2か所の
+#                    置き場所を harness_splice として検算する。
+#   sense   : MC-SENSE-A (10.0 x 15.6 x 0.8t) を左ポケット床に寝かせる v2 検討用。
+#             実測スイッチでポケットが不足するため、下の sense ブロックで終了する。
+#   carrier : MC-CARRIER-A (34.2 x 21.0 x 0.8t) に XIAO をカステレーション直はんだする
+#             v2 検討用。基板外形が IW 36.8 に追従していないため、ここで終了する。
+# いま実行できるのは allday/none と slim/none の 2 構成だけ。
 PCB = os.environ.get("MINDCLIP_PCB", "none").strip().lower()
 if PCB not in ("none", "sense", "carrier"):
     raise SystemExit(f"MINDCLIP_PCB は none / sense / carrier のいずれか (指定値: {PCB})")
+if PCB == "carrier":
+    # 内寸幅を 36.8 に広げた結果、右詰めの XIAO は筐体側で x17.4..38.4 に居るが、
+    # MC-CARRIER-A (34.2 x 21.0) は左アンカーの固定外形で、基板上の XIAO フットプリントは
+    # x15.4..36.4 のまま。このまま STL を出すと「CAD 上の XIAO」と「基板が置く XIAO」が 2.0mm
+    # 食い違い、USB-C レセプタクルが座ぐりの約 1.5mm 奥に引っ込む筐体が出来てしまう。
+    # 誤解を招く STL を出さないよう、sense と同じく読み込み時に止める (下の carrier 用の
+    # コードは v2 で基板を作り直すときの出発点として残してある)。
+    raise SystemExit(
+        "MINDCLIP_PCB=carrier: MC-CARRIER-A (34.2x21.0) の基板外形・XIAO フットプリントが "
+        "v1.8 の内寸幅 IW=36.8 に追従していません (XIAO は筐体側 x17.4〜38.4、基板側 x15.4〜36.4 で "
+        "2.0mm ずれ、USB-C が座ぐりの奥に約1.5mm 引っ込みます)。"
+        "基板外形とフットプリントを IW 36.8 用に作り直してから使ってください (v2 で再設計)。"
+        "いま実行できる構成は allday/none と slim/none の 2 つです")
 PCB_T = 0.8            # 基板厚 (JLCPCB 標準厚。pcb/LAYOUT.md §3)
 PCB_CLR = 0.40         # 基板外形とポケット壁の片側クリアランス
                        #   FDM ポケットは 0.1〜0.3mm 小さく出る (§5) + PCB外形公差 ±0.2mm
-J1_BODY_Z = 7.5        # JST PH2.0 トップエントリの嵌合体高さ (基板上面から) : assumption
+J1_BODY_Z = 7.5        # 基板実装 JST (v2 検討時は PH2.0) トップエントリの嵌合体高さ : assumption
+                       #   ※ v1 の電池プラグは 1.25mm ピッチ。v2 で基板を作るときはコネクタ選定からやり直す
 J1_BEND_Z = 2.4        # 嵌合体上に要る電線曲げ代 = AWG28 (φ1.2) の最小曲げ半径 2xOD
 J1_PIN_Z = 0.8         # THT ピン + はんだフィレットの基板裏突出 : assumption
 PCB_SHELF = 0.8 if PCB == "carrier" else 0.0    # 基板下の逃げ (キャリアのみ)
@@ -152,7 +184,7 @@ XIAO_LIFT = (PCB_SHELF + PCB_T) if PCB == "carrier" else 1.4
 BOSS_H = 1.4                                    # 磁石ボスの内面からの突出 (電池はこの上に載る)
 # 内寸奥行き = 「XIAOスタック」「磁石ボス+電池」「基板上の J1 嵌合体+曲げ代」の最大 +
 #              リッド内面クリアランス。
-# XIAO側: リフト1.4 + スタック7.5 + 余裕0.6 = 9.5
+# XIAO側: リフト1.4 + スタック8.2 + 余裕0.6 = 10.2
 # 電池側: ボス1.4 + BAT_T + リブ逃げ1.8 (押さえリブのギャップ1.0 + リブ肉厚0.8)
 # 基板側: (基板上面 + 嵌合体7.5 + 曲げ代2.4) - WALL   ← pcb/LAYOUT.md §4.2 と同じ式
 _J1_TOP = PCB_Z1 + J1_BODY_Z                    # J1 嵌合体の上端 z
@@ -173,42 +205,46 @@ M_TOP = 1.8 if PCB == "carrier" else 0.6        # XIAO上端マージン
 IH = M_BOT + BAT_H + GAP_BX + XIAO_H + M_TOP    # 内寸高さ = 46.2 (carrier: 48.0)
 
 # --- 外形 ---
-W = IW + 2 * WALL                               # 35.8
+W = IW + 2 * WALL                               # 40.0
 H = IH + 2 * WALL                               # 49.4
-BODY_D = WALL + ID                              # 11.1 (body 単体奥行き)
-TOTAL_D = BODY_D + LID_T                        # 12.9 (組立時奥行き)
+BODY_D = WALL + ID                              # allday 12.8 / slim 11.8 (body 単体奥行き)
+TOTAL_D = BODY_D + LID_T                        # allday 14.6 / slim 13.6 (組立時奥行き)
 R_OUT = 4.0                                     # 外形コーナーR
 R_IN = 2.5                                      # 内寸コーナーR
 
 # --- 内部レイアウト (絶対座標, body基準) ---
-CX = W / 2.0                                    # 17.9
+CX = W / 2.0                                    # 20.0
 # バッテリー: 下段・背面側・右詰め (磁石ボスの上に載る → 重心をクランプ側に寄せる)
 #   502530 のリード/タブは長さ30mm方向の端面 (25mm幅の面) から出る → 左端面から出射し、
 #   左側の BAT_LEAD_CH チャネルを上へ回して XIAO 裏面の BAT パッドへ配線する。
 BAT_LEAD_CH = 2.4                             # 左側リード曲げチャネル幅 (AWG28 x2)
 bat = (WALL + BAT_LEAD_CH, WALL + M_BOT,        # x0,y0  (4.0, 3.2)
-       WALL + BAT_LEAD_CH + BAT_W, WALL + M_BOT + BAT_H,   # x1,y1 (34.0, 28.2)
-       WALL + BOSS_H, WALL + BOSS_H + BAT_T)    # z0,z1  (3.0 .. 8.0)
+       WALL + BAT_LEAD_CH + BAT_W, WALL + M_BOT + BAT_H,   # x1,y1 (allday 36.0 / slim 34.0, 28.2)
+       WALL + BOSS_H, WALL + BOSS_H + BAT_T)    # z0,z1  (3.0 .. allday 11.0 / slim 8.0)
 # XIAO スタック: 上段・右詰め (USB-C を右側面へフラッシュ)。
 #   コーナーシート4個 (h=XIAO_LIFT) の上に載せ、裏面はんだの逃げ空間を確保。
 xiao = (WALL + IW - XIAO_W, bat[3] + GAP_BX,
         WALL + IW, bat[3] + GAP_BX + XIAO_H,
-        WALL + XIAO_LIFT, WALL + XIAO_LIFT + XIAO_STACK_T)  # z 3.0 .. 10.5
+        WALL + XIAO_LIFT, WALL + XIAO_LIFT + XIAO_STACK_T)  # x17.4..38.4 / y29.4..47.2 / z3.0..11.2
 # 磁石: バッテリー背後の背面壁ボス内 (筐体中心 CX 基準 → backplate と共通)
 MAG_Y = (bat[1] + bat[3]) / 2.0                 # 15.7 (バッテリー中心)
 MAG_XS = (CX - MAG_PITCH / 2, CX + MAG_PITCH / 2)
 # スイッチ: 上面左 (XIAO の左の空間)。上壁の浅い凹みにはめて接着
 SW_RECESS = 0.7                                 # 上壁内面の位置決め凹み深さ
-_swz0 = WALL + (ID - SW_W) / 2.0                # 4.5
+_swz0 = WALL + (ID - SW_W) / 2.0                # allday 5.35 / slim 4.85
 sw = (4.0, WALL + IH - (SW_H - SW_RECESS), 4.0 + SW_L, WALL + IH + SW_RECESS,
-      _swz0, _swz0 + SW_W)                      # z 4.5 .. 8.2
+      _swz0, _swz0 + SW_W)                      # x4.0..12.7 / y44.5..48.5 / z allday 5.35..9.05
+# 上壁内面の位置決め凹み (build_body で cut する。スイッチの x / z はこの凹みが決める)
+sw_recess_pocket = (sw[0] - 0.2, WALL + IH, sw[2] + 0.2, WALL + IH + SW_RECESS,
+                    sw[4] - 0.2, sw[5] + 0.2)
 # スイッチ端子 (v1.5 rev2 で追加)。旧 CAD は本体 8.7x3.7x3.5 の箱しか持たず、
 #   -y 側に出る3本の端子と、そこに付くはんだ継ぎ目 + 熱収縮 (φ3) を一切モデル化して
 #   いなかった。このため左ポケットの部品を y42 まで上げても check_layout は素通りした。
 #   SS-12D00 の端子は本体の -y 面から 2.54mm ピッチで3本出る (本体中心振り分け)。
 #   使うのは SCHEMATIC.md §1.4 のとおり 中央 (SW1.2 / 青) と **左端** (SW1.1 / 黒2本)。
-#   右端 (XIAO 側) は根元から切り落とす: 残すと φ3 熱収縮の包絡が xiao_stops[1]
-#   (x12.4..) まで 0.01mm しか離れない (README 手順4)。
+#   右端 (XIAO 側) は根元から切り落とす: 残すと φ3 熱収縮の包絡が x12.5 まで広がり、
+#   スイッチ右端の挟みリブ (sw_ribs[1], x13.0..) まで 0.5mm しか残らず、v1.8 で追加した
+#   継ぎ目・電線の通り道 (x11.8..14.4 の帯) も塞ぐ (README 手順4)。
 SW_TERM_L = 3.5                                 # 端子長 (assumption。流通品は 3.0〜3.5)
 SW_TERM_PITCH = 2.54                            # 端子ピッチ
 SW_JOINT_R = 1.6                                # はんだ継ぎ目 + φ3 熱収縮チューブの半径
@@ -216,14 +252,17 @@ _sw_cx = (sw[0] + sw[2]) / 2.0                  # 端子列の中心 x = 8.35
 _sw_cz = (sw[4] + sw[5]) / 2.0                  # 端子の z 中心 (本体中央)
 sw_terms = (_sw_cx - SW_TERM_PITCH - SW_JOINT_R, sw[1] - SW_TERM_L - 1.0,
             _sw_cx + SW_JOINT_R, sw[1],
-            _sw_cz - SW_JOINT_R, _sw_cz + SW_JOINT_R)   # x4.21..9.95 / y40.5..45.0
-# --- JST-PH2.0 嵌合体の置き場所 (v1.5 採用構成 = 基板なし A-1) --------------
+            _sw_cz - SW_JOINT_R, _sw_cz + SW_JOINT_R)   # x4.21..9.95 / y40.0..44.5
+# --- JST 嵌合体の置き場所 (採用構成 = 基板なし A-1) -------------------------
+#   電池側プラグは 1.25mm ピッチ 2P (実測)。ピグテールはそれと嵌合する同系統品。
+#   嵌合体の外形 HARNESS_JST_XYZ は旧 2.0mm 品を想定した assumption のままで、
+#   購入済みの 1.25mm ピグテールが届いたら M4 で測って書き換える (それまで据え置き)。
 #   SCHEMATIC.md §5.5。長辺 11.0mm は必ず Y方向 (X方向だと xiao_stops[0] に 1.5mm 食い込む)。
 #   v1.5 rev2 で座標を変更した (旧: x3.0..8.8 / y31.0..42.0):
 #     - x を左内壁 (WALL=1.6) に密着させた。ホットボンドで左内壁へ点付けする以上
 #       1.4mm 浮かせる意味がなく、LED リード帯との x 隙間を稼げる。
-#     - y1 を 42.0 → 39.6 に下げた。旧位置は SS-12D00 の端子 (下記 sw_terms,
-#       y40.5..45.0) と slim で分離距離 0.00mm、はんだ継ぎ目 + 熱収縮を入れると
+#     - y1 を 42.0 → 39.6 に下げた。旧位置は SS-12D00 の端子 (上記 sw_terms,
+#       現在 y40.0..44.5) と slim で分離距離 0.00mm、はんだ継ぎ目 + 熱収縮を入れると
 #       -1.35mm の実干渉だった (旧 CAD は端子を持っていなかったので素通りしていた)。
 HARNESS_JST_XYZ = (5.8, 11.0, 4.5)              # 嵌合体 X x Y x Z (assumption / 要実測)
 HARNESS_JST_X0 = WALL                           # 左内壁に密着 (点付け面)
@@ -232,6 +271,22 @@ harness_jst_x1 = HARNESS_JST_X0 + HARNESS_JST_XYZ[0]        # 7.4 (LED の x 基
 harness_jst = (HARNESS_JST_X0, HARNESS_JST_Y0,
                harness_jst_x1, HARNESS_JST_Y0 + HARNESS_JST_XYZ[1],
                WALL, WALL + HARNESS_JST_XYZ[2]) if PCB == "none" else None
+# --- ピグテールの継ぎ目 (v1.8 で標準手順化) ---------------------------------
+#   購入したピグテールの電線 (AWG26 級、被覆外径 1.3mm 超の可能性) は XIAO の下
+#   (リフト 1.4mm、通せる外径は 1.3mm まで) を通せないかもしれない。そこで標準手順として
+#   ピグテールの線をコネクタ根元から約 10mm / 約 15mm で切り、細い AWG28 を継ぎ足す
+#   (README 手順5)。継ぎ目は「はんだ + φ3 熱収縮」で φ2.5 x 長さ 10mm 程度の硬い塊になる。
+#   置き場所: コネクタの口 (y39.6 側) から出た線を折り返し、**JST 嵌合体の真上**に 2 本
+#   並べて寝かせる (Y方向)。ここは嵌合体上面 z6.1 からフタ内面まで allday 6.7 / slim 5.7mm
+#   空いており、スイッチ端子 (y40.0〜)・LED (x8.1〜)・電池 (y〜28.2)・フタの lip (z 高い側) の
+#   どれとも 0.3mm 以上離れる (check_layout の soft-part ループで全部品と総当たり)。
+#   継ぎ目を置いてはいけない場所: XIAO の下 (基板が浮く) と、ストップリブの切れ目
+#   (x14.4..17.25 / y35..40 = 電線が XIAO の下へ入る唯一の通り道)。
+SPLICE_D, SPLICE_L = 2.5, 10.0                  # 継ぎ目 1 本の外径 x 長さ (熱収縮後)
+harness_splice = ((harness_jst[0] + 0.3, harness_jst[1] + 0.3,
+                   harness_jst[0] + 0.3 + 2 * SPLICE_D, harness_jst[3] - 0.3,
+                   harness_jst[5] + 0.3, harness_jst[5] + 0.3 + SPLICE_D)
+                  if harness_jst is not None else None)
 # LED: 正面リッドの窓。左上ゾーン (スイッチの下、XIAOの左)
 #   v1.5: 絶対値直書き (6.9, 36.0) をやめ相対値にした
 #   (M_TOP/GAP_BX/電池厚を変えたときに窓だけ追従せず干渉する潜在バグの解消)。
@@ -259,7 +314,12 @@ LED_POS = (harness_jst_x1 + LED_CLR_X + (LED_D / 2 + 0.1),
 #   副次効果: 穴の奥に光源があるので、正面以外の角度からは光がほぼ見えなくなる。
 LED_PROTRUDE_STD = 2.7      # 標準3mm LED のドーム突出量 (ツバをリッド内面に当てた場合)
 LED_SINK = 0.2              # 面一化後にドーム先端を外面から沈める量
-LED_FLANGE_R, LED_FLANGE_T = 1.95, 1.0          # ツバ φ3.9 x 1.0 (一般的な3mm LED)
+LED_FLANGE_R, LED_FLANGE_T = 1.7, 0.5           # ツバ φ3.4 x 0.5 (OSR5JA3Z74A, v1.8 実測 M8)
+#   実測のツバ φ3.4 は窓 (φ3.4) と同径で、ツバではスリーブ下端に止まらない個体がある。
+#   組立は「フタを伏せ、ドーム先端が机に当たるまで押し込む」方式 (README 手順10-2) なので、
+#   実際の LED はここでモデル化した位置 (ツバ上面 = スリーブ下端、ドーム先端が外面の
+#   LED_SINK=0.2mm 内側) より最大 0.2mm フタ側 (z+) に付く。つまり led / led_flange /
+#   led_leads の z は**リード帯が最も床・JST 側へ下がる最悪ケース**で、干渉検査は安全側。
 _LED_LEAD_BOTTOM_STD = BODY_D - 4.0 - LED_LEAD_DROP
 #   基板構成 (sense/carrier, v2・発注禁止の検討用) は LED の真下に J1 / 0805 部品が来るため
 #   沈められない (沈めると led_flange<->pcb_j1 / led_leads<->pcb_smd_vbus が干渉する)。
@@ -287,10 +347,20 @@ USB_CY = (xiao[1] + xiao[3]) / 2.0              # 38.3
 USB_OPEN_W, USB_OPEN_H = 10.5, 4.8              # y方向 x z方向
 # v1.8: USB-C 開口の中心を「スタック下面 (BAT パッド面) から 2.9mm」に置く (実測 M2: A4.50 − B3.20/2)。
 USB_CENTER_ABOVE_STACK = 2.9
-USB_Z0 = WALL + XIAO_LIFT + USB_CENTER_ABOVE_STACK - 4.8 / 2.0   # 3.5 (旧 3.8 = 中心 3.2)
+USB_Z0 = WALL + XIAO_LIFT + USB_CENTER_ABOVE_STACK - USB_OPEN_H / 2.0   # 3.5 (開口 z3.5..8.3)
 USB_CB_W, USB_CB_H, USB_CB_D = 13.0, 8.0, 0.8   # プラグ逃がし座ぐり (オーバーモールド対応)
-# マイク開口: 上面。Sense拡張ボード上面 (z=10.5) 近傍の高さに合わせる
-MIC_Z = xiao[5] - 0.9                           # 9.6 (開口 z 8.85..10.35)
+# マイク開口: 上面。Sense拡張ボード上面 (z=11.2) 近傍の高さに合わせる
+MIC_Z = xiao[5] - 0.9                           # 10.3 (開口 z 9.55..11.05)
+MIC_HOLE_R = 0.75                               # φ1.5
+# 穴の x は XIAO 基板の左端 (USB と反対側の端 = xiao[0]) からの距離で持つ。
+#   旧版は絶対値 22.0 / 25.5 / 29.0 の直書きで、設計時 (IW 34.8、XIAO x15.4..36.4) には
+#   基板の長さ方向の中央 (10.5) ±3.5 の少し手前 = 左端から 6.6 / 10.1 / 13.6 だった。
+#   IW を 36.8 に広げて XIAO が 2.0mm 右へ動いても穴だけ取り残されていたため相対値に改めた
+#   (穴は +2.0mm 動いて x24.0 / 27.5 / 31.0)。
+#   **拡張ボード上のマイクの実位置は未実測** (MEASUREMENTS.md M9)。測ったら中央の値を
+#   実測値に書き換える (3 穴は ±3.5mm の振り分け)。
+MIC_X_ON_BOARD = (6.6, 10.1, 13.6)              # 基板左端からの距離 : **assumption / 要実測 (M9)**
+MIC_XS = tuple(round(xiao[0] + _mx, 6) for _mx in MIC_X_ON_BOARD)
 # --- 内部リブ類 (AABB) ---
 # XIAO コーナーシート (基板4隅の座面。ピン列カステレーション x16.1-31.3 を回避)
 #   v1.3: 座標を xiao[0] 基準の相対値に変更 (IW を変えると絶対値がずれ、
@@ -332,11 +402,16 @@ bat_stops_bot = [
     (8.0, WALL, 12.0, bat[1] - 0.15, WALL, 7.0),
     (24.0, WALL, 28.0, bat[1] - 0.15, WALL, 7.0),
 ]
-# スイッチ左端の挟みリブ (右端は XIAO ストップリブが兼ねる)
+# スイッチ両端の挟みリブ (本体の左右を 0.3mm のすきまで挟む)
 #   v1.5: y0 の絶対値 44.6 を sw[1] 相対に変更 (IH を変えるとスイッチだけ動いて
-#   リブが取り残されるため)。値は従来と同一 (45.0 - 0.4 = 44.6)。
+#   リブが取り残されるため)。
+#   v1.8: 右端のリブを追加。旧版は「右端は XIAO ストップリブが兼ねる」としていたが、
+#   ストップリブは x14.4.. / y40..44 でスイッチ右端 (x12.7 / y44.5..) とは x も y も
+#   離れており、実際には何も押さえていなかった (位置決めは上壁の凹み 0.7mm だけ)。
+#   左と対称のリブを床から立てる (上壁とつながるのでサポート不要)。
 sw_rib = (2.9, round(sw[1] - 0.4, 6), 3.7, WALL + IH, WALL, 8.4)
-sw_ribs = [sw_rib]
+sw_rib_r = (sw[2] + 0.3, round(sw[1] - 0.4, 6), sw[2] + 1.1, WALL + IH, WALL, 8.4)
+sw_ribs = [sw_rib, sw_rib_r]
 
 # --- carrier: XIAO はキャリア基板に直はんだされるので、床から立つ XIAO 位置決めリブ
 #     (座面/左ストップ/上下ナブ) とスイッチ挟みリブは基板と同じ空間を取り合う。
@@ -532,7 +607,8 @@ def check_layout():
     for i, b in enumerate(sw_ribs):
         parts[f"sw_rib{i}"] = b
     # --- 基板とその実装部品 / 保持フィーチャ (v1.5) ---
-    for nm, b in (("pcb", pcb), ("pcb_j1", pcb_j1), ("harness_jst", harness_jst)):
+    for nm, b in (("pcb", pcb), ("pcb_j1", pcb_j1), ("harness_jst", harness_jst),
+                  ("harness_splice", harness_splice)):
         if b is not None:
             parts[nm] = b
     for nm, b in pcb_parts:
@@ -591,9 +667,58 @@ def check_layout():
                 p[1] >= cav[1] - 1e-6 and p[3] <= cav[3] + 1e-6 and
                 p[4] >= cav[4] - 1e-6 and p[5] <= cav[5] + 1e-6), \
             f"{name} outside cavity"
-    # スイッチは上壁凹みに SW_RECESS だけ食い込む設計
-    assert sw[3] <= WALL + IH + SW_RECESS + 1e-6, "switch recess overrun"
-    assert WALL - SW_RECESS >= 0.8, "top wall too thin at switch recess"
+    # スイッチ本体は「キャビティ + 上壁の位置決め凹み」の中に全軸で収まること。
+    #   x / z は凹み (sw_recess_pocket) の内側、y は下端がキャビティ内・上端が凹みの底まで。
+    #   (旧版は sw[3] をその定義式と比べるだけの恒真式だった)
+    _rp = sw_recess_pocket
+    assert _rp[0] >= WALL - 1e-6 and _rp[2] <= WALL + IW + 1e-6, "switch recess outside cavity (x)"
+    assert _rp[4] >= WALL - 1e-6 and _rp[5] <= BODY_D + 1e-6, \
+        "switch recess outside cavity (z): スイッチが床かフタ内面に当たる"
+    assert (sw[0] >= _rp[0] + 0.1 - 1e-6 and sw[2] <= _rp[2] - 0.1 + 1e-6
+            and sw[4] >= _rp[4] + 0.1 - 1e-6 and sw[5] <= _rp[5] - 0.1 + 1e-6), \
+        "switch body does not fit the recess pocket (need 0.1mm/side)"
+    assert sw[1] >= WALL - 1e-6 and sw[3] <= _rp[3] + 1e-6, "switch body outside cavity+recess (y)"
+    assert abs((sw[3] - sw[1]) - SW_H) < 1e-6, "switch AABB height != SW_H"
+    # 凹みを掘ったあとに残る上壁の肉厚 (外面 y=H まで)
+    _top_left = H - _rp[3]
+    assert _top_left >= 0.8 - 1e-6, f"top wall only {_top_left:.2f}mm at switch recess (<0.8)"
+    # レバー (v1.8: SW_LEVER を初めて検査に使う)。本体上面 (= 凹みの底) から SW_LEVER 出る。
+    #   外面からの突出が 1.5〜3.0mm: 短いと指が掛からず、長いと服に引っ掛かって勝手に切り替わる。
+    _lever_out = (sw[3] + SW_LEVER) - H
+    assert 1.5 - 1e-6 <= _lever_out <= 3.0 + 1e-6, (
+        f"switch lever protrudes {_lever_out:.2f}mm beyond the top face (need 1.5..3.0)")
+    #   スロット長 (スライド方向) >= レバー幅 + スライド量 + FDM 代 0.4。
+    #   SW_LEVER_W は assumption (要実測 M6)。実測が 2.6mm を超えたら SW_SLOT_L を広げること。
+    _slot_need = SW_LEVER_W + SW_TRAVEL + 0.4
+    assert SW_SLOT_L >= _slot_need - 1e-6, (
+        f"lever slot {SW_SLOT_L}mm < lever {SW_LEVER_W} + travel {SW_TRAVEL} + 0.4 = {_slot_need}")
+    #   スロットは凹み (= スイッチ本体) の内側に収まる (本体の肩がスロットの縁に掛かって抜けない)
+    assert SW_SLOT_L <= SW_L - 1.0 + 1e-6 and SW_SLOT_W <= SW_W - 1.0 + 1e-6, \
+        "lever slot too large: switch body would not be retained"
+    print(f"[layout] switch: lever {_lever_out:.2f} mm beyond top face | slot {SW_SLOT_L} >= "
+          f"lever {SW_LEVER_W} (assumption) + travel {SW_TRAVEL} + 0.4 = {_slot_need:.1f} | "
+          f"top wall left at recess {_top_left:.2f} mm")
+    # スイッチ両端の挟みリブ: 本体の左右に 0.2〜0.5mm で対向し、y / z が本体と重なること
+    if len(sw_ribs) >= 2:
+        _gl, _gr = sw[0] - sw_ribs[0][2], sw_ribs[1][0] - sw[2]
+        assert 0.2 - 1e-6 <= _gl <= 0.5 + 1e-6 and 0.2 - 1e-6 <= _gr <= 0.5 + 1e-6, \
+            f"switch end ribs gap L {_gl:.2f} / R {_gr:.2f} out of 0.2..0.5"
+        for _r in sw_ribs:
+            assert _overlap1(_r[1], _r[3], sw[1], sw[3]) and _overlap1(_r[4], _r[5], sw[4], sw[5]), \
+                "switch end rib does not face the switch body"
+    # マイク穴: XIAO の幅の内側で、上ナブ (壁とつながったリブ) に塞がれない位置にあること
+    for _hx in MIC_XS:
+        assert xiao[0] + 1.0 <= _hx - MIC_HOLE_R and _hx + MIC_HOLE_R <= xiao[2] - 1.0, \
+            f"mic hole x{_hx:.1f} is not over the XIAO"
+        for _nb in xiao_nubs_top:
+            assert not _overlap1(_hx - MIC_HOLE_R, _hx + MIC_HOLE_R, _nb[0], _nb[2]), \
+                f"mic hole x{_hx:.1f} is blocked by a top nub"
+    assert WALL + 0.5 <= MIC_Z - MIC_HOLE_R and MIC_Z + MIC_HOLE_R <= BODY_D - 0.5, \
+        "mic holes too close to the back face / lid seam"
+    print("[layout] mic holes (top wall, exit y%.1f): x %s = XIAO left edge + %s (assumption, M9) | "
+          "z %.2f..%.2f" % (H, " / ".join(f"{x:.1f}" for x in MIC_XS),
+                            " / ".join(f"{x:.1f}" for x in MIC_X_ON_BOARD),
+                            MIC_Z - MIC_HOLE_R, MIC_Z + MIC_HOLE_R))
     # 磁石ウェブ (背面残し肉厚)
     pocket_bottom_z = WALL + BOSS_H - (MAG_T + 0.2)   # 3.0 - 2.2 = 0.8
     assert abs(pocket_bottom_z - MAG_WEB) < 1e-6, "magnet web != 0.8mm"
@@ -634,8 +759,20 @@ def check_layout():
     assert bat[0] - lip_left[2] >= 0.5 - 1e-6, "no snap deflection room at battery"
     # 電池リード曲げチャネル (左端面出射、AWG28 x2)
     assert bat[0] - WALL >= 2.2 - 1e-6, "battery lead channel too narrow"
-    # USB-C: 基板端が右内壁面 → コネクタ突出1.3 < 壁1.6 (面一以内)
-    assert USB_PROTRUDE <= WALL, "USB-C protrudes beyond outer wall"
+    # USB-C: レセプタクル先端 (基板右端 + USB_PROTRUDE) が外面より内側で、かつ座ぐりの底
+    #   (外面 - USB_CB_D) より引っ込んでいないこと (引っ込むとプラグが奥まで届かない)。
+    _usb_face = xiao[2] + USB_PROTRUDE
+    assert W - USB_CB_D - 1e-6 <= _usb_face <= W + 1e-6, (
+        f"USB-C receptacle face x{_usb_face:.2f} not between counterbore floor "
+        f"x{W - USB_CB_D:.2f} and outer face x{W:.2f}")
+    #   開口は XIAO の y 中心・実測の中心高さに合っており、body の肉の中に収まること
+    assert abs(USB_CY - (xiao[1] + xiao[3]) / 2.0) < 1e-6, "USB opening not centred on the XIAO"
+    assert abs((USB_Z0 + USB_OPEN_H / 2.0) - (xiao[4] + USB_CENTER_ABOVE_STACK)) < 1e-6, \
+        "USB opening not at the measured connector centre"
+    assert USB_Z0 >= WALL - 1e-6 and USB_Z0 + USB_OPEN_H <= BODY_D - 1.0 + 1e-6, \
+        "USB opening cuts into the floor or leaves <1.0mm bridge under the lid"
+    assert xiao[1] <= USB_CY - USB_OPEN_W / 2 and USB_CY + USB_OPEN_W / 2 <= xiao[3], \
+        "USB opening wider than the XIAO board"
     # --- スナップ機構 (v1.2) ---
     # リッジ円筒が lip 深さ帯 (z BODY_D-LIP_D .. BODY_D) に収まる
     assert SNAP_AZ - SNAP_R_RIDGE >= (BODY_D - LIP_D) - 1e-6, \
@@ -658,7 +795,7 @@ def check_layout():
     # --- 「箱にならない部品」の最小クリアランス (v1.5 rev2) --------------------
     #   旧版は harness_jst についてのみ、しかも **6部品に対して >= 0.0 (接触を合格)**
     #   という実質デッドコードだった。全部品との総当たりに変え、要求値も持たせる。
-    _soft = [("harness_jst", 0.3), ("sw_terms", 0.3),
+    _soft = [("harness_jst", 0.3), ("harness_splice", 0.3), ("sw_terms", 0.3),
              ("led_leads", 0.3 if PCB == "none" else 0.15)]
     for _sn, _need in _soft:
         if _sn not in parts:
@@ -714,6 +851,37 @@ def check_layout():
               f"led_leads {clearance(harness_jst, led_leads):.2f} / "
               f"battery {clearance(harness_jst, bat):.2f} / "
               f"ceiling {BODY_D - harness_jst[5]:.2f}mm")
+    if harness_splice is not None:
+        # 継ぎ目は JST 嵌合体の真上 (同じ x / y の範囲内) に載り、リッド内面より下に収まる
+        _sp = harness_splice
+        assert (_sp[0] >= harness_jst[0] - 1e-6 and _sp[2] <= harness_jst[2] + 1e-6
+                and _sp[1] >= harness_jst[1] - 1e-6 and _sp[3] <= harness_jst[3] + 1e-6
+                and _sp[4] >= harness_jst[5] + 0.3 - 1e-6), "splice joints must lie on top of the JST body"
+        assert _sp[3] - _sp[1] >= SPLICE_L - 1e-6 and _sp[2] - _sp[0] >= 2 * SPLICE_D - 1e-6, \
+            "no room for two splice joints on the JST body"
+        assert BODY_D - _sp[5] >= 0.5 - 1e-6, "splice joints too close to the lid"
+        # 置いてはいけない場所 (XIAO の下 / ストップリブの切れ目) と重ならない
+        _under_xiao = (xiao[0], xiao[1], xiao[2], xiao[3], WALL, xiao[4])
+        _rib_gap = (xiao_stops[0][0], xiao_stops[0][3], xiao_stops[0][2], xiao_stops[1][1],
+                    WALL, BODY_D)
+        assert clearance(_sp, _under_xiao) >= 1.0 and clearance(_sp, _rib_gap) >= 1.0, \
+            "splice joints sit under the XIAO or in the stop-rib gap"
+        _others = {n: clearance(_sp, b) for n, b in parts.items() if n != "harness_splice"}
+        _nn = min(_others, key=_others.get)
+        print(f"[harness] splice joints (2 x phi{SPLICE_D} x {SPLICE_L:.0f}, on top of the JST) "
+              f"x{_sp[0]:.2f}..{_sp[2]:.2f} / y{_sp[1]:.2f}..{_sp[3]:.2f} / z{_sp[4]:.2f}..{_sp[5]:.2f}  "
+              f"nearest part: {_nn} {_others[_nn]:.2f}mm | ceiling {BODY_D - _sp[5]:.2f}mm")
+        # M4 (嵌合体の実測) の合否に使う上限。継ぎ目を真上に載せる標準手順での値:
+        #   高さ: 継ぎ目 (0.3 + SPLICE_D) を載せても、リッド内面 -0.5 と左 lip 下端 -0.3 の低い方に収まる
+        #   長さ: 上端がスイッチ端子の帯 (sw_terms) の 0.3mm 手前まで
+        #   幅  : LED 窓の x が嵌合体の幅に追従する (HARNESS_JST_XYZ[0] を変えると lid が変わる)
+        _h_max = min(BODY_D - 0.5, lip_left[4] - 0.3) - (0.3 + SPLICE_D) - WALL
+        _l_max = sw_terms[1] - 0.3 - harness_jst[1]
+        assert HARNESS_JST_XYZ[2] <= _h_max + 1e-6 and HARNESS_JST_XYZ[1] <= _l_max + 1e-6
+        print(f"[harness] M4 limits for the mated JST body (splice on top): height <= {_h_max:.1f} mm, "
+              f"length <= {_l_max:.1f} mm, width = {HARNESS_JST_XYZ[0]:.1f} mm (LED window follows it)")
+        print(f"[harness] wire passage under the XIAO: stop-rib gap x{_rib_gap[0]:.2f}..{_rib_gap[2]:.2f} / "
+              f"y{_rib_gap[1]:.2f}..{_rib_gap[3]:.2f}, lift {xiao[4] - WALL:.2f}mm (wire OD <= 1.3)")
     if pcb is not None:
         pw, ph = pcb[2] - pcb[0], pcb[3] - pcb[1]
         cav = (WALL, WALL, WALL + IW, WALL + IH, WALL, BODY_D)
@@ -812,7 +980,7 @@ def check_layout():
                   f"{VARIANT} は非推奨 (LAYOUT.md §4.2: MC-SENSE-A は allday 専用)")
     # =======================================================================
     # 既定パラメータでの外形を直接固定する (v1.5 rev2 で追加)
-    #   ID / IH は assumption (XIAO_STACK_T=7.5, BAT_T, J1_BODY_Z ...) から計算される
+    #   ID / IH は部品寸法 (XIAO_STACK_T, BAT_T, J1_BODY_Z ...) から計算される
     #   ため、assumption を書き換えると **assert を一つも出さずに外形だけが育つ**
     #   という穴があった (MECHANICAL.md §11.4 の「負のテスト」が自己充足的だった原因)。
     #   公開値と食い違ったら必ず落ちるようにし、落ちたら MECHANICAL.md §1 / §11.1 と
@@ -820,11 +988,13 @@ def check_layout():
     GOLDEN_OUTER = {
         # v1.8: 実測 (電池 32mm → 幅 +1.0 / XIAO 8.2mm → slim の奥行き +0.7) を反映。
         #       sense は実測スイッチで成立しないため対象外 (モジュール読み込み時に SystemExit)。
+        #       carrier も基板外形が IW 36.8 に追従していないため対象外 (同じく SystemExit)。
+        #       → 実行できるのは次の 2 構成だけ。
         ("allday", "none"): (40.0, 49.4, 14.6),
         ("slim", "none"): (40.0, 49.4, 13.6),
-        ("allday", "carrier"): (40.0, 51.2, 14.9),
-        ("slim", "carrier"): (40.0, 51.2, 14.9),
     }
+    assert (VARIANT, PCB) in GOLDEN_OUTER, (
+        f"[{VARIANT}/{PCB}] は公開寸法を持たない構成 (sense / carrier は v2 で再設計するまで実行不可)")
     _g = GOLDEN_OUTER[(VARIANT, PCB)]
     assert (abs(W - _g[0]) < 1e-6 and abs(H - _g[1]) < 1e-6
             and abs(TOTAL_D - _g[2]) < 1e-6), (
@@ -842,9 +1012,73 @@ def check_layout():
              else f"protrudes {LED_DOME_PROTRUDE:.2f} mm ("
                   + ("variant depth limit" if PCB == "none" else "PCB config: not recessed")
                   + ")"))
+    # 左ポケットの各部品の実座標 (README 手順10 の配置図・MECHANICAL.md の表はこの行から転記する)
+    for _n in ("battery", "xiao", "switch", "sw_terms", "harness_jst", "harness_splice",
+               "led", "led_leads", "led_flange", "led_sleeve", "sw_rib0", "sw_rib1",
+               "xstop0", "xstop1", "lip_left", "lip_top"):
+        if _n in parts:
+            _b = parts[_n]
+            print(f"[box] {_n:15s} x{_b[0]:6.2f}..{_b[2]:6.2f}  y{_b[1]:6.2f}..{_b[3]:6.2f}  "
+                  f"z{_b[4]:6.2f}..{_b[5]:6.2f}")
     print("[layout] all interference checks passed")
     print(f"[layout] outer: {W:.1f} x {H:.1f} x {TOTAL_D:.1f} mm (W x H x D, lid込み) "
           f"= published value")
+
+
+# ---------------------------------------------------------------------------
+# XIAO 右上コーナーの逃げ (ソリッド検査)
+# ---------------------------------------------------------------------------
+XIAO_CORNER_RELIEF = 0.15       # 角ばった基板 (R=0) でも右上の角に残すすきま
+# 切り欠き = XIAO の輪郭を y+ へ XIAO_CORNER_RELIEF 広げた箱の右上部分。
+#   キャビティの直線部ではもともと空間なので、実際に肉が削れるのはコーナー R の内側だけ。
+xiao_corner_relief = (xiao[2] - R_IN - 0.5, xiao[3] - R_IN - 0.5,
+                      xiao[2], xiao[3] + XIAO_CORNER_RELIEF,
+                      xiao[4], BODY_D + 0.5)
+XIAO_CORNER_WALL_MIN = 0.8      # 逃げの最深部に残す外壁の最小肉厚 (0.4 ノズル 2 周)
+
+
+def xiao_solid(corner_r, grow_y=0.0):
+    """XIAO スタックの占有ソリッド。corner_r=0 なら四角、>0 なら基板コーナーを丸める。
+    grow_y は上辺 (y+) 側だけを広げる量 (すきまの検査用)。"""
+    w, h = xiao[2] - xiao[0], xiao[3] - xiao[1] + grow_y
+    wp = (cq.Workplane("XY", origin=((xiao[0] + xiao[2]) / 2, xiao[1] + h / 2, xiao[4]))
+          .rect(w, h).extrude(xiao[5] - xiao[4]))
+    if corner_r > 0:
+        wp = wp.edges("|Z").fillet(corner_r)
+    return wp
+
+
+def check_xiao_fit(body):
+    """body と XIAO のソリッド同士のブーリアン (AABB では見えないコーナー R の食い込みを検出)。
+      1) 想定形状 (コーナー R = XIAO_CORNER_R) の XIAO が body と重ならない
+      2) R=0 の四角い基板でも重ならず、上辺を XIAO_CORNER_RELIEF 広げても重ならない
+         (= 右上の角に 0.15mm 以上のすきま。コーナー R が未実測でも成立する)
+      3) 陽性対照: 逃げを切る前の形状相当 (四角い基板を右上へ 0.5mm ずらす) は必ず重なる
+      4) 逃げの最深部に残る外壁の肉厚 >= XIAO_CORNER_WALL_MIN
+    右内壁と基板右端・座面と基板下面は設計上の接触面 (体積 0) なので重なりに数えない。"""
+    def vol(wp):
+        r = body.intersect(wp)
+        return sum(s.Volume() for s in r.solids().vals())
+    v_round = vol(xiao_solid(XIAO_CORNER_R))
+    v_sq = vol(xiao_solid(0.0))
+    v_sq_clr = vol(xiao_solid(0.0, grow_y=XIAO_CORNER_RELIEF))
+    assert v_round < 1e-3, f"XIAO (corner R{XIAO_CORNER_R}) overlaps the body by {v_round:.3f} mm3"
+    assert v_sq < 1e-3, f"square-cornered XIAO overlaps the body by {v_sq:.3f} mm3"
+    assert v_sq_clr < 1e-3, (
+        f"square-cornered XIAO has < {XIAO_CORNER_RELIEF}mm clearance at the top-right "
+        f"cavity corner ({v_sq_clr:.3f} mm3 overlap)")
+    v_pos = vol(xiao_solid(0.0).translate(cq.Vector(0.5, 0.5, 0)))
+    assert v_pos > 1e-2, "positive control failed: a shifted XIAO must hit the body"
+    # 逃げの最深点 (切り欠きの右上の角) から外形コーナー円弧までの肉厚
+    _ox, _oy = W - R_OUT, H - R_OUT
+    _px, _py = xiao_corner_relief[2], xiao_corner_relief[3]
+    wall = R_OUT - math.hypot(_px - _ox, _py - _oy) if (_px > _ox and _py > _oy) \
+        else min(W - _px, H - _py)
+    assert wall >= XIAO_CORNER_WALL_MIN - 1e-6, (
+        f"outer wall at the XIAO corner relief is {wall:.2f}mm (< {XIAO_CORNER_WALL_MIN})")
+    print(f"[xiao] solid fit: overlap round(R{XIAO_CORNER_R}) {v_round:.3f} / square {v_sq:.3f} / "
+          f"square+{XIAO_CORNER_RELIEF} {v_sq_clr:.3f} mm3 (positive control {v_pos:.2f} mm3) | "
+          f"outer wall at relief corner {wall:.2f} mm (min; elsewhere >= 1.6)")
 
 
 # ---------------------------------------------------------------------------
@@ -908,20 +1142,26 @@ def build_body():
         (WALL + IW - 0.5, USB_CY - USB_OPEN_W / 2, W + 0.5, USB_CY + USB_OPEN_W / 2,
          USB_Z0, USB_Z0 + USB_OPEN_H))))
     # スイッチ位置決め凹み (上壁内面) + レバースロット (上面貫通)
-    body = body.cut(cq.Workplane(obj=bbox_solid(
-        (sw[0] - 0.2, WALL + IH, sw[2] + 0.2, WALL + IH + SW_RECESS,
-         sw[4] - 0.2, sw[5] + 0.2))))
+    body = body.cut(cq.Workplane(obj=bbox_solid(sw_recess_pocket)))
     sw_cx = (sw[0] + sw[2]) / 2
     sw_cz = (sw[4] + sw[5]) / 2
     body = body.cut(cq.Workplane(obj=bbox_solid(
-        (sw_cx - 2.5, WALL + IH + SW_RECESS - 0.1, sw_cx + 2.5, H + 0.5,
-         sw_cz - 1.1, sw_cz + 1.1))))                      # スロット 5.0 x 2.2
+        (sw_cx - SW_SLOT_L / 2, WALL + IH + SW_RECESS - 0.1, sw_cx + SW_SLOT_L / 2, H + 0.5,
+         sw_cz - SW_SLOT_W / 2, sw_cz + SW_SLOT_W / 2))))  # スロット 5.0 x 2.2
     # マイク開口 (上面、XIAO 上方に φ1.5 x 3。Sense拡張ボード上面高さに合わせる)
-    for hx in (22.0, 25.5, 29.0):
+    #   x は XIAO 左端からの相対値 MIC_X_ON_BOARD (assumption / 要実測 M9)
+    for hx in MIC_XS:
         body = body.cut(cq.Workplane(
-            obj=cq.Solid.makeCylinder(0.75, WALL + 1.0,
+            obj=cq.Solid.makeCylinder(MIC_HOLE_R, WALL + 1.0,
                                       cq.Vector(hx, WALL + IH - 0.2, MIC_Z),
                                       cq.Vector(0, 1, 0))))
+    # XIAO 右上コーナーの逃げ (v1.8)。XIAO は右内壁に密着・上内壁から M_TOP=0.6 の位置に
+    #   居るので、基板の右上の角はキャビティのコーナー R (R_IN=2.5) の肉に食い込む
+    #   (角ばった箱でブーリアンすると数 mm3 の重なりが出る。AABB 検査では見えなかった)。
+    #   基板のコーナー R (XIAO_CORNER_R) は未実測なので、R=0 の四角い基板でも上側に
+    #   XIAO_CORNER_RELIEF のすきまが残るよう、基板の輪郭 +0.15 (y+) をそのまま切り欠く。
+    #   座面 (コーナーシート, z<=WALL+XIAO_LIFT) は残す。検査は check_xiao_fit (ソリッド)。
+    body = body.cut(cq.Workplane(obj=bbox_solid(xiao_corner_relief)))
     # スナップ受け溝 (内壁面の浅い水平溝、深さ~0.3。リッド側リッジと嵌合)
     for sy in SNAP_SY:
         body = body.cut(cq.Workplane(
@@ -1058,6 +1298,8 @@ SP_YA1 = round(SP_YB0 + 2 * SP_SLOT_H + SP_CBAR_H, 2)
 SP_SLOTS = [(SP_YB0, SP_YB0 + SP_SLOT_H), (SP_YA1 - SP_SLOT_H, SP_YA1)]
 # USB-C 座ぐりの前でリムを切り欠く (板に付けたままでも充電ケーブルが挿さる)
 SP_USB_NOTCH = (USB_CY - H / 2 - USB_CB_W / 2 - 0.5, USB_CY - H / 2 + USB_CB_W / 2 + 0.5)
+# 切り欠きの z 範囲 (板座標)。リムの全高 (SP_T .. SP_T+SP_RIM_H) を上下 0.5mm 余分に抜く
+SP_USB_NOTCH_Z = (SP_T - 0.5, SP_T + SP_RIM_H + 0.5)
 
 
 def check_strapplate():
@@ -1084,14 +1326,32 @@ def check_strapplate():
         "strap band reaches the body's corner radius"
     # 磁石の下に残る肉 (チェスト側)
     assert SP_T - (MAG_T + 0.2) >= 1.6 - 1e-6, "too little material under strap-plate magnets"
-    # リム高さは本体背面側の開口 (USB 座ぐり下端) / スイッチより下
-    usb_cb_z0 = USB_Z0 + USB_OPEN_H / 2.0 - USB_CB_H / 2
+    # リムはスイッチの帯より下で止まる
     assert SP_RIM_H <= sw[4] - 1.0 + 1e-6, "rim reaches the switch band"
-    assert SP_USB_NOTCH[0] < USB_CY - H / 2 - USB_CB_W / 2 and \
-        SP_USB_NOTCH[1] > USB_CY - H / 2 + USB_CB_W / 2, "USB notch does not clear counterbore"
+    # USB 座ぐりとリムの関係。v1.8 で開口が 0.3mm 下がり、座ぐり下端 (本体 z1.9) は
+    # リム上端 (本体 z2.5) より**低く**なった。つまりリムは座ぐりの下 0.6mm ぶんと高さが重なる。
+    # それでもプラグが挿さるのは「リムを座ぐりの前で全高にわたって切り欠いている」からで、
+    # 保証しているのは次の 2 点 (リムが座ぐりより低いこと、ではない):
+    #   (a) 切り欠きの y 範囲が座ぐりの y 範囲を両側 0.5mm 以上の余裕で含む
+    #   (b) 切り欠きの z 範囲がリムの全高を含む (リムが座ぐりの前に 1 層も残らない)
+    # 形状としての確認 (切り欠きの中に肉が無いこと) は check_strapplate_fit のブーリアンで行う。
+    usb_cb_z0 = USB_Z0 + USB_OPEN_H / 2.0 - USB_CB_H / 2
+    _cb_y = (USB_CY - H / 2 - USB_CB_W / 2, USB_CY - H / 2 + USB_CB_W / 2)
+    assert SP_USB_NOTCH[0] <= _cb_y[0] - 0.5 + 1e-6 and SP_USB_NOTCH[1] >= _cb_y[1] + 0.5 - 1e-6, \
+        "USB notch does not span the counterbore in y (need 0.5mm each side)"
+    assert SP_USB_NOTCH_Z[0] <= SP_T + 1e-6 and SP_USB_NOTCH_Z[1] >= SP_T + SP_RIM_H - 1e-6, \
+        "USB notch does not span the full rim height"
+    assert -SP_OUT_H / 2 + SP_RIM_W < SP_USB_NOTCH[0] and SP_USB_NOTCH[1] < SP_OUT_H / 2 - SP_RIM_W, \
+        "USB notch runs into the rim corners"
+    _ovl = SP_RIM_H - usb_cb_z0
     print(f"[strap] plate {SP_W:.1f} x {SP_H:.1f} x {SP_T:.1f} mm (+rim {SP_RIM_H}) | "
-          f"strap <= {STRAP_W:.0f} x {STRAP_T:.1f} mm | band y {SP_YB0:.1f}..{SP_YA1:.1f} | "
-          f"top land {top_land:.1f} mm | USB counterbore z0 {usb_cb_z0:.1f} vs rim {SP_RIM_H}")
+          f"strap <= {STRAP_W:.0f} x {STRAP_T:.1f} mm (width limit {W - 1.0 + 2 * SP_RIM_CLR:.1f}) | "
+          f"band y {SP_YB0:.1f}..{SP_YA1:.1f} | top land {top_land:.1f} mm")
+    print(f"[strap] USB: counterbore bottom z{usb_cb_z0:.1f} (body) vs rim top z{SP_RIM_H} -> "
+          + (f"rim overlaps the counterbore by {_ovl:.1f} mm in height; " if _ovl > 0
+             else "rim is below the counterbore; ")
+          + f"cleared by the full-height rim notch y{SP_USB_NOTCH[0]:.1f}..{SP_USB_NOTCH[1]:.1f} "
+            f"(counterbore y{_cb_y[0]:.1f}..{_cb_y[1]:.1f}, plate coords)")
 
 
 def check_strapplate_fit(body, sp):
@@ -1107,7 +1367,19 @@ def check_strapplate_fit(body, sp):
     for dx, dy in ((shift, 0), (-shift, 0), (0, shift), (0, -shift)):
         v = overlap(dx, dy)
         assert v > 1e-3, f"rim does not stop a {shift:.1f}mm shift at ({dx:+.1f},{dy:+.1f})"
-    print(f"[strap] fit: seated overlap 0, rim stops a {shift:.1f} mm shift in all 4 directions")
+    # USB 座ぐりの前 (座ぐりの y 範囲 x リム全高) にリムの肉が残っていないこと
+    _cb_y = (USB_CY - H / 2 - USB_CB_W / 2, USB_CY - H / 2 + USB_CB_W / 2)
+    _front = cq.Workplane(obj=bbox_solid(
+        (W / 2, _cb_y[0], SP_OUT_W / 2 + 1.0, _cb_y[1], SP_T + 0.01, SP_T + SP_RIM_H + 1.0)))
+    _rim_left = sum(s.Volume() for s in sp.intersect(_front).solids().vals())
+    assert _rim_left < 1e-3, f"rim material left in front of the USB counterbore ({_rim_left:.3f} mm3)"
+    # 陽性対照: 反対側 (左辺) の同じ位置にはリムがある
+    _back = cq.Workplane(obj=bbox_solid(
+        (-SP_OUT_W / 2 - 1.0, _cb_y[0], -W / 2, _cb_y[1], SP_T + 0.01, SP_T + SP_RIM_H + 1.0)))
+    assert sum(s.Volume() for s in sp.intersect(_back).solids().vals()) > 1.0, \
+        "positive control failed: rim missing on the side opposite the USB notch"
+    print(f"[strap] fit: seated overlap 0, rim stops a {shift:.1f} mm shift in all 4 directions, "
+          f"no rim in front of the USB counterbore")
 
 
 def build_strapplate():
@@ -1122,7 +1394,7 @@ def build_strapplate():
     ring = ring.edges(">Z").fillet(0.4)
     ring = ring.cut(cq.Workplane(obj=bbox_solid(
         (W / 2 - 1.0, SP_USB_NOTCH[0], SP_OUT_W / 2 + 1.0, SP_USB_NOTCH[1],
-         SP_T - 0.5, SP_T + SP_RIM_H + 0.5))))
+         SP_USB_NOTCH_Z[0], SP_USB_NOTCH_Z[1]))))
     assert ring.val().isValid(), "strap-plate rim solid is invalid"
     sp = sp.union(ring)
     _bb = sp.val().BoundingBox()
@@ -1153,6 +1425,7 @@ def export_all():
 
     print("[build] body ...")
     body = build_body()
+    check_xiao_fit(body)
     print("[build] lid ...")
     lid = build_lid()
     print("[build] backplate ...")
@@ -1194,7 +1467,8 @@ def verify_and_render(paths):
               f"volume={m.volume/1000.0:.2f} cm3  mass(PETG)={mass:.1f} g  "
               f"tris={len(m.faces)}")
         assert m.is_watertight, f"{name} STL is not watertight"
-    comp_mass = 10.0 + 5.0 + 4 * 0.44 + 1.0   # 電池+XIAOスタック+磁石+SW/LED/配線
+    _bat_g = 11.0 if VARIANT == "allday" else 10.0   # allday: 採用品の実測 11g (M3) / slim: 公称
+    comp_mass = _bat_g + 5.0 + 4 * 0.44 + 1.0  # 電池+XIAOスタック+磁石+SW/LED/配線
     print(f"[verify] total printed mass ~{total_print_mass:.1f} g, "
           f"device total ~{total_print_mass + comp_mass:.1f} g (est.)")
 
@@ -1378,7 +1652,9 @@ def verify_and_render(paths):
         comp.append(("J1 mated", pcb_j1, C_CON))
         comp += [(f"pcb {n}", b, C_PCB) for n, b in pcb_parts]
     if harness_jst is not None:
-        comp.append(("JST-PH2.0 mated body", harness_jst, C_CON))
+        comp.append(("JST mated body", harness_jst, C_CON))
+    if harness_splice is not None:
+        comp.append(("splice joints + shrink", harness_splice, (0.95, 0.80, 0.35)))
     # v1.5 rev2: 端子・曲げリードの包絡 (「箱にならない部品」)
     comp.append(("switch terminals + shrink", sw_terms, (0.85, 0.55, 0.45)))
     comp.append(("LED leads + 220R + shrink", led_leads, (0.90, 0.62, 0.62)))
@@ -1402,7 +1678,7 @@ def verify_and_render(paths):
         ax.text(x, y, z, txt, fontsize=8, ha="center")
     pts = np.vstack([body_m.vertices])
     finish(ax, pts, elev=58, azim=-80, zoom=0.85)
-    _sub = {"none": "harness v1.5 (no PCB) — JST-PH2.0 mated body shown",
+    _sub = {"none": "harness (no PCB) — JST mated body + splice joints on top of it shown",
             "sense": "MC-SENSE-A satellite PCB 10.0x15.6x0.8t in the left pocket",
             "carrier": "MC-CARRIER-A carrier PCB 34.2x21.0x0.8t (XIAO soldered on it)"}[PCB]
     ax.set_title(f"MindClip DIY — internal layout (lid removed)\n{_sub}", fontsize=10)
@@ -1467,9 +1743,11 @@ def verify_and_render(paths):
             add(axp, rb, "#2f4f9f", "#12224a", lw=0.8)
     if harness_jst is not None:
         add(axp, harness_jst, "#f2f2f2", "#444444", a=0.95)
-        label(axp, harness_jst, "JST-PH2.0\nmated body\n(Y-laid, §5.5)\n"
+        label(axp, harness_jst, "JST mated body\n(Y-laid, §5.5)\n+ splice joints\non top\n"
               f"x{harness_jst[0]:.1f}-{harness_jst[2]:.1f}\n"
               f"y{harness_jst[1]:.1f}-{harness_jst[3]:.1f}", fs=6)
+    if harness_splice is not None:
+        add(axp, harness_splice, "none", "#b8860b", lw=1.0, hatch="||")
     add(axp, sw_terms, "none", "#c0392b", lw=1.0, hatch="xx")
     label(axp, sw_terms, "switch terminals\n+ solder + shrink", fs=6)
     add(axp, led_leads, "none", "#e03030", lw=1.0, hatch="..")
@@ -1478,13 +1756,16 @@ def verify_and_render(paths):
     label(axp, led, "LED", fs=7)
     for b in (lip_left, lip_top, lip_bottom, lip_right):
         add(axp, b, "none", "#8e44ad", lw=0.8, a=0.9)
+    for _hx in MIC_XS:      # マイク穴 (上壁を貫通)
+        axp.plot([_hx, _hx], [WALL + IH, H], color="#1f4e79", lw=2.0, zorder=5)
+    axp.text(MIC_XS[1], H + 0.6, "mic ports x3", fontsize=6, ha="center", zorder=6)
     axp.set_xlim(-2, W + 2)
     axp.set_ylim(-2, H + 2)
     axp.set_aspect("equal")
     axp.set_title(f"left-pocket plan (XY) — {OUT_TAG}\n"
                   "blue = PCB retention (guide / ledge / stop), "
                   "red hatch = THT pin relief / lead envelopes, "
-                  "purple = lid lip", fontsize=9)
+                  "gold || = splice joints, purple = lid lip", fontsize=9)
     axp.set_xlabel("x [mm]", fontsize=8)
     axp.set_ylabel("y [mm]", fontsize=8)
     axp.tick_params(labelsize=7)
@@ -1529,6 +1810,9 @@ def verify_and_render(paths):
         _bend = (harness_jst[0], 0, harness_jst[2], 0,
                  harness_jst[5], harness_jst[5] + J1_BEND_Z)
         add(axs, _bend, "none", "#c0392b", lw=1.0, hatch="\\\\\\", plane="xz")
+        if harness_splice is not None:
+            add(axs, harness_splice, "#f3d27a", "#b8860b", a=0.9, plane="xz")
+            label(axs, harness_splice, "splice x2", plane="xz", fs=6)
         axs.axhline(BODY_D, color="#c0392b", lw=1.0, ls="--")
         axs.text(W + 0.5, BODY_D, f" lid inner z={BODY_D:.2f}", fontsize=7,
                  va="center", color="#c0392b")
