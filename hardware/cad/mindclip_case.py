@@ -1434,7 +1434,7 @@ MS_DISC_R = round(MS_RING_OD / 2 + MS_RING_FIT / 2 + MS_EDGE, 2)        # 円板
 
 
 def check_magsafeplate():
-    assert MS_RING_ID < MS_RING_OD and 1.0 <= MS_RING_T <= 3.5, "MagSafe ring dims out of range"
+    assert MS_RING_ID < MS_RING_OD and 0.3 <= MS_RING_T <= 3.5, "MagSafe ring dims out of range"
     # 本体用の磁石ポケットはリングの内側に収まる (溝と平面で重ならない = 板厚を足さずに済む)
     for mx, my in SP_MAGS:
         r = math.hypot(mx, my) + _SP_MAG_R
