@@ -363,7 +363,7 @@ MIC_HOLE_R = 0.75                               # φ1.5
 #   (穴は +2.0mm 動いて x24.0 / 27.5 / 31.0)。
 #   **拡張ボード上のマイクの実位置は未実測** (MEASUREMENTS.md M9)。測ったら中央の値を
 #   実測値に書き換える (3 穴は ±3.5mm の振り分け)。
-MIC_X_ON_BOARD = (4.7, 8.2, 11.7)               # 基板左端 (USB と反対の端) からの距離。中央の穴 = マイク中心 8.2 (M9)
+MIC_X_ON_BOARD = (5.1, 8.6, 12.1)               # 基板左端 (USB と反対の端) からの距離。中央の穴 = マイク中心 8.6 (実測 M9: J9.9 − K2.6/2)
 MIC_XS = tuple(round(xiao[0] + _mx, 6) for _mx in MIC_X_ON_BOARD)
 # --- 内部リブ類 (AABB) ---
 # XIAO コーナーシート (基板4隅の座面。ピン列カステレーション x16.1-31.3 を回避)
@@ -719,7 +719,7 @@ def check_layout():
                 f"mic hole x{_hx:.1f} is blocked by a top nub"
     assert WALL + 0.5 <= MIC_Z - MIC_HOLE_R and MIC_Z + MIC_HOLE_R <= BODY_D - 0.5, \
         "mic holes too close to the back face / lid seam"
-    print("[layout] mic holes (top wall, exit y%.1f): x %s = XIAO left edge + %s (assumption, M9) | "
+    print("[layout] mic holes (top wall, exit y%.1f): x %s = XIAO left edge + %s (実測 M9) | "
           "z %.2f..%.2f" % (H, " / ".join(f"{x:.1f}" for x in MIC_XS),
                             " / ".join(f"{x:.1f}" for x in MIC_X_ON_BOARD),
                             MIC_Z - MIC_HOLE_R, MIC_Z + MIC_HOLE_R))

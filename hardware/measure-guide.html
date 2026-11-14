@@ -660,7 +660,7 @@ a { color: var(--accent); }
         <label class="field" for="in-m9k">K 箱の幅<span class="row"><input id="in-m9k" data-k="m9k" type="number" inputmode="decimal" step="0.01" min="0" placeholder="3.50"><span class="unit">mm</span></span></label>
       </div>
       <p class="derived">USB と反対の端〜マイクの中心　<b data-out="m9c">—</b> mm <span data-out="m9from"></span></p>
-      <p class="design">今の設計値 <b>8.2</b> mm（写真と実測から決めた値）。ケースの上面の穴 3 つは、USB と反対の端から <b>4.7 / 8.2 / 11.7</b> mm の位置にあります（±3.5 mm をカバー）。中心が 8.2 mm から <b>±1.0</b> mm 以内ならそのままです。</p>
+      <p class="design">今の設計値 <b>8.6</b> mm（実測 J 9.9 − K 2.6÷2）。ケースの上面の穴 3 つは、USB と反対の端から <b>5.1 / 8.6 / 12.1</b> mm の位置にあります（±3.5 mm をカバー）。中心が 8.2 mm から <b>±1.0</b> mm 以内ならそのままです。</p>
       <div class="verdict"><span class="chip" data-chip="m9">未測定</span><span class="msg" data-msg="m9">J と K を入れると判定が出ます</span></div>
     </div>
   </div>
@@ -771,8 +771,8 @@ a { color: var(--accent); }
       var p = m9pos(j, k);
       if (k < 1.5 || k > 6 || j <= k || j > M9_BOARD + M9_USB + 0.3 || p.c < 0 || p.c > M9_BOARD) return { s: "ng", m: "J と K を確かめてください（J は端から箱の遠い辺まで、K は箱の幅。基板の長さは 21 mm、USB の先端までは約 22.4 mm です）" };
       var from = p.side === "usb" ? "USB の先端から測った値として計算しました。" : "";
-      if (Math.abs(p.c - 8.2) <= 1.0 + 1e-9) return { s: "ok", m: from + "中心は USB と反対の端から " + f2(p.c) + " mm。設計値 8.2 mm と合っているので、このまま印刷できます" };
-      return { s: "adj", m: from + "中心は USB と反対の端から " + f2(p.c) + " mm。設計値 8.2 mm と " + sgn(p.c - 8.2) + " mm 違うので、CAD で穴を移動します（本体を作り直し）" };
+      if (Math.abs(p.c - 8.6) <= 1.0 + 1e-9) return { s: "ok", m: from + "中心は USB と反対の端から " + f2(p.c) + " mm。設計値 8.6 mm と合っているので、このまま印刷できます" };
+      return { s: "adj", m: from + "中心は USB と反対の端から " + f2(p.c) + " mm。設計値 8.6 mm と " + sgn(p.c - 8.6) + " mm 違うので、CAD で穴を移動します（本体を作り直し）" };
     }
   };
   var LABEL = { todo: "未測定", ok: "そのまま", adj: "CAD を合わせる", ng: "要相談", skip: "対象外" };
