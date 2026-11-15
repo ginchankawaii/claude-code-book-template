@@ -1540,6 +1540,22 @@ def build_phonebody(body):
 
 
 # ---------------------------------------------------------------------------
+# 印刷向き (v1.14)
+# ---------------------------------------------------------------------------
+# lid は組立座標 (外面が上、lip が下向き) のまま書き出していたため、スライサに読み込むと
+# lip の先端 (約 10mm2) だけがベッドに触れ、板の裏 (約 1,950mm2) が宙に浮いてサポートなしでは
+# 刷れなかった (実印刷で 3〜4 回連続失敗)。STL は「読み込んだまま刷れる向き」で書き出す。
+# X 軸まわり 180° 回転 + 平行移動: (x, y, z) -> (x, H - y, BODY_D + LID_T - z)。
+# 鏡像ではない (行列式 +1)。この写像は自分自身が逆写像なので、描画時も同じ行列で組立座標へ戻す。
+LID_FLIP = [[1, 0, 0, 0], [0, -1, 0, H], [0, 0, -1, BODY_D + LID_T], [0, 0, 0, 1]]
+PRINT_CONTACT_MIN = 0.40    # ベッドに触れる面積 / 外形の XY 面積 の下限 (全部品)
+
+
+def lid_print_orientation(lid):
+    return lid.rotate((0, 0, 0), (1, 0, 0), 180).translate((0, H, BODY_D + LID_T))
+
+
+# ---------------------------------------------------------------------------
 # 出力
 # ---------------------------------------------------------------------------
 def export_all():
@@ -1566,7 +1582,7 @@ def export_all():
     phonebody = build_phonebody(body)
 
     paths = {}
-    for name, wp in (("body", body), ("lid", lid), ("backplate", backplate),
+    for name, wp in (("body", body), ("lid", lid_print_orientation(lid)), ("backplate", backplate),
                      ("strapplate", strapplate), ("magsafeplate", magsafeplate),
                      ("phonebody", phonebody)):
         p = os.path.join(STL_DIR, f"mindclip_{name}.stl")
@@ -1590,6 +1606,18 @@ def verify_and_render(paths):
     total_print_mass = 0.0
     for name, p in paths.items():
         m = trimesh.load_mesh(p)
+        # 印刷向きの検査: STL を読み込んだままの向きで、ベッドに触れる面が十分にあること
+        _zmin = m.bounds[0][2]
+        _bed = (m.face_normals[:, 2] < -0.99) & (np.abs(m.triangles_center[:, 2] - _zmin) < 0.02)
+        _ext = m.bounds[1] - m.bounds[0]
+        _ratio = m.area_faces[_bed].sum() / (_ext[0] * _ext[1])
+        print(f"[print] {name}: bed contact {m.area_faces[_bed].sum():.0f} mm2 "
+              f"({100 * _ratio:.0f}% of footprint), height {_ext[2]:.1f} mm")
+        assert _ratio >= PRINT_CONTACT_MIN, (
+            f"{name} STL is not in print orientation: only {100 * _ratio:.1f}% of its footprint "
+            f"touches the bed")
+        if name == "lid":
+            m.apply_transform(np.array(LID_FLIP, dtype=float))   # 描画は組立座標で行う
         meshes[name] = m
         mass = m.volume * PETG_RHO
         if name not in ("strapplate", "magsafeplate", "phonebody"):   # backplate と差し替える別マウント (合算しない)
