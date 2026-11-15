@@ -1499,6 +1499,45 @@ def check_magsafeplate_fit(body, ms):
 
 
 # ---------------------------------------------------------------------------
+# phonebody (v1.13: 本体と MagSafe の円板を一体にしたスマホ専用の本体)
+# ---------------------------------------------------------------------------
+# magsafeplate は本体を磁石 2 個で載せるため、ぶつけると本体だけ外れて落とす心配がある。
+# スマホにしか付けない人向けに、本体の背面壁 (厚さ WALL) と同じ厚みの円板を本体と一体で刷る。
+# リングの溝は背面 (ベッド面) から彫る。本体用の磁石・接着・magsafeplate は要らない。
+# 板を重ねないので、ケースからの出っ張りは magsafeplate 方式より MS_T (3.2mm) 小さい。
+PB_BASE_T = WALL            # 円板の厚み = 背面壁と面一 (USB プラグの樹脂が上を通る)
+
+
+def build_phonebody(body):
+    depth = MS_RING_T - MS_RING_PROUD
+    c = cq.Vector(CX, H / 2, 0)
+    pb = body.union(cq.Workplane(obj=cq.Solid.makeCylinder(MS_DISC_R, PB_BASE_T, c)))
+    ro, ri = MS_RING_OD / 2 + MS_RING_FIT / 2, MS_RING_ID / 2 - MS_RING_FIT / 2
+
+    def annulus(z0, h):
+        return cq.Workplane(obj=cq.Solid.makeCylinder(ro, h, cq.Vector(CX, H / 2, z0)).cut(
+            cq.Solid.makeCylinder(ri, h, cq.Vector(CX, H / 2, z0))))
+    pb = pb.cut(annulus(-0.5, depth + 0.5))
+    assert pb.val().isValid() and len(pb.solids().vals()) == 1, "phonebody is not one valid solid"
+    # 溝の天井が全周で 0.8mm 以上残る (床の彫り込みや磁石ポケットへ抜けていない)
+    _need = math.pi * (ro ** 2 - ri ** 2) * 0.8
+    _got = sum(x.Volume() for x in pb.intersect(annulus(depth + 0.01, 0.8)).solids().vals())
+    assert _got >= _need * 0.995, f"ring groove ceiling is not solid ({_got:.1f} < {_need:.1f} mm3)"
+    for mx in MAG_XS:        # 磁石ポケット (空のまま残る) は溝の内側
+        assert math.hypot(mx - CX, MAG_Y - H / 2) + MAG_D / 2 + MAG_FIT / 2 + 0.8 <= ri + 1e-6
+    # USB プラグの樹脂 (座ぐりと同じ USB_CB_H 高) の下面が円板の上面に当たらない
+    _plug_bot = USB_Z0 + USB_OPEN_H / 2 - USB_CB_H / 2
+    assert _plug_bot - PB_BASE_T >= 0.2 - 1e-6, (
+        f"USB plug overmold bottom z{_plug_bot:.2f} hits the base flange top z{PB_BASE_T:.2f}")
+    # 正立時に円板がカメラ台座へ届かない (magsafeplate と同じ基準)
+    assert MS_RING_OD / 2 + MS_CAMERA_GAP - max(MS_DISC_R, H / 2) >= 1.5 - 1e-6
+    print(f"[phonebody] disc dia {2 * MS_DISC_R:.1f} x {PB_BASE_T:.1f} flush with the back wall | "
+          f"groove {depth:.1f} deep, ceiling {PB_BASE_T - depth:.1f} | USB plug clears the flange by "
+          f"{_plug_bot - PB_BASE_T:.2f} mm | stack on phone case: {MS_RING_PROUD + TOTAL_D:.1f} mm")
+    return pb
+
+
+# ---------------------------------------------------------------------------
 # 出力
 # ---------------------------------------------------------------------------
 def export_all():
@@ -1521,10 +1560,13 @@ def export_all():
     print("[build] magsafeplate ...")
     magsafeplate = build_magsafeplate()
     check_magsafeplate_fit(body, magsafeplate)
+    print("[build] phonebody ...")
+    phonebody = build_phonebody(body)
 
     paths = {}
     for name, wp in (("body", body), ("lid", lid), ("backplate", backplate),
-                     ("strapplate", strapplate), ("magsafeplate", magsafeplate)):
+                     ("strapplate", strapplate), ("magsafeplate", magsafeplate),
+                     ("phonebody", phonebody)):
         p = os.path.join(STL_DIR, f"mindclip_{name}.stl")
         cq.exporters.export(wp, p, tolerance=0.05, angularTolerance=0.2)
         paths[name] = p
@@ -1548,7 +1590,7 @@ def verify_and_render(paths):
         m = trimesh.load_mesh(p)
         meshes[name] = m
         mass = m.volume * PETG_RHO
-        if name not in ("strapplate", "magsafeplate"):   # backplate と差し替える別マウント (合算しない)
+        if name not in ("strapplate", "magsafeplate", "phonebody"):   # backplate と差し替える別マウント (合算しない)
             total_print_mass += mass
         print(f"[verify] {name}: watertight={m.is_watertight}  "
               f"volume={m.volume/1000.0:.2f} cm3  mass(PETG)={mass:.1f} g  "
