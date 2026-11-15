@@ -396,9 +396,11 @@ xiao_nubs_top = [
     (_CAST_R + 0.3, xiao[3] + 0.15, _CAST_R + 2.3, WALL + IH, WALL, 7.0),
 ]
 # 電池上端ストップ兼 XIAO 下端ナブ (配線ギャップ内、リード経路は左側を開放)
+#   v1.13: 厚さ 0.9mm x 幅 2mm の板が床だけで立っており、実印刷で USB 側の 1 本が形にならなかった。
+#   左のナブは左端ストップリブに、右 (USB 側) のナブは右の壁につなげて一体にした。
 xiao_nubs_bot = [
-    (xiao[0] + 0.3, bat[3] + 0.15, _CAST_L - 0.3, xiao[1] - 0.15, WALL, 7.0),
-    (_CAST_R + 0.3, bat[3] + 0.15, _CAST_R + 2.3, xiao[1] - 0.15, WALL, 7.0),
+    (xiao_stops[0][2], bat[3] + 0.15, _CAST_L - 0.3, xiao[1] - 0.15, WALL, 7.0),
+    (_CAST_R + 0.3, bat[3] + 0.15, WALL + IW, xiao[1] - 0.15, WALL, 7.0),
 ]
 # 電池 左端ストップリブ (リード出射端。中央 y9-22 はリード曲げ用に開放)
 bat_stops_left = [
