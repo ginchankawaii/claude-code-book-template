@@ -324,6 +324,10 @@ slim を作る  → stl/slim/mindclip_body.stl
                 stl/slim/mindclip_magsafeplate.stl   ← スマホ背面用（任意）
 ```
 
+> **v1.12（body だけ変更）**: 初回の実印刷で、XIAO の USB と反対側の端を受ける柱 2本が根元から折れました。
+> 柱を長くして片方を上の壁と一体にし、基板とのすきまを 0.15 → 0.30mm に広げています。
+> **v1.11 の body は刷り直してください。** lid・backplate・strapplate・magsafeplate は v1.11 と同一データです。
+>
 > **以前の版の筐体を印刷済みの人へ（v1.11）**: **body（本体）と lid（フタ）は刷り直してください。**
 > v1.11 で残りの実測値（JST コネクタ・LED・マイクの位置・XIAO の厚み）を反映し、**body と lid の両方が変わりました**
 > （マイク穴が 1.9mm 左へ、LED の窓が 1.6mm 左へ、LED の筒の深さ、slim は奥行き +0.1mm）。
