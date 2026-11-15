@@ -383,9 +383,9 @@ xiao_seats = [
 ]
 # XIAO 左端ストップリブ (USB-C挿入反力を受ける。中央はアンテナ/U.FL通し用に開放)
 #   v1.12: 初回の実印刷 (PLA) で 2 本とも根元から折れた。旧形状は 2.85 x 4.0mm の柱が床だけで
-#   立っており、基板とのすきまも 0.15mm しかなかった。すきまを 0.30mm に広げ、
+#   立っており、基板とのすきまも 0.15mm しかなかった。すきまを 0.50mm に広げ、
 #   下の柱は電池側へ、上の柱は上壁まで延ばして壁と一体にした (電線の通り道 y35..40 は不変)。
-XIAO_STOP_GAP = 0.30
+XIAO_STOP_GAP = 0.50   # 実印刷では穴の内寸が 0.2〜0.3mm 小さく出る。0.15 では基板が入らず柱を折った
 xiao_stops = [
     (xiao[0] - 3.0, round(bat[3] + 0.5, 6), xiao[0] - XIAO_STOP_GAP, 35.0, WALL, 8.1),
     (xiao[0] - 3.0, 40.0, xiao[0] - XIAO_STOP_GAP, WALL + IH, WALL, 8.1),
@@ -743,7 +743,7 @@ def check_layout():
     assert BODY_D - xiao[5] >= 0.5 - 1e-6, "XIAO stack too close to lid"
     # XIAO 横方向拘束: 左ストップリブの面が基板左端に 0.1-0.3mm で対向
     if xiao_stops:
-        assert 0.1 <= xiao[0] - xiao_stops[0][2] <= 0.3 + 1e-6, "XIAO left stop gap wrong"
+        assert 0.1 <= xiao[0] - xiao_stops[0][2] <= 0.6 + 1e-6, "XIAO left stop gap wrong"
     else:
         # carrier のみ: XIAO はキャリア基板に直はんだされるので床のストップリブが無い。
         # USB-C 挿入反力は 基板 → 取付ボス2本 + 基板左端〜内壁 で受ける (下の 6) で検査)。
