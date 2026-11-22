@@ -29,6 +29,15 @@ h1{font-size:1.7rem;line-height:1.3;margin:0;text-wrap:balance}
 h2{font-size:1.25rem;line-height:1.35;margin:0;text-wrap:balance}
 h3{font-size:1rem;margin:0}
 p{margin:0}
+p,li,td,th,figcaption,h1,h2,h3,.sub,.lead{word-break:auto-phrase;line-break:strict;overflow-wrap:anywhere}
+p,li,figcaption{text-wrap:pretty}
+figure,.warn,.ok,.step-head,li,table,tr{break-inside:avoid}
+.step-head,h2,h3{break-after:avoid}
+figure .panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+figure .panels svg{min-width:0;border-bottom:1px solid var(--line)}
+@media (max-width:620px){figure:not(:has(.panels))::before{content:"図は横にスクロールできます →";display:block;font-size:.8rem;color:var(--muted);padding:6px 12px;border-bottom:1px solid var(--line);position:sticky;left:0}}
+svg .fl{fill:var(--w-or);stroke:var(--ink);stroke-width:1.2}
+svg .tubeS{fill:var(--accent);opacity:.55;stroke:var(--ink);stroke-width:1.2}
 .lead{color:var(--muted)}
 .card{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:14px;min-width:0}
 .step-head{display:flex;gap:14px;align-items:center}
@@ -69,7 +78,7 @@ svg .x{stroke:var(--warn);stroke-width:3;fill:none;stroke-linecap:round}
 svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
 </style>
 
-<div class="wrap">
+<div class="wrap" lang="ja">
   <header style="display:flex;flex-direction:column;gap:8px">
     <h1>MindClip はんだ付け図解</h1>
     <p class="lead">LED・スイッチ・電池の線を作り、XIAO に 3本つなぐところまで。電池を XIAO につなぐ作業は、この図解の最後で止めて、一緒に確認してから行います。</p>
@@ -142,6 +151,54 @@ svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
     <p class="ok">はんだ付けのコツ：はんだを垂らすのではなく、<b>つなぐ 2つをこてで 1〜2秒温めてから</b>、温めた場所にはんだを当てます。久しぶりなら、余った線どうしで 2〜3回練習してから本番に入ってください。</p>
   </section>
 
+  <section class="card">
+    <h2>熱収縮チューブの使い方</h2>
+    <p>熱収縮チューブは、熱を当てると細く縮んで、はんだ付けした金属の部分を覆う絶縁カバーです。どの手順でも、次の 3段階で使います。</p>
+    <figure>
+      <div class="panels">
+        <svg viewBox="0 0 240 240" role="img" aria-label="はんだの前に通す">
+          <text x="14" y="28" class="b at">ア　はんだの前に通す</text>
+          <path class="w or" d="M14 100 H196"/><path class="ln" d="M196 100 H222"/>
+          <rect class="tube" x="30" y="88" width="62" height="24" rx="4"/>
+          <path class="dim" d="M92 128 V140 M92 134 H196 M196 128 V140"/>
+          <text x="144" y="158" text-anchor="middle">3cm 以上</text>
+          <text x="14" y="190" class="s">はんだ付けする先から離す。</text>
+          <text x="14" y="208" class="s">近いと、こての熱で先に縮んで</text>
+          <text x="14" y="226" class="s">動かせなくなります。</text>
+        </svg>
+        <svg viewBox="0 0 240 240" role="img" aria-label="はんだのあと継ぎ目へずらす">
+          <text x="14" y="28" class="b at">イ　継ぎ目へずらす</text>
+          <path class="w or" d="M14 100 H110"/><circle cx="120" cy="100" r="9" class="mt"/><path class="ln" d="M129 100 H226"/>
+          <rect class="tube" x="76" y="86" width="88" height="28" rx="4"/>
+          <path class="dim" d="M24 66 H62 M54 60 l8 6 l-8 6"/>
+          <path class="dim" d="M76 128 V140 M76 134 H110 M110 128 V140 M130 128 V140 M130 134 H164 M164 128 V140"/>
+          <text x="120" y="158" text-anchor="middle">両側に 3mm 以上</text>
+          <text x="14" y="190" class="s">はんだが冷めてから（3秒ほど）。</text>
+          <text x="14" y="208" class="s">金属が見えている所を、</text>
+          <text x="14" y="226" class="s">チューブの真ん中に入れる。</text>
+        </svg>
+        <svg viewBox="0 0 240 240" role="img" aria-label="炎の横で縮める">
+          <text x="14" y="28" class="b at">ウ　炎の上にかざして縮める</text>
+          <path class="w or" d="M14 76 H82"/><path class="ln" d="M158 76 H226"/>
+          <rect class="tubeS" x="76" y="70" width="88" height="12" rx="5"/>
+          <path class="fl" d="M120 172 C98 152 110 132 120 108 C130 132 142 152 120 172 Z"/>
+          <path class="dim" d="M120 104 V88 M114 96 l6 -8 l6 8"/>
+          <text x="134" y="100" class="s">1〜2cm あける</text>
+          <text x="14" y="200" class="s">炎の中には入れない。線を回しながら</text>
+          <text x="14" y="218" class="s">2〜3秒。ぴったり張り付けば完了。</text>
+        </svg>
+      </div>
+      <figcaption>点線の四角が縮める前、濃い色が縮めたあと。太さは半分ほどになります。</figcaption>
+    </figure>
+    <ul>
+      <li><b>長さ</b>：覆いたい金属の部分より、両側に 3mm ずつ長く切ります。</li>
+      <li><b>熱の当て方</b>：ライターの炎に入れるのではなく、<b>炎の 1〜2cm 上か横</b>にかざします。炎に入れると焦げて穴が開きます。線を指で回して、全周に熱を当てます。</li>
+      <li><b>ライターが使いにくいとき</b>：はんだごての<b>軸（先端ではなく、太い金属の部分）</b>をチューブに近づけて、なでるように動かしても縮みます。先端のはんだが付く所は当てません。</li>
+      <li><b>縮めすぎ・焦げ</b>：被覆が溶けたり黒く焦げたりしたら、切り取ってやり直します。</li>
+    </ul>
+    <p class="warn"><b>ライターを使うときは、電池を机から離す。</b>電池の袋を、火から 1m 以上離れた所に置いてから作業します。</p>
+  </section>
+
   <!-- STEP 3 -->
   <section class="card">
     <div class="step-head"><div class="num">1</div><div><h2>LED と抵抗に線を付ける</h2><div class="sub">はんだ 3か所（README の手順3）</div></div></div>
@@ -203,12 +260,33 @@ svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
       <figcaption>点線の四角は熱収縮チューブ。はんだ付けの<b>前に</b>線へ通しておきます。黒い線には 2本通します。</figcaption>
     </figure>
     <ol>
-      <li>橙の線に φ3 のチューブ（長さ 30mm ほど）を通す。黒の線には φ1.5（15mm）と φ3（20mm）を通す。</li>
+      <li>部品の足を短く切る。<b>LED の足は 2本とも根元から 6mm、抵抗の足は両側 3mm</b> を残します。フタの裏の狭い場所に収めるためです。切る前に、LED のどちらが長い足だったか、短い足の側にペンで印を付けておきます。</li>
+      <li>チューブを切って線に通す。橙の線に <b>φ3 を 20mm</b>。黒の線に <b>φ1.5 を 12mm</b> と <b>φ3 を 20mm</b>。通したら、線の先から 3cm 以上離しておく。</li>
       <li><b>①</b> 抵抗の片方の足と、橙の線（4mm 剥く）をはんだ付けする。足を線に 1回巻いてから流すと確実です。</li>
       <li><b>②</b> 抵抗のもう片方の足と、LED の<b>長い足</b>をはんだ付けする。余った足は切る。</li>
       <li><b>③</b> LED の<b>短い足</b>と、黒の線をはんだ付けする。</li>
-      <li>橙の線の φ3 を、①から②まで抵抗ごと覆う位置へずらし、ライターの炎の<b>横</b>であぶって縮める。黒の線の φ1.5 は③へずらして縮める。黒の線の φ3 は、まだ縮めずに残しておく。</li>
+      <li>はんだが冷めたら、チューブをずらして縮める（下の図）。橙の線の φ3 は、<b>①・抵抗・②をまとめて覆う</b>位置へ。黒の線の φ1.5 は<b>③</b>へ。縮め方は上の「熱収縮チューブの使い方」のとおりです。</li>
+      <li>黒の線の φ3 は、<b>まだ縮めない</b>。次の手順でスイッチに使います。</li>
     </ol>
+    <figure>
+      <svg viewBox="0 0 720 210" role="img" aria-label="チューブをかぶせたあとの姿">
+        <text x="20" y="28" class="b">チューブをかぶせたあとの姿</text>
+        <path class="w or" d="M30 80 H250"/>
+        <rect class="tubeS" x="244" y="70" width="190" height="20" rx="8"/>
+        <text x="339" y="60" text-anchor="middle" class="s at">φ3：①・抵抗・② をまとめて覆う</text>
+        <path class="ln" d="M434 80 H560"/>
+        <rect class="pt" x="560" y="64" width="10" height="64"/>
+        <path class="pt" d="M570 68 h34 a28 28 0 0 1 0 56 h-34 z"/>
+        <path class="ln" d="M560 112 H520"/>
+        <rect class="tubeS" x="450" y="106" width="76" height="12" rx="5"/>
+        <text x="488" y="138" text-anchor="middle" class="s at">φ1.5：③ を覆う</text>
+        <path class="bkc" d="M452 112 C400 112 380 170 300 170 H40"/><path class="w bk" d="M452 112 C400 112 380 170 300 170 H40"/>
+        <rect class="tube" x="150" y="158" width="70" height="24" rx="4"/>
+        <text x="185" y="200" text-anchor="middle" class="s at">φ3：縮めずに残す</text>
+        <text x="620" y="150" text-anchor="middle" class="s">LED の頭と、足の</text><text x="620" y="166" text-anchor="middle" class="s">根元 2〜3mm は出す</text>
+      </svg>
+      <figcaption>LED の足の根元 2〜3mm はチューブをかぶせません。あとでそこを曲げます。</figcaption>
+    </figure>
     <p class="warn"><b>LED に こてを当てるのは 3秒以内。</b>熱に弱い部品です。足の根元をピンセットではさむと熱が逃げます。<br><b>抵抗は必ず入れる。</b>抜くと、LED と XIAO のピンが壊れます。<br>LED の足は、まだ曲げません。フタに組み込む日に、向きを確認してから曲げます。</p>
     <ul class="checks">
       <li><label><input type="checkbox" id="c1a"><span>抵抗は LED の長い足の側に付いている</span></label></li>
@@ -255,7 +333,8 @@ svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
       <li><b>中央</b>の端子に、青の線（3mm 剥く）をはんだ付けする。端子の小さな穴に通して折り返すと確実です。</li>
       <li>黒の線 2本（LED から来た 60mm と、新しい 50mm）の先を、<b>先にねじり合わせて 1本にし、はんだを少し染み込ませる。</b></li>
       <li>その束を、残った<b>端</b>の端子に 1回ではんだ付けする。</li>
-      <li>手順1で残しておいた φ3 のチューブを端子までずらして縮める。</li>
+      <li>はんだが冷めたら、黒の線に残しておいた φ3 のチューブを、<b>端子の金属とはんだが全部隠れる位置</b>（スイッチ本体に当たるまで）へずらして縮める。スイッチの樹脂に炎を近づけすぎないよう、ここは<b>はんだごての軸</b>で縮めるほうが安全です。</li>
+      <li>中央の端子（青）は、チューブなしで構いません。隣の端子とすき間があることを目で確かめます。</li>
     </ol>
     <p class="warn"><b>黒の線を 1本ずつ付けない。</b>2本目を付けるときに 1本目が溶けて外れます。必ずねじってから付けます。<br><b>こては 2〜3秒以内。</b>長く当てるとスイッチの樹脂が溶けて動かなくなります。溶かしたら、迷わず新しいスイッチに替えます。</p>
     <h3>テスターで確認（導通のブザー）</h3>
