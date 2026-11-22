@@ -14,7 +14,7 @@
 | `sre/frozen_weekday.py` | 平日に配信が凍っても、75時間までは脳も健康診断も正常と読む（MT5側の挙動は仮定） | `python sre/frozen_weekday.py` |
 | `assurance/incident_sim.py` | 同じ事故を、リポジトリのFakeEAを拡張して再生する別実装 | `python assurance/incident_sim.py <作業フォルダ> weekday` |
 | `assurance/mutate.py` | 注文経路に手で入れる36個の欠陥と、テスト全体での検出結果 | **必ず `fxsim` の複製に対して**：`python assurance/mutate.py <複製のパス> <python>` |
-| `assurance/mutation.log` | 上の実行結果（20個検出・16個素通り） | — |
+| `assurance/mutation_results.txt` | 上の実行結果（20個検出・16個素通り） | — |
 | `maintain/blind.py` | 未ログインのEAが書く状態行で、脳が理由を出さずに盲目になることを示す | `python maintain/blind.py <作業フォルダ>` |
 | `maintain/graph.py` | モジュールの依存関係（ライブ経路・運用ツール・どちらでもない） | `python maintain/graph.py` |
 | `quant/engine_full.py` `quant/repro.py` | 本物のエンジンとハーネスの一致、近傍9通りの数字の再生成 | `python quant/engine_full.py` |
