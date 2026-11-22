@@ -1,0 +1,406 @@
+<title>MindClip はんだ付け図解</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* layout: 組立説明書の1列。各手順 = 番号札 + 図 + 短い指示 + 確認チェック */
+:root{
+  --bg:#f3f5f8; --paper:#ffffff; --ink:#1c2533; --muted:#5a6678; --line:#c9d1dc;
+  --accent:#0b6bcb; --warn:#b3261e; --warn-bg:#fdecea; --ok:#1b7a3d; --ok-bg:#e7f5ec;
+  --part:#e3e8ef; --metal:#aeb7c4; --tube:rgba(11,107,203,.18);
+  --w-or:#e8730c; --w-bl:#1f6fd6; --w-rd:#d32f2f; --w-bk:#15181d; --tape:#f2d98a;
+  --font:"Zen Kaku Gothic New","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+  --num:"Space Grotesk","Zen Kaku Gothic New",sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#12161c; --paper:#1b212a; --ink:#e6eaf0; --muted:#9aa6b6; --line:#3a4453;
+  --accent:#6db3ff; --warn:#ff8a80; --warn-bg:#3a1f1d; --ok:#7bd69a; --ok-bg:#1b3325;
+  --part:#2a323e; --metal:#7f8a99; --tube:rgba(109,179,255,.22);
+  --w-or:#ff9a3d; --w-bl:#62a8ff; --w-rd:#ff6b6b; --w-bk:#0a0c10; --tape:#c9a94a; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#12161c; --paper:#1b212a; --ink:#e6eaf0; --muted:#9aa6b6; --line:#3a4453;
+  --accent:#6db3ff; --warn:#ff8a80; --warn-bg:#3a1f1d; --ok:#7bd69a; --ok-bg:#1b3325;
+  --part:#2a323e; --metal:#7f8a99; --tube:rgba(109,179,255,.22);
+  --w-or:#ff9a3d; --w-bl:#62a8ff; --w-rd:#ff6b6b; --w-bk:#0a0c10; --tape:#c9a94a; color-scheme:dark }
+
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:16px;line-height:1.75;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px 64px}
+.wrap{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:28px}
+h1{font-size:1.7rem;line-height:1.3;margin:0;text-wrap:balance}
+h2{font-size:1.25rem;line-height:1.35;margin:0;text-wrap:balance}
+h3{font-size:1rem;margin:0}
+p{margin:0}
+.lead{color:var(--muted)}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.step-head{display:flex;gap:14px;align-items:center}
+.num{font-family:var(--num);font-weight:700;font-size:1.5rem;min-width:52px;height:52px;border:2px solid var(--ink);border-radius:8px;display:grid;place-items:center}
+.sub{color:var(--muted);font-size:.9rem}
+figure{margin:0;border:1px solid var(--line);border-radius:8px;overflow-x:auto;background:var(--paper)}
+figure svg{display:block;width:100%;min-width:560px;height:auto}
+figcaption{font-size:.85rem;color:var(--muted);padding:8px 12px;border-top:1px solid var(--line)}
+ol,ul{margin:0;padding-left:1.4em;display:flex;flex-direction:column;gap:6px}
+.warn{background:var(--warn-bg);border-left:4px solid var(--warn);padding:10px 14px;border-radius:4px}
+.warn b{color:var(--warn)}
+.ok{background:var(--ok-bg);border-left:4px solid var(--ok);padding:10px 14px;border-radius:4px}
+.checks{list-style:none;padding:0;gap:8px}
+.checks label{display:flex;gap:10px;align-items:flex-start;cursor:pointer}
+.checks input{width:20px;height:20px;margin-top:4px;flex:none;accent-color:var(--ok)}
+.checks input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+table{border-collapse:collapse;width:100%;font-size:.95rem}
+th,td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:500;font-size:.85rem}
+.tw{overflow-x:auto}
+.chip{display:inline-block;width:1.6em;height:.5em;border-radius:3px;vertical-align:middle;margin-right:.3em;border:1px solid var(--line)}
+.stop{border:2px solid var(--warn)}
+/* SVG parts */
+svg text{font-family:var(--font);fill:var(--ink);font-size:14px}
+svg .s{font-size:12px;fill:var(--muted)}
+svg .b{font-weight:700}
+svg .ln{stroke:var(--ink);stroke-width:1.6;fill:none}
+svg .pt{stroke:var(--ink);stroke-width:1.6;fill:var(--part)}
+svg .mt{stroke:var(--ink);stroke-width:1.2;fill:var(--metal)}
+svg .pp{stroke:var(--ink);stroke-width:1.6;fill:var(--paper)}
+svg .w{fill:none;stroke-width:4;stroke-linecap:round}
+svg .or{stroke:var(--w-or)} svg .bl{stroke:var(--w-bl)} svg .rd{stroke:var(--w-rd)}
+svg .bkc{stroke:var(--ink);stroke-width:6.5;fill:none;stroke-linecap:round} svg .bk{stroke:var(--w-bk)}
+svg .tube{fill:var(--tube);stroke:var(--accent);stroke-width:1.2;stroke-dasharray:4 3}
+svg .tape{fill:var(--tape);stroke:var(--ink);stroke-width:1}
+svg .dim{stroke:var(--muted);stroke-width:1;fill:none}
+svg .x{stroke:var(--warn);stroke-width:3;fill:none;stroke-linecap:round}
+svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
+</style>
+
+<div class="wrap">
+  <header style="display:flex;flex-direction:column;gap:8px">
+    <h1>MindClip はんだ付け図解</h1>
+    <p class="lead">LED・スイッチ・電池の線を作り、XIAO に 3本つなぐところまで。電池を XIAO につなぐ作業は、この図解の最後で止めて、一緒に確認してから行います。</p>
+  </header>
+
+  <section class="card">
+    <h2>できあがりの配線</h2>
+    <figure>
+      <svg viewBox="0 0 720 400" role="img" aria-label="全体の配線図">
+        <!-- XIAO -->
+        <rect class="pt" x="480" y="60" width="140" height="240" rx="8"/>
+        <rect class="mt" x="520" y="42" width="60" height="34" rx="4"/>
+        <text x="550" y="34" text-anchor="middle" class="s">USB-C</text>
+        <text x="550" y="200" text-anchor="middle" class="b">XIAO</text>
+        <g class="pp">
+          <circle cx="494" cy="100" r="6"/><circle cx="494" cy="128" r="6"/><circle cx="494" cy="156" r="6"/><circle cx="494" cy="184" r="6"/><circle cx="494" cy="212" r="6"/><circle cx="494" cy="240" r="6"/><circle cx="494" cy="268" r="6"/>
+          <circle cx="606" cy="100" r="6"/><circle cx="606" cy="128" r="6"/><circle cx="606" cy="156" r="6"/><circle cx="606" cy="184" r="6"/><circle cx="606" cy="212" r="6"/><circle cx="606" cy="240" r="6"/><circle cx="606" cy="268" r="6"/>
+        </g>
+        <text x="508" y="133" class="b">D1</text><text x="508" y="189" class="b">D3</text>
+        <text x="592" y="133" text-anchor="end" class="b">GND</text>
+        <!-- switch -->
+        <rect class="mt" x="60" y="70" width="110" height="40" rx="3"/>
+        <rect class="pt" x="78" y="46" width="22" height="24"/>
+        <text x="115" y="95" text-anchor="middle" class="s">スイッチ</text>
+        <rect class="mt" x="76" y="110" width="8" height="24"/><rect class="mt" x="111" y="110" width="8" height="24"/>
+        <rect class="mt" x="146" y="110" width="8" height="7"/>
+        <path class="x" d="M142 122 l16 14 M158 122 l-16 14"/>
+        <text x="166" y="140" class="s wt">切る</text>
+        <!-- LED + resistor -->
+        <path class="pt" d="M70 286 h22 a14 14 0 0 1 0 28 h-22 z"/>
+        <text x="88" y="336" text-anchor="middle" class="s">LED</text>
+        <path class="ln" d="M106 292 H150 M106 308 H140"/>
+        <rect class="pt" x="150" y="283" width="58" height="18" rx="6"/>
+        <text x="179" y="276" text-anchor="middle" class="s">220Ω</text>
+        <!-- wires -->
+        <path class="w or" d="M208 292 C320 292 380 184 488 184"/>
+        <path class="w bl" d="M115 134 C115 215 380 128 488 128"/>
+        <path class="bkc" d="M140 308 C165 340 60 345 60 262 C60 200 78 190 78 136"/>
+        <path class="w bk" d="M140 308 C165 340 60 345 60 262 C60 200 78 190 78 136"/>
+        <path class="bkc" d="M83 136 C83 190 20 190 20 290 C20 384 220 378 560 378 C706 378 706 128 612 128"/>
+        <path class="w bk" d="M83 136 C83 190 20 190 20 290 C20 384 220 378 560 378 C706 378 706 128 612 128"/>
+        <text x="236" y="150" class="s">青 50mm</text>
+        <text x="372" y="262" class="s">橙 60mm</text>
+        <text x="68" y="232" class="s">黒 60mm</text>
+        <text x="330" y="364" class="s">黒 50mm</text>
+      </svg>
+      <figcaption>線は 4本。スイッチの端の端子に、黒い線が 2本まとめて付きます。</figcaption>
+    </figure>
+    <div class="tw"><table>
+      <tr><th>線</th><th>長さ</th><th>どこから</th><th>どこへ</th></tr>
+      <tr><td><span class="chip" style="background:var(--w-or)"></span>橙</td><td>60mm</td><td>抵抗（LED の長い足の先）</td><td>XIAO の D3</td></tr>
+      <tr><td><span class="chip" style="background:var(--w-bk)"></span>黒</td><td>60mm</td><td>LED の短い足</td><td>スイッチの端の端子</td></tr>
+      <tr><td><span class="chip" style="background:var(--w-bl)"></span>青</td><td>50mm</td><td>スイッチの中央の端子</td><td>XIAO の D1</td></tr>
+      <tr><td><span class="chip" style="background:var(--w-bk)"></span>黒</td><td>50mm</td><td>スイッチの端の端子</td><td>XIAO の GND</td></tr>
+    </table></div>
+    <p class="sub">線の色が手持ちと違っても構いません。「どこからどこへ」が合っていれば動きます。長さは、両端を剥く分として 5mm 足して切ります。</p>
+  </section>
+
+  <section class="card">
+    <h2>用意するもの</h2>
+    <ul class="checks">
+      <li><label><input type="checkbox" id="t1"><span>はんだごて（320〜350℃）、はんだ、こて台</span></label></li>
+      <li><label><input type="checkbox" id="t2"><span>ニッパー、ワイヤストリッパ、ピンセット、定規</span></label></li>
+      <li><label><input type="checkbox" id="t3"><span>テスター（電圧と、導通のブザー）</span></label></li>
+      <li><label><input type="checkbox" id="t4"><span>熱収縮チューブ φ1.5 と φ3、ライター</span></label></li>
+      <li><label><input type="checkbox" id="t5"><span>マスキングテープ、油性ペン</span></label></li>
+      <li><label><input type="checkbox" id="t6"><span>吸い取り線、フラックス（失敗したときと、小さいパッド用）</span></label></li>
+      <li><label><input type="checkbox" id="t7"><span>部品：LED、220Ω 抵抗、スライドスイッチ、電線、JST のピグテール、電池（袋のまま）</span></label></li>
+    </ul>
+    <p class="ok">はんだ付けのコツ：はんだを垂らすのではなく、<b>つなぐ 2つをこてで 1〜2秒温めてから</b>、温めた場所にはんだを当てます。久しぶりなら、余った線どうしで 2〜3回練習してから本番に入ってください。</p>
+  </section>
+
+  <!-- STEP 3 -->
+  <section class="card">
+    <div class="step-head"><div class="num">1</div><div><h2>LED と抵抗に線を付ける</h2><div class="sub">はんだ 3か所（README の手順3）</div></div></div>
+    <figure>
+      <svg viewBox="0 0 720 230" role="img" aria-label="LED の足と抵抗の見分け方">
+        <text x="20" y="28" class="b">部品の見分け方</text>
+        <path class="pt" d="M60 80 h40 a28 28 0 0 1 0 56 h-40 z"/>
+        <rect class="pt" x="52" y="76" width="10" height="64"/>
+        <path class="ln" d="M52 94 H-0 M52 122 H20" transform="translate(0,0) scale(-1,1) translate(-104,0)"/>
+        <path class="ln" d="M128 94 H300 M128 122 H240"/>
+        <text x="310" y="99">長い足 ＝ ＋</text>
+        <text x="250" y="127">短い足 ＝ −</text>
+        <text x="60" y="165" class="s">LED（3mm・赤）</text>
+        <path class="ln" d="M440 108 H480 M620 108 H680"/>
+        <rect class="pt" x="480" y="92" width="140" height="32" rx="12"/>
+        <rect x="500" y="92" width="12" height="32" fill="var(--w-rd)"/>
+        <rect x="524" y="92" width="12" height="32" fill="var(--w-rd)"/>
+        <rect x="548" y="92" width="12" height="32" fill="#7a4a1e"/>
+        <rect x="590" y="92" width="12" height="32" fill="#c9a227"/>
+        <text x="550" y="150" text-anchor="middle">赤・赤・茶・金 ＝ 220Ω</text>
+        <text x="550" y="170" text-anchor="middle" class="s">抵抗に向きはありません</text>
+        <text x="20" y="210" class="s">足を切ってしまったら：LED の縁が平らに削れている側が「−」です。</text>
+      </svg>
+    </figure>
+    <figure>
+      <svg viewBox="0 0 720 250" role="img" aria-label="LED と抵抗と線のつなぎ方">
+        <text x="20" y="28" class="b">つなぐ順番（左から右へ）</text>
+        <!-- orange wire -->
+        <path class="w or" d="M30 90 H230"/>
+        <text x="110" y="76" text-anchor="middle">橙 60mm</text>
+        <!-- joint a -->
+        <circle cx="240" cy="90" r="9" class="mt"/><text x="240" y="126" text-anchor="middle" class="b at">①</text>
+        <path class="ln" d="M249 90 H275"/>
+        <rect class="pt" x="275" y="78" width="80" height="24" rx="9"/>
+        <text x="315" y="66" text-anchor="middle" class="s">220Ω</text>
+        <path class="ln" d="M355 90 H385"/>
+        <circle cx="394" cy="90" r="9" class="mt"/><text x="394" y="126" text-anchor="middle" class="b at">②</text>
+        <path class="ln" d="M403 90 H560"/>
+        <text x="480" y="80" text-anchor="middle" class="s">長い足（＋）</text>
+        <!-- LED -->
+        <rect class="pt" x="560" y="74" width="10" height="64"/>
+        <path class="pt" d="M570 78 h34 a28 28 0 0 1 0 56 h-34 z"/>
+        <path class="ln" d="M560 122 H470"/>
+        <text x="515" y="142" text-anchor="middle" class="s">短い足（−）</text>
+        <circle cx="461" cy="122" r="9" class="mt"/><text x="461" y="158" text-anchor="middle" class="b at">③</text>
+        <!-- black wire -->
+        <path class="bkc" d="M452 122 C400 122 380 190 300 190 H40"/>
+        <path class="w bk" d="M452 122 C400 122 380 190 300 190 H40"/>
+        <text x="150" y="176" text-anchor="middle">黒 60mm</text>
+        <text x="40" y="214" class="s">→ この端は、次の手順でスイッチに付けます</text>
+        <!-- tubes -->
+        <rect class="tube" x="150" y="80" width="60" height="20" rx="4"/>
+        <text x="180" y="54" text-anchor="middle" class="s at">φ3 を先に通す</text>
+        <rect class="tube" x="300" y="180" width="46" height="20" rx="4"/>
+        <text x="323" y="232" text-anchor="middle" class="s at">φ1.5（③用）</text>
+        <rect class="tube" x="200" y="180" width="70" height="20" rx="4"/>
+        <text x="235" y="232" text-anchor="middle" class="s at">φ3（スイッチ用）</text>
+      </svg>
+      <figcaption>点線の四角は熱収縮チューブ。はんだ付けの<b>前に</b>線へ通しておきます。黒い線には 2本通します。</figcaption>
+    </figure>
+    <ol>
+      <li>橙の線に φ3 のチューブ（長さ 30mm ほど）を通す。黒の線には φ1.5（15mm）と φ3（20mm）を通す。</li>
+      <li><b>①</b> 抵抗の片方の足と、橙の線（4mm 剥く）をはんだ付けする。足を線に 1回巻いてから流すと確実です。</li>
+      <li><b>②</b> 抵抗のもう片方の足と、LED の<b>長い足</b>をはんだ付けする。余った足は切る。</li>
+      <li><b>③</b> LED の<b>短い足</b>と、黒の線をはんだ付けする。</li>
+      <li>橙の線の φ3 を、①から②まで抵抗ごと覆う位置へずらし、ライターの炎の<b>横</b>であぶって縮める。黒の線の φ1.5 は③へずらして縮める。黒の線の φ3 は、まだ縮めずに残しておく。</li>
+    </ol>
+    <p class="warn"><b>LED に こてを当てるのは 3秒以内。</b>熱に弱い部品です。足の根元をピンセットではさむと熱が逃げます。<br><b>抵抗は必ず入れる。</b>抜くと、LED と XIAO のピンが壊れます。<br>LED の足は、まだ曲げません。フタに組み込む日に、向きを確認してから曲げます。</p>
+    <ul class="checks">
+      <li><label><input type="checkbox" id="c1a"><span>抵抗は LED の長い足の側に付いている</span></label></li>
+      <li><label><input type="checkbox" id="c1b"><span>金属がむき出しの所がない（抵抗とはんだの継ぎ目がチューブで覆われている）</span></label></li>
+      <li><label><input type="checkbox" id="c1c"><span>黒の線に φ3 のチューブが 1本、縮めずに残っている</span></label></li>
+    </ul>
+  </section>
+
+  <!-- STEP 4 -->
+  <section class="card">
+    <div class="step-head"><div class="num">2</div><div><h2>スイッチに線を付ける</h2><div class="sub">はんだ 2か所（README の手順4）</div></div></div>
+    <figure>
+      <svg viewBox="0 0 720 330" role="img" aria-label="スイッチの端子と線">
+        <text x="20" y="28" class="b">レバーを上、端子を下にして見た図</text>
+        <rect class="mt" x="230" y="90" width="260" height="70" rx="4"/>
+        <rect class="pt" x="262" y="46" width="44" height="44"/>
+        <text x="360" y="130" text-anchor="middle">スイッチ本体</text>
+        <path class="dim" d="M330 62 H262" marker-end="none"/>
+        <text x="320" y="60" class="s at">← こちらに倒すと「録音 ON」</text>
+        <!-- terminals -->
+        <rect class="mt" x="262" y="160" width="14" height="46"/>
+        <rect class="mt" x="353" y="160" width="14" height="46"/>
+        <rect class="mt" x="444" y="160" width="14" height="12"/>
+        <path class="x" d="M434 184 l34 26 M468 184 l-34 26"/>
+        <text x="480" y="204" class="wt b">右端は根元から切る</text>
+        <text x="269" y="84" text-anchor="middle" class="s"></text>
+        <!-- wires -->
+        <path class="w bl" d="M360 206 C360 260 430 290 560 290"/>
+        <text x="570" y="295">青 50mm → XIAO の D1</text>
+        <path class="bkc" d="M266 206 C262 250 200 268 60 268"/><path class="w bk" d="M266 206 C262 250 200 268 60 268"/>
+        <path class="bkc" d="M272 206 C272 270 200 306 60 306"/><path class="w bk" d="M272 206 C272 270 200 306 60 306"/>
+        <text x="20" y="258" class="s">黒 60mm（LED から）</text>
+        <text x="20" y="326" class="s">黒 50mm → XIAO の GND</text>
+        <rect class="tube" x="240" y="196" width="58" height="34" rx="4"/>
+        <text x="190" y="190" text-anchor="end" class="s at">最後に φ3 をかぶせる →</text>
+        <text x="269" y="150" text-anchor="middle" class="s">端</text>
+        <text x="360" y="150" text-anchor="middle" class="s">中央</text>
+        <text x="451" y="150" text-anchor="middle" class="s">使わない</text>
+      </svg>
+      <figcaption>スイッチは左右対称なので、どちらの端を切っても構いません。切らなかった端が「黒 2本」の端子になります。</figcaption>
+    </figure>
+    <ol>
+      <li>端の端子を 1本、ニッパーで根元から切る。</li>
+      <li><b>中央</b>の端子に、青の線（3mm 剥く）をはんだ付けする。端子の小さな穴に通して折り返すと確実です。</li>
+      <li>黒の線 2本（LED から来た 60mm と、新しい 50mm）の先を、<b>先にねじり合わせて 1本にし、はんだを少し染み込ませる。</b></li>
+      <li>その束を、残った<b>端</b>の端子に 1回ではんだ付けする。</li>
+      <li>手順1で残しておいた φ3 のチューブを端子までずらして縮める。</li>
+    </ol>
+    <p class="warn"><b>黒の線を 1本ずつ付けない。</b>2本目を付けるときに 1本目が溶けて外れます。必ずねじってから付けます。<br><b>こては 2〜3秒以内。</b>長く当てるとスイッチの樹脂が溶けて動かなくなります。溶かしたら、迷わず新しいスイッチに替えます。</p>
+    <h3>テスターで確認（導通のブザー）</h3>
+    <ul class="checks">
+      <li><label><input type="checkbox" id="c2a"><span>レバーを黒い線の側に倒す → 中央と端が<b>鳴る</b></span></label></li>
+      <li><label><input type="checkbox" id="c2b"><span>レバーを反対に倒す → 中央と端が<b>鳴らない</b></span></label></li>
+      <li><label><input type="checkbox" id="c2c"><span>中央と端のはんだが、くっついていない（目で見る）</span></label></li>
+    </ul>
+  </section>
+
+  <!-- STEP 5 -->
+  <section class="card">
+    <div class="step-head"><div class="num">3</div><div><h2>電池のコネクタの線を切り、＋を調べる</h2><div class="sub">はんだ なし（README の手順5）</div></div></div>
+    <p class="warn"><b>安全の約束は 3つです。</b><br>1. 切る・剥くのは、<b>電池につながっていない</b>ピグテールだけ。その間、電池は袋の中。<br>2. 電池を挿している間は、線の先を 2本とも<b>机にテープで留める</b>。<br>3. 電池のプラグの穴に、テスターの棒や針金を<b>入れない</b>。</p>
+    <figure>
+      <svg viewBox="0 0 720 220" role="img" aria-label="ピグテールの切る長さ">
+        <text x="20" y="28" class="b">線を長さ違いに切る</text>
+        <rect class="pp" x="40" y="80" width="54" height="50" rx="3"/>
+        <text x="67" y="110" text-anchor="middle" class="s">JST</text>
+        <path class="w rd" d="M94 95 H470"/>
+        <path class="bkc" d="M94 115 H510"/><path class="w bk" d="M94 115 H510"/>
+        <path class="ln" d="M470 95 h14" /><path class="ln" d="M510 115 h14"/>
+        <rect class="tape" x="476" y="82" width="26" height="26"/>
+        <rect class="tape" x="516" y="102" width="26" height="26"/>
+        <path class="dim" d="M94 60 V72 M94 66 H470 M470 60 V72"/>
+        <text x="282" y="56" text-anchor="middle">約 60mm</text>
+        <path class="dim" d="M94 150 V162 M94 156 H510 M510 150 V162"/>
+        <text x="302" y="180" text-anchor="middle">約 65mm</text>
+        <text x="560" y="100" class="s">先を 2mm だけ剥き、</text>
+        <text x="560" y="118" class="s">1本ずつテープで包む</text>
+        <text x="20" y="208" class="s">長さを変えるのは、剥いた先どうしが向かい合わないようにするためです。色は図と違っても構いません。</text>
+      </svg>
+    </figure>
+    <figure>
+      <svg viewBox="0 0 720 300" role="img" aria-label="机に固定して電圧を測る">
+        <text x="20" y="28" class="b">机に「ハ」の字に留めて、電圧を測る</text>
+        <rect x="20" y="44" width="680" height="240" rx="6" fill="none" stroke="var(--line)" stroke-dasharray="6 5"/>
+        <text x="36" y="66" class="s">机（木や紙の面。金属の工具を近くに置かない）</text>
+        <!-- battery -->
+        <rect class="mt" x="50" y="130" width="110" height="70" rx="6"/>
+        <text x="105" y="170" text-anchor="middle" class="s">電池</text>
+        <path class="ln" d="M160 160 H196"/>
+        <rect class="pp" x="196" y="142" width="54" height="36" rx="3"/>
+        <text x="223" y="134" text-anchor="middle" class="s">挿すのは 1分以内</text>
+        <rect class="tape" x="262" y="146" width="24" height="28"/>
+        <path class="w rd" d="M250 152 C340 150 420 110 520 96"/>
+        <path class="bkc" d="M250 168 C340 170 420 220 520 236"/><path class="w bk" d="M250 168 C340 170 420 220 520 236"/>
+        <rect class="tape" x="470" y="88" width="30" height="26" transform="rotate(-8 485 101)"/>
+        <rect class="tape" x="470" y="218" width="30" height="26" transform="rotate(8 485 231)"/>
+        <path class="ln" d="M520 96 h16 M520 236 h16"/>
+        <path class="dim" d="M560 96 V236 M552 96 H568 M552 236 H568"/>
+        <text x="576" y="170">3cm 以上</text>
+        <!-- tester -->
+        <rect class="pp" x="610" y="60" width="80" height="50" rx="6"/>
+        <text x="650" y="92" text-anchor="middle" class="b">3.9V</text>
+        <path class="dim" d="M536 96 C570 70 590 80 610 84"/>
+        <path class="dim" d="M536 236 C640 250 660 170 650 110"/>
+        <text x="604" y="54" text-anchor="end" class="s">赤い棒</text>
+        <text x="640" y="262" text-anchor="middle" class="s">黒い棒</text>
+      </svg>
+      <figcaption>黄色の四角はマスキングテープ。先端から 1cm 手前と、コネクタの近くを机に貼ります。</figcaption>
+    </figure>
+    <ol>
+      <li>ピグテールのオスとメスを電池のプラグと見比べ、<b>指先の軽い力でまっすぐ挿さる側</b>を選ぶ。確かめたらすぐ抜いて、電池を袋に戻す。挿さらなかった側も捨てずに取っておく。</li>
+      <li>選んだ側の線を、根元から <b>60mm と 65mm</b> で切る。先を 2mm 剥き、1本ずつテープで包む。</li>
+      <li>図のように机へテープで留める。引っ張っても動かないことを確かめる。</li>
+      <li>テスターを<b>直流電圧（20V）</b>にする。電池を挿し、先端のテープを外して、棒を 1本ずつ当てる。</li>
+      <li><b>＋3.5〜4.2V</b> と出たら、赤い棒を当てている線が「＋」。<b>マイナスの数字</b>なら、黒い棒の側が「＋」。</li>
+      <li>「＋」の線に、テープで<b>「＋」の印を 2か所</b>（コネクタの近くと先端の近く）付ける。</li>
+      <li><b>電池を抜いて袋に戻す。</b>そのあとで、先端をもう一度テープで包む。</li>
+    </ol>
+    <p class="warn"><b>線の色（赤・黒）は信用しない。</b>赤と黒が逆の品があります。＋かどうかは、測った結果と自分で付けた印だけで決めます。<br>途中で線が外れて動いたら、何より先に<b>電池を抜く</b>。</p>
+    <ul class="checks">
+      <li><label><input type="checkbox" id="c3a"><span>「＋」の印が 2か所に付いている</span></label></li>
+      <li><label><input type="checkbox" id="c3b"><span>電池は抜いて、袋に戻してある</span></label></li>
+      <li><label><input type="checkbox" id="c3c"><span>線の先は 2本ともテープで包んである</span></label></li>
+    </ul>
+  </section>
+
+  <!-- STEP 6 -->
+  <section class="card">
+    <div class="step-head"><div class="num">4</div><div><h2>XIAO に線を 3本付ける</h2><div class="sub">はんだ 3か所（README の手順6）</div></div></div>
+    <figure>
+      <svg viewBox="0 0 720 430" role="img" aria-label="XIAO のピンの位置">
+        <text x="20" y="28" class="b">USB の口を上にして、USB の口がある面から見た図</text>
+        <rect class="pt" x="250" y="80" width="220" height="320" rx="10"/>
+        <rect class="mt" x="315" y="56" width="90" height="48" rx="5"/>
+        <text x="360" y="48" text-anchor="middle" class="s">USB-C</text>
+        <g class="pp">
+          <circle cx="274" cy="140" r="9"/><circle cx="274" cy="178" r="9"/><circle cx="274" cy="216" r="9"/><circle cx="274" cy="254" r="9"/><circle cx="274" cy="292" r="9"/><circle cx="274" cy="330" r="9"/><circle cx="274" cy="368" r="9"/>
+          <circle cx="446" cy="140" r="9"/><circle cx="446" cy="178" r="9"/><circle cx="446" cy="216" r="9"/><circle cx="446" cy="254" r="9"/><circle cx="446" cy="292" r="9"/><circle cx="446" cy="330" r="9"/><circle cx="446" cy="368" r="9"/>
+        </g>
+        <g class="s">
+          <text x="292" y="145">D0</text><text x="292" y="221">D2</text><text x="292" y="297">D4</text><text x="292" y="335">D5</text><text x="292" y="373">D6</text>
+          <text x="428" y="145" text-anchor="end">5V</text><text x="428" y="221" text-anchor="end">3V3</text><text x="428" y="259" text-anchor="end">D10</text><text x="428" y="297" text-anchor="end">D9</text><text x="428" y="335" text-anchor="end">D8</text><text x="428" y="373" text-anchor="end">D7</text>
+        </g>
+        <text x="292" y="183" class="b">D1</text><text x="292" y="259" class="b">D3</text><text x="428" y="183" text-anchor="end" class="b">GND</text>
+        <path class="w bl" d="M265 178 H90"/><circle cx="274" cy="178" r="5" fill="var(--w-bl)"/>
+        <path class="w or" d="M265 254 H90"/><circle cx="274" cy="254" r="5" fill="var(--w-or)"/>
+        <path class="bkc" d="M455 178 H700"/><path class="w bk" d="M455 178 H700"/><circle cx="446" cy="178" r="5" fill="var(--w-bk)" stroke="var(--ink)"/>
+        <text x="20" y="166">青</text><text x="20" y="200" class="s">スイッチの中央から</text>
+        <text x="20" y="242">橙</text><text x="20" y="276" class="s">抵抗から</text>
+        <text x="700" y="166" text-anchor="end">黒 50mm</text><text x="700" y="200" text-anchor="end" class="s">スイッチの端から</text>
+        <path class="x" d="M462 150 q14 8 0 16 M462 190 q14 8 0 16" style="stroke-width:2"/>
+        <text x="484" y="122" class="s wt">GND は 5V と 3V3 にはさまれている。</text>
+        <text x="484" y="240" class="s wt">隣とくっつけない</text>
+      </svg>
+      <figcaption>穴の位置は、必ず基板に印刷された文字（D1・D3・GND）で確かめます。ピンヘッダは使わず、線を穴へ直接付けます。</figcaption>
+    </figure>
+    <ol>
+      <li>USB ケーブルを抜く。microSD カードも抜いておくと安心です。</li>
+      <li>D1・D3・GND の 3つの穴に、こてを当ててはんだを少しだけ流す（下準備）。</li>
+      <li>線の先を 3mm 剥いてねじり、はんだを少し染み込ませる。</li>
+      <li>穴のはんだをこてで溶かし、そこへ線を差し込んで、こてを離す。<b>青 → D1</b>、<b>橙 → D3</b>、<b>黒 → GND</b> の順に。</li>
+    </ol>
+    <h3>つなぐ前にテスターで確認（導通のブザー）</h3>
+    <ul class="checks">
+      <li><label><input type="checkbox" id="c4a"><span>GND と 5V が<b>鳴らない</b></span></label></li>
+      <li><label><input type="checkbox" id="c4b"><span>GND と 3V3 が<b>鳴らない</b></span></label></li>
+      <li><label><input type="checkbox" id="c4c"><span>D1 と D0、D1 と D2 が<b>鳴らない</b></span></label></li>
+      <li><label><input type="checkbox" id="c4d"><span>D3 と D2、D3 と D4 が<b>鳴らない</b></span></label></li>
+      <li><label><input type="checkbox" id="c4e"><span>スイッチを ON にすると、D1 と GND が<b>鳴る</b></span></label></li>
+    </ul>
+    <p class="warn"><b>GND が 5V や 3V3 とくっつくと、電源がショートします。</b>ここは特に念入りに確かめてから USB を挿してください。くっついたら、吸い取り線で取ってやり直します。</p>
+  </section>
+
+  <section class="card stop">
+    <div class="step-head"><div class="num">■</div><div><h2>ここで止めて、連絡してください</h2><div class="sub">電池を XIAO につなぐ前</div></div></div>
+    <p>ここまでできたら、<b>はんだ付けした所の写真</b>を送ってください。USB だけで LED とスイッチが動くかを先に確かめます。</p>
+    <p>電池の線を XIAO の裏の BAT＋／BAT− に付ける作業は、＋と−を逆にすると基板が一瞬で壊れ、やり直しがききません。写真で一緒に確認しながら進めます。<b>それまで、電池は袋から出さないでください。</b></p>
+  </section>
+</div>
+
+<script>
+(function(){
+  var boxes = document.querySelectorAll('.checks input[type=checkbox]');
+  var KEY = 'mindclip-solder-checks';
+  var state = {};
+  try { state = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { state = {}; }
+  boxes.forEach(function(b){
+    if (state[b.id]) b.checked = true;
+    b.addEventListener('change', function(){
+      state[b.id] = b.checked;
+      try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+    });
+  });
+})();
+</script>
