@@ -81,7 +81,7 @@ svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
 <div class="wrap" lang="ja">
   <header style="display:flex;flex-direction:column;gap:8px">
     <h1>MindClip はんだ付け図解</h1>
-    <p class="lead">LED・スイッチ・電池の線を作り、XIAO に 3本つなぐところまで。電池を XIAO につなぐ作業は、この図解の最後で止めて、一緒に確認してから行います。</p>
+    <p class="lead">LED・スイッチ・電池の線を作り、XIAO につないで、電池で動くところまで。</p>
   </header>
 
   <section class="card">
@@ -512,10 +512,120 @@ svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
     <p class="warn"><b>GND が 5V や 3V3 とくっつくと、電源がショートします。</b>ここは特に念入りに確かめてから USB を挿してください。くっついたら、吸い取り線で取ってやり直します。</p>
   </section>
 
+  <!-- STEP 8 -->
+  <section class="card">
+    <div class="step-head"><div class="num">5</div><div><h2>電池をつなぐ</h2><div class="sub">はんだ 2か所（README の手順8）。＋と−を逆にすると XIAO が壊れます</div></div></div>
+    <p class="warn"><b>流れは「付ける → 確かめる → つなぐ」の 3段階。</b>はんだ付けの間は電池をつながないので、ここで壊れることはありません。壊れるのは、間違えたまま電池を挿した瞬間だけです。だから B の確認を飛ばさないでください。</p>
+
+    <h3>A　電池の線を XIAO に付ける（電池はつながない）</h3>
+    <figure>
+      <svg viewBox="0 0 720 280" role="img" aria-label="BAT パッドへのはんだ付け">
+        <text x="20" y="28" class="b">裏面の BAT パッド（拡大）</text>
+        <rect class="pt" x="60" y="60" width="300" height="170" rx="10"/>
+        <rect class="mt" x="120" y="110" width="44" height="30" rx="3"/>
+        <rect class="mt" x="230" y="110" width="44" height="30" rx="3"/>
+        <text x="142" y="98" text-anchor="middle" class="b">BAT＋</text>
+        <text x="252" y="98" text-anchor="middle" class="b">BAT−</text>
+        <text x="210" y="200" text-anchor="middle" class="s">位置と＋−は、基板に印刷された文字で決める</text>
+        <path class="w rd" d="M142 125 C142 170 400 150 470 120"/>
+        <path class="bkc" d="M252 125 C252 190 420 190 470 160"/><path class="w bk" d="M252 125 C252 190 420 190 470 160"/>
+        <rect class="pp" x="470" y="100" width="60" height="80" rx="4"/>
+        <text x="500" y="146" text-anchor="middle" class="s">JST</text>
+        <rect class="tape" x="400" y="108" width="34" height="18" transform="rotate(-10 417 117)"/>
+        <text x="417" y="96" text-anchor="middle" class="b">＋</text>
+        <text x="560" y="120" class="s">「＋」の印の線 → BAT＋</text>
+        <text x="560" y="164" class="s">もう一方 → BAT−</text>
+        <text x="20" y="262" class="s">線の色は図と違っても構いません。決めるのは、手順3で付けた「＋」の印だけです。</text>
+      </svg>
+    </figure>
+    <ol>
+      <li>USB を抜く。電池は袋の中。XIAO のコネクタには何も挿さっていないこと。</li>
+      <li>BAT＋ と BAT− のパッドに、はんだを少しだけ乗せる（盛り上げない）。フラックスを塗ると楽です。<b>＋と−は基板の文字で確かめる。</b>読めなければ進まない。</li>
+      <li>「＋」の印を付けた線を <b>BAT＋</b>、もう一方を <b>BAT−</b> にはんだ付けする。こては 3秒以内。</li>
+      <li>2本は裏面に沿わせて平らに置く。ほかの線と重ねない、交差させない。</li>
+    </ol>
+
+    <h3>B　電池をつなぐ前の確認（テスター）</h3>
+    <figure>
+      <svg viewBox="0 0 720 300" role="img" aria-label="予備のピグテールで導通を確かめる">
+        <text x="20" y="28" class="b">①〜③　予備のピグテールを挿して、線の先で測る</text>
+        <rect class="pt" x="40" y="70" width="180" height="150" rx="10"/>
+        <text x="130" y="60" text-anchor="middle" class="s">XIAO（裏面）</text>
+        <rect class="mt" x="70" y="100" width="34" height="22" rx="3"/><text x="87" y="94" text-anchor="middle" class="s">BAT＋</text>
+        <circle cx="160" cy="200" r="8" class="pp"/><text x="160" y="186" text-anchor="middle" class="s">GND</text>
+        <path class="w rd" d="M87 111 C120 111 200 130 300 132"/>
+        <path class="bkc" d="M100 122 C140 160 220 160 300 156"/><path class="w bk" d="M100 122 C140 160 220 160 300 156"/>
+        <rect class="pp" x="300" y="118" width="40" height="52" rx="3"/>
+        <rect class="pp" x="340" y="118" width="40" height="52" rx="3" style="stroke-dasharray:4 3"/>
+        <text x="320" y="190" text-anchor="middle" class="s">本番</text><text x="360" y="190" text-anchor="middle" class="s">予備</text>
+        <path class="w rd" d="M380 132 H520" style="stroke:var(--w-or)"/>
+        <path class="w bl" d="M380 156 H520"/>
+        <text x="530" y="136" class="s">＋と同じ列の線</text>
+        <text x="530" y="160" class="s">もう一方の線</text>
+        <text x="40" y="250" class="b at">① 予備の「＋と同じ列」の線 ↔ BAT＋：鳴る</text>
+        <text x="40" y="270" class="b at">② 予備のもう一方の線 ↔ GND の穴：鳴る</text>
+        <text x="40" y="290" class="b at">③ 予備の 2本どうし：鳴らない</text>
+      </svg>
+      <figcaption>予備は、電池のプラグと<b>同じ形</b>のピグテール。挿すと、同じ列の線どうしが中でつながります。電池のプラグの穴には、テスターの棒を入れません。</figcaption>
+    </figure>
+    <figure>
+      <svg viewBox="0 0 720 300" role="img" aria-label="プラスの位置を左右で比べる">
+        <text x="20" y="28" class="b">④　＋がツメから見て左右どちらに出るかを比べる</text>
+        <text x="180" y="60" text-anchor="middle" class="b">XIAO に付けたコネクタ</text>
+        <rect class="pp" x="140" y="80" width="80" height="44" rx="3"/>
+        <rect class="pt" x="166" y="72" width="28" height="10"/>
+        <text x="180" y="108" text-anchor="middle" class="s">ツメが上</text>
+        <path class="w rd" d="M160 124 V200"/><path class="bkc" d="M200 124 V200"/><path class="w bk" d="M200 124 V200"/>
+        <rect class="tape" x="146" y="160" width="28" height="18"/><text x="160" y="174" text-anchor="middle" class="b">＋</text>
+        <text x="180" y="230" text-anchor="middle">「＋」は 左</text>
+        <text x="180" y="250" text-anchor="middle" class="s">（例。自分のを紙に書く）</text>
+        <text x="520" y="60" text-anchor="middle" class="b">未使用のピグテール</text>
+        <rect class="pp" x="480" y="80" width="80" height="44" rx="3"/>
+        <rect class="pt" x="506" y="72" width="28" height="10"/>
+        <text x="520" y="108" text-anchor="middle" class="s">ツメが上</text>
+        <path class="w rd" d="M500 124 C500 170 460 190 440 210"/><path class="bkc" d="M540 124 C540 170 580 190 600 210"/><path class="w bk" d="M540 124 C540 170 580 190 600 210"/>
+        <text x="520" y="230" text-anchor="middle">電池を挿して測ると＋は 左</text>
+        <text x="520" y="250" text-anchor="middle" class="s">（測ったらすぐ電池を抜く）</text>
+        <text x="350" y="150" text-anchor="middle" class="b at">同じ側なら</text>
+        <text x="350" y="170" text-anchor="middle" class="b at">合格</text>
+        <text x="20" y="290" class="s">線は手前に向けて並べる。線の色は見ない。見るのは「ツメを上にしたときの左右」だけです。</text>
+      </svg>
+    </figure>
+    <ul class="checks">
+      <li><label><input type="checkbox" id="c5a"><span>① 予備の「＋と同じ列」の線と BAT＋ が<b>鳴る</b></span></label></li>
+      <li><label><input type="checkbox" id="c5b"><span>② 予備のもう一方の線と GND が<b>鳴る</b></span></label></li>
+      <li><label><input type="checkbox" id="c5c"><span>③ 予備の 2本どうしが<b>鳴らない</b></span></label></li>
+      <li><label><input type="checkbox" id="c5d"><span>④ ＋の位置が左右で<b>一致</b>した</span></label></li>
+    </ul>
+    <p class="warn"><b>1つでも合わなければ、電池をつながない。</b>④が合わないときは、電池が外れていることを確かめてから、A の 2本を入れ替えて付け直し、①〜④をやり直します。②が鳴らないときは、そこで止めて連絡してください。</p>
+
+    <h3>C　電池をつなぐ</h3>
+    <figure>
+      <svg viewBox="0 0 720 230" role="img" aria-label="電池をつないで動作を見る">
+        <rect class="mt" x="30" y="80" width="110" height="70" rx="6"/><text x="85" y="120" text-anchor="middle" class="s">電池</text>
+        <path class="ln" d="M140 115 H180"/>
+        <rect class="pp" x="180" y="96" width="40" height="38" rx="3"/><rect class="pp" x="220" y="96" width="40" height="38" rx="3"/>
+        <path class="dim" d="M150 70 H240 M232 64 l8 6 l-8 6"/>
+        <text x="200" y="58" text-anchor="middle" class="s">軽い力でまっすぐ。ツメが掛かるまで</text>
+        <path class="w rd" d="M260 108 H320"/><path class="bkc" d="M260 124 H320"/><path class="w bk" d="M260 124 H320"/>
+        <rect class="pt" x="320" y="70" width="140" height="100" rx="8"/><text x="390" y="125" text-anchor="middle" class="b">XIAO</text>
+        <text x="500" y="70" class="b">1. スイッチ ON → LED が点く</text>
+        <text x="520" y="92" class="s">電池で動いている</text>
+        <text x="500" y="130" class="b">2. USB を挿す → 充電ランプが点く</text>
+        <text x="520" y="152" class="s">満充電で消える</text>
+        <text x="30" y="210" class="wt b">煙・焦げたにおい・熱い → すぐ電池を抜く（樹脂の部分を持ってまっすぐ）</text>
+      </svg>
+    </figure>
+    <ol>
+      <li>USB は抜いたまま、電池を XIAO のコネクタに<b>指先の軽い力でまっすぐ</b>、ツメが掛かるまで挿す。</li>
+      <li>スイッチを ON にする。<b>LED が点けば、電池で動いています。</b></li>
+      <li>USB を挿す。XIAO の充電ランプが点くか点滅し、満充電で消えれば、充電も正常です。</li>
+    </ol>
+  </section>
+
   <section class="card stop">
-    <div class="step-head"><div class="num">■</div><div><h2>ここで止めて、連絡してください</h2><div class="sub">電池を XIAO につなぐ前</div></div></div>
-    <p>ここまでできたら、<b>はんだ付けした所の写真</b>を送ってください。USB だけで LED とスイッチが動くかを先に確かめます。</p>
-    <p>電池の線を XIAO の裏の BAT＋／BAT− に付ける作業は、＋と−を逆にすると基板が一瞬で壊れ、やり直しがききません。写真で一緒に確認しながら進めます。<b>それまで、電池は袋から出さないでください。</b></p>
+    <div class="step-head"><div class="num">■</div><div><h2>ここまでできたら連絡してください</h2><div class="sub">次はケースへの組み込み</div></div></div>
+    <p>C の結果（LED が電池で点いたか、充電ランプの様子）を教えてください。ケースに収める作業は、線の通し方に順番があるので、写真で確認しながら進めます。</p>
   </section>
 </div>
 
