@@ -444,11 +444,37 @@ svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
       </svg>
       <figcaption>穴の位置は、必ず基板に印刷された文字（D1・D3・GND）で確かめます。ピンヘッダは使わず、線を穴へ直接付けます。</figcaption>
     </figure>
+    <figure>
+      <svg viewBox="0 0 720 300" role="img" aria-label="線は裏側から差し込む">
+        <text x="20" y="28" class="b">横から見た図：線は裏側から差し込む</text>
+        <rect x="150" y="70" width="380" height="16" rx="3" fill="none" stroke="var(--muted)" stroke-width="1.4" stroke-dasharray="6 4"/>
+        <text x="340" y="62" text-anchor="middle" class="s">あとで重ねる拡張ボード（マイクと SD の板）</text>
+        <rect class="mt" x="300" y="92" width="120" height="14" rx="2"/>
+        <text x="360" y="102" text-anchor="middle" class="s">金属カバー</text>
+        <rect class="pt" x="150" y="106" width="380" height="14" rx="2"/>
+        <text x="546" y="104" class="s">部品面（USB の口と</text><text x="546" y="120" class="s">金属カバーがある面）</text>
+        <text x="546" y="150" class="s">裏面（BAT＋／− の</text><text x="546" y="166" class="s">小さなパッドがある面）</text>
+        <rect x="186" y="106" width="10" height="14" fill="var(--paper)" stroke="var(--ink)" stroke-width="1"/>
+        <path d="M181 106 q10 -10 20 0 z" fill="var(--metal)" stroke="var(--ink)" stroke-width="1"/>
+        <path class="w bl" d="M191 104 V150 Q191 160 181 160 H40"/>
+        <text x="40" y="150" class="s">線は裏面に沿わせて出す</text>
+        <path class="dim" d="M206 98 H250"/><text x="254" y="94" class="s at">上は低い山だけ。</text><text x="254" y="110" class="s at">線の先は根元で切る</text>
+        <text x="20" y="214" class="b wt">× だめな付け方</text>
+        <rect class="pt" x="150" y="250" width="380" height="14" rx="2"/>
+        <rect class="mt" x="300" y="236" width="120" height="14" rx="2"/>
+        <path class="w bl" d="M191 250 V240 Q191 230 210 230 H470"/>
+        <path class="x" d="M480 220 l20 20 M500 220 l-20 20"/>
+        <text x="510" y="236" class="s wt">部品面を通すと、拡張ボードが</text><text x="510" y="252" class="s wt">浮いてはまらない</text>
+      </svg>
+      <figcaption>部品面には、あとで拡張ボードが重なります。線は裏面から穴に通し、部品面側には線を出しません。</figcaption>
+    </figure>
     <ol>
       <li>USB ケーブルを抜く。microSD カードも抜いておくと安心です。</li>
       <li>D1・D3・GND の 3つの穴に、こてを当ててはんだを少しだけ流す（下準備）。</li>
       <li>線の先を 3mm 剥いてねじり、はんだを少し染み込ませる。</li>
-      <li>穴のはんだをこてで溶かし、そこへ線を差し込んで、こてを離す。<b>青 → D1</b>、<b>橙 → D3</b>、<b>黒 → GND</b> の順に。</li>
+      <li>線を<b>裏面から</b>穴に差し込み、部品面側からこてを当ててはんだを流す。<b>青 → D1</b>、<b>橙 → D3</b>、<b>黒 → GND</b> の順に。</li>
+      <li>部品面に突き出た線の先を、ニッパーで根元から切る。部品面に残るのは、はんだの低い山だけにします。</li>
+      <li>線は裏面に沿わせて、基板の縁から外へ出す。部品面の上を横切らせない。</li>
     </ol>
     <h3>つなぐ前にテスターで確認（導通のブザー）</h3>
     <ul class="checks">
