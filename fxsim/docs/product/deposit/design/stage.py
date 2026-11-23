@@ -1,11 +1,13 @@
-"""Scratch: 700,000 JPY added at once vs in three parts. Value of the ADDED money at t0+H years.
-Uses the 1,000,000-JPY replay equity curve as the growth index (closed-bar cadence, nine lengths)."""
+"""Scratch: money added at once vs in parts. Value of the ADDED money at t0+H years, as a percentage of it
+(1% of 1,000,000 added = 10,000 JPY). Uses the 1,000,000-JPY replay equity curve as the growth index
+(closed-bar cadence, nine lengths). NOTE: this values the money as if it joined the open position at once,
+which the live brain does not do; see stage_live.py for the live rule."""
 import numpy as np, pandas as pd
 import rp
 from scripts import research_harness as H
 from scripts import monitor_envelope as M
 A = M._arrays(); sec = A["sec"][H.WARMUP:]
-LENS = list(range(2000, 2801, 100)); ADD = 700_000.0
+LENS = list(range(2000, 2801, 100)); ADD = 100.0   # per cent of the added money
 DAY = 86400; MO = 30.44*DAY
 def idx(t):  # bar index at/after timestamp array t
     return np.searchsorted(sec, t)
@@ -18,7 +20,7 @@ plans = {
 }
 eqs = [rp.replay("closedbar", 5, n, 1_000_000.0, 1000)["eq"] for n in LENS]
 for Hy in (1, 2, 3):
-    print(f"\n--- value of the added 700,000 after {Hy} year(s) from today (nine lengths pooled) ---")
+    print(f"\n--- gain on the added money after {Hy} year(s), % of the added money (nine lengths pooled) ---")
     base = None
     for name, plan in plans.items():
         allv = []; worst_path = []
@@ -31,5 +33,5 @@ for Hy in (1, 2, 3):
             allv.append(val)
         v = np.concatenate(allv) - ADD
         if base is None: base = v
-        print(f"{name:32s} mean {v.mean():+9,.0f}  median {np.median(v):+9,.0f}  p10 {np.percentile(v,10):+9,.0f}  worst {v.min():+9,.0f}"
-              f"  loss {np.mean(v<0)*100:4.1f}%  <-70k {np.mean(v<-70_000)*100:4.1f}%  | vs lump: mean {np.mean(v-base):+8,.0f}, better in {np.mean(v>base)*100:4.1f}%")
+        print(f"{name:32s} mean {v.mean():+7.2f}%  median {np.median(v):+7.2f}%  p10 {np.percentile(v,10):+7.2f}%  worst {v.min():+7.2f}%"
+              f"  loss {np.mean(v<0)*100:4.1f}%  worse than -10%: {np.mean(v<-10)*100:4.1f}%  | vs lump: mean {np.mean(v-base):+6.2f} pt, better in {np.mean(v>base)*100:4.1f}%")

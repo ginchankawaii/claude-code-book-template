@@ -6,6 +6,7 @@ The live brain does not do that: while a position is held it keeps the lots open
 new balance. So added money is idle until the position that is open at the deposit closes:
     value = ADD * eq[T] / eq[e],  e = the bar at whose close that position is gone (e = t if flat).
 The lot step is ignored, as in stage.py. Nine lengths, closed-bar cadence, 1,000,000 JPY.
+All figures are a percentage of the ADDED money (1% of 1,000,000 added = 10,000 JPY).
 Run from fxsim/:  FXSIM_DB=<scratch>/scratch.db PYTHONPATH=docs/product/ai_value/design:. python docs/product/deposit/design/stage_live.py"""
 import numpy as np
 import rp
@@ -13,7 +14,7 @@ from scripts import research_harness as H
 from scripts import monitor_envelope as M
 
 A = M._arrays(); sec = A["sec"][H.WARMUP:]; N = len(sec)
-LENS = list(range(2000, 2801, 100)); ADD = 700_000.0; DAY = 86400; MO = 30.44*DAY
+LENS = list(range(2000, 2801, 100)); ADD = 100.0; DAY = 86400; MO = 30.44*DAY
 idx = lambda x: np.searchsorted(sec, x)
 plans = {
   "lump today":                       [(0.0, 1.0)],
@@ -65,6 +66,6 @@ for Hy in (1, 2, 3):
             o = table(Hy, live, sub); base = o["lump today"]
             print(f"\n--- +{Hy}y, {lab}, {slab}, n={base.size} ---")
             for name, v in o.items():
-                d = v - base; eqv = np.abs(d) < 0.5
-                print(f"{name:32s} mean {v.mean():+9,.0f} median {np.median(v):+9,.0f} p10 {np.percentile(v,10):+9,.0f} worst {v.min():+9,.0f} loss {np.mean(v<-0.5)*100:4.1f}% zero {np.mean(np.abs(v)<0.5)*100:4.1f}%"
-                      + ("" if name == "lump today" else f" | vs lump today: mean {d.mean():+8,.0f}; better {np.mean(d>0.5)*100:4.1f}% same {eqv.mean()*100:4.1f}% worse {np.mean(d<-0.5)*100:4.1f}%"))
+                d = v - base; eps = 1e-4; eqv = np.abs(d) < eps
+                print(f"{name:32s} mean {v.mean():+7.2f}% median {np.median(v):+7.2f}% p10 {np.percentile(v,10):+7.2f}% worst {v.min():+7.2f}% loss {np.mean(v<-eps)*100:4.1f}% zero {np.mean(np.abs(v)<eps)*100:4.1f}%"
+                      + ("" if name == "lump today" else f" | vs lump today: mean {d.mean():+6.2f} pt; better {np.mean(d>eps)*100:4.1f}% same {eqv.mean()*100:4.1f}% worse {np.mean(d<-eps)*100:4.1f}%"))
