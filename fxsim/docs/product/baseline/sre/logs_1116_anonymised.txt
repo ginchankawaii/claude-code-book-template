@@ -1,0 +1,103 @@
+2026-11-16 の出来事 ―― 所有者の一次記録の匿名化した抜粋
+=====================================================================
+
+出どころ
+  所有者が 2026-11-16〜17 に作者との会話に貼った3つの記録：
+    (1) MT5 の「操作ログ」(Journal)   … 時刻は PC の時計（日本時間, GMT+9）
+    (2) MT5 の「エキスパート」(Experts) … 同上
+    (3) `docker compose logs -t fx`      … 時刻は Docker が付けた UTC
+  および Windows Update の更新履歴のスクリーンショット（KB5132061 が 2026/11/16 にインストール済み）。
+  原文はリポジトリに置いていない（口座番号・IPアドレスなどを含むため）。
+
+伏せたもの
+  口座番号 → <acct>、IPアドレス → <ip>、建玉のチケット番号 → <ticket>、
+  Windows のユーザー名・MT5 のデータフォルダ名・PC の構成を書いた行 → 削除。
+  時刻・イベントの種類・ロット・値段・SEQ は原文のまま。
+  同じ形の行の繰り返しは「…（同じ行が N 回）」にまとめた。件数は原文を数えたもの。
+
+読むときの注意
+  - (1)(2) と (3) は別々の時計である。秒単位の前後関係には、2つの時計のずれが入る。
+  - 01:43:00 から 06:54:41 までの間、(1) に Network の行は1行もない
+    （接続の試行も、失敗も、切断も記録されていない）。なぜログインしなかったのかは、この記録からは分からない。
+  - EA がログアウト中に `steady_status.csv` へ何を書いたか（残高0・建玉なし、と推定している行）は、
+    どの記録にも残っていない。baseline/sre/repro_1116.py はこれを仮定として置いている。
+  - PC が再起動した時刻そのものは記録にない（MT5 と脳が 01:43 に起動したことからの推定）。
+
+---------------------------------------------------------------------
+(1) MT5 操作ログ (Journal) ―― 日本時間
+---------------------------------------------------------------------
+2026.11.16 01:43:00.604  Terminal  OANDA MetaTrader 5 x64 build 6230 started for OANDA Corporation
+2026.11.16 01:43:01.881  Experts   expert SteadyBridge (USDJPY,H1) loaded successfully
+        （ここから 06:54:41 まで、Journal に行はない）
+2026.11.16 06:54:41.789  Experts   expert SteadyBridge (USDJPY,H1) removed
+2026.11.16 06:54:41.799  Experts   expert SteadyBridge (USDJPY,H1) loaded successfully
+2026.11.16 06:54:42.325  Network   '<acct>': authorized on OANDA-Japan MT5 Live through MT5 Access Server 2 (ping: 20.97 ms, build 6140)
+2026.11.16 06:54:42.325  Network   '<acct>': previous successful authorization performed from <ip> on 2026.11.15 07:34:21
+2026.11.16 06:54:42.803  Network   '<acct>': terminal synchronized with OANDA Corporation: 1 positions, 0 orders, 67 symbols, 0 spreads
+2026.11.16 06:54:42.803  Network   '<acct>': trading has been enabled - hedging mode
+2026.11.16 06:54:42.803  Network   '<acct>': balance management has been enabled
+2026.11.16 06:54:42.857  Network   '<acct>': scanning network for access points
+2026.11.16 06:54:48.366  Network   '<acct>': scanning network finished
+2026.11.16 06:55:11.976  Trades    '<acct>': market sell 0.03 USDJPY, close #<ticket> buy 0.03 USDJPY 159.094
+2026.11.16 06:55:11.999  Trades    '<acct>': failed market sell 0.03 USDJPY, close #<ticket> buy 0.03 USDJPY 159.094 [Market closed]
+        …（この2行の組が30秒ごとに計17回。最後の組は下）
+2026.11.16 07:03:11.951  Trades    '<acct>': market sell 0.03 USDJPY, close #<ticket> buy 0.03 USDJPY 159.094
+2026.11.16 07:03:11.974  Trades    '<acct>': failed market sell 0.03 USDJPY, close #<ticket> buy 0.03 USDJPY 159.094 [Market closed]
+        （貼られた記録はここまで。これ以降に決済の試行はない）
+
+---------------------------------------------------------------------
+(2) MT5 エキスパート (Experts) ―― 日本時間
+---------------------------------------------------------------------
+2026.11.16 01:43:08.291  SteadyBridge (USDJPY,H1)  SteadyBridge: flat, but signal id 1794395400 is not newer than the last executed id 1794395400 -> NOT re-opening. The position was closed by the stop, the fail-safe or you; a NEW brain decision (higher id) is required. If the brain IS deciding and this persists, its clock is behind: see steady_status.csv exec_seq / ea_time.
+2026.11.16 01:43:08.292  SteadyBridge (USDJPY,H1)  SteadyBridge started on USDJPY | build r6e-status | last executed order SEQ 1794395400
+2026.11.16 01:53:08.230  SteadyBridge (USDJPY,H1)  SteadyBridge: flat, but signal id 1794395400 is not newer ... -> NOT re-opening. ...
+        …（同じ行が10分ごとに計11回：01:43, 01:53, …, 03:23。最後は 03:23:08.222）
+        （03:23 より後、06:54 までエキスパートに行はない）
+2026.11.16 06:54:41.949  SteadyBridge (USDJPY,H1)  SteadyBridge started on USDJPY | build r6e-status | last executed order SEQ 1794395400
+2026.11.16 06:55:11.974  SteadyBridge (USDJPY,H1)  SteadyBridge: signal expired (brain heartbeat lost) -> FLAT fail-safe
+2026.11.16 06:55:11.999  SteadyBridge (USDJPY,H1)  CTrade::OrderSend: market sell 0.03 USDJPY [market closed]
+        …（この2行の組が30秒ごとに計17回。最後の組は下）
+2026.11.16 07:03:11.951  SteadyBridge (USDJPY,H1)  SteadyBridge: signal expired (brain heartbeat lost) -> FLAT fail-safe
+2026.11.16 07:03:11.974  SteadyBridge (USDJPY,H1)  CTrade::OrderSend: market sell 0.03 USDJPY [market closed]
+
+---------------------------------------------------------------------
+(3) 脳のログ (`docker compose logs -t fx`) ―― UTC（日本時間は +9時間）
+---------------------------------------------------------------------
+2026-11-13T15:16:41Z  [ai] brain build r10c-2026-11                       （11/14 00:16 JST。所有者による更新の適用）
+2026-11-13T15:16:44Z  [ai] restored state: intent LONG stop 158.880 seq 1794395400
+2026-11-14T05:06:56Z  [ai] wrote signal: LONG 0.03 (seq 1794395400)       （日次の判断の行。通常の心拍はログに出ない）
+2026-11-15T01:07:13Z  [ai] wrote signal: LONG 0.03 (seq 1794395400)
+2026-11-15T05:33:54Z  [ai] brain build r10c-2026-11                       （11/15 14:33 JST。脳が再起動している。原因は不明）
+2026-11-15T05:33:54Z  [ai] previous brain (pid 1) is gone — taking over its lock
+2026-11-15T05:33:54Z  [ai] restored state: intent LONG stop 158.880 seq 1794395400
+        （この後 11/16 01:43 JST まで BLIND の行はない＝この間、脳は状態を信頼できていた）
+2026-11-15T16:43:17Z  [ai] brain build r10c-2026-11                       （11/16 01:43:17 JST。PC の再起動後）
+2026-11-15T16:43:17Z  [ai] resident. model=... poll=600s gate_cd=15.0m veto_ttl=1.0h signal_ttl=120.0m
+2026-11-15T16:43:21Z  [ai] previous brain (pid 1) is gone — taking over its lock
+2026-11-15T16:43:21Z  [ai] restored state: intent LONG stop 158.880 seq 1794395400
+        （ここから 40分間、脳は1行も出していない）
+2026-11-15T17:23:21Z  [ai] BLIND 40m while LONG (no trusted feed) — withholding heartbeat so the EA fail-safe flattens at EXP; stop enforcement is DOWN
+        …（同じ形の行が10分ごとに計28回：BLIND 40m, 50m, …, 310m）
+2026-11-15T21:53:20Z  [ai] BLIND 310m while LONG (no trusted feed) — withholding heartbeat so the EA fail-safe flattens at EXP; stop enforcement is DOWN
+2026-11-15T22:03:21Z  [ai] (daily) trend-up (close 159.596 > SMA2400 158.960 (live 159.519)); consulting AI (authority=shadow)... pos=0.03
+2026-11-15T22:03:23Z  [ai] decision: LONG 0.03 lots | conviction 0.60 risk 0.024 (brake 1.00) size held from entry stop 158.880 | trend-up; AI unavailable (AI error: Error code: 401 ...)
+2026-11-15T22:03:23Z  [ai] wrote signal: LONG 0.03 (seq 1794395400)       （11/16 07:03:23 JST。同じ SEQ・新しい期限）
+
+---------------------------------------------------------------------
+記録から直接言えること
+---------------------------------------------------------------------
+- MT5 は 01:43:00 に起動し、06:54:42 に初めてブローカーに認証された。その間 5時間11分。
+- EA は 01:43〜03:23 の間「建玉が見えない（flat）」と10分ごとに記録した。口座には建玉が1つあった（06:54:42 の同期の行）。
+- 脳は 01:43:21 に状態を復元してから 40分間は何も出さず、02:23〜06:53 に BLIND を28回出した。原因は一度も表示していない。
+- 認証の直前（06:54:41）に EA は読み込み直されている。
+- EA は 06:55:11〜07:03:11 に、期限切れを理由に17回決済を試み、17回とも [Market closed] で失敗した。
+- 脳は 07:03:23（UTC の記録を換算）に同じ SEQ で注文を書き直した。EA の次の点検は 07:03:41 のはずで、その差は約18秒
+  （2つの時計のずれを含む）。07:03:11 より後に決済の試行はなく、建玉 0.03 ロット・ストップ 158.880 は残った（所有者が確認）。
+- 相場が実際に開いた時刻は、この記録からは分からない（07:03:11 の時点ではまだ閉まっていた）。
+
+記録からは言えないこと（確かめる価値のある順）
+- なぜ 06:54 までログインしなかったのか。ブローカーが開場直前まで接続を受け付けなかったのか、PC 側の事情か。
+  前回の認証成功は 11/15（日）07:34:21 であり、「週末はずっとログインできない」わけではない。
+- 06:54 に所有者が MT5 を操作したのか、自動で認証されたのか。
+- 11/15（日）14:33 に脳が再起動した原因。
+- ログアウト中に EA が状態ファイルへ書いた行の中身。
