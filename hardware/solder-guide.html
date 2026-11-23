@@ -458,7 +458,7 @@ svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
         <path d="M181 106 q10 -10 20 0 z" fill="var(--metal)" stroke="var(--ink)" stroke-width="1"/>
         <path class="w bl" d="M191 104 V150 Q191 160 181 160 H40"/>
         <text x="40" y="150" class="s">線は裏面に沿わせて出す</text>
-        <path class="dim" d="M206 98 H250"/><text x="254" y="94" class="s at">上は低い山だけ。</text><text x="254" y="110" class="s at">線の先は根元で切る</text>
+        <path class="dim" d="M140 100 H180"/><text x="20" y="96" class="s at">上は低い山だけ。</text><text x="20" y="112" class="s at">線の先は根元で切る</text>
         <text x="20" y="214" class="b wt">× だめな付け方</text>
         <rect class="pt" x="150" y="250" width="380" height="14" rx="2"/>
         <rect class="mt" x="300" y="236" width="120" height="14" rx="2"/>
@@ -468,13 +468,38 @@ svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
       </svg>
       <figcaption>部品面には、あとで拡張ボードが重なります。線は裏面から穴に通し、部品面側には線を出しません。</figcaption>
     </figure>
+    <figure>
+      <svg viewBox="0 0 720 380" role="img" aria-label="裏面での線の並べ方">
+        <text x="20" y="28" class="b">裏面から見た図：3本を並べて、USB と反対の端から出す</text>
+        <rect class="mt" x="150" y="150" width="40" height="60" rx="4"/>
+        <text x="170" y="236" text-anchor="middle" class="s">USB-C</text>
+        <rect class="pt" x="190" y="70" width="380" height="230" rx="10"/>
+        <g class="pp">
+          <circle cx="222" cy="88" r="8"/><circle cx="272" cy="88" r="8"/><circle cx="322" cy="88" r="8"/><circle cx="372" cy="88" r="8"/><circle cx="422" cy="88" r="8"/><circle cx="472" cy="88" r="8"/><circle cx="522" cy="88" r="8"/>
+          <circle cx="222" cy="282" r="8"/><circle cx="272" cy="282" r="8"/><circle cx="322" cy="282" r="8"/><circle cx="372" cy="282" r="8"/><circle cx="422" cy="282" r="8"/><circle cx="472" cy="282" r="8"/><circle cx="522" cy="282" r="8"/>
+        </g>
+        <g class="s" text-anchor="middle">
+          <text x="222" y="60">D0</text><text x="322" y="60">D2</text><text x="422" y="60">D4</text><text x="472" y="60">D5</text><text x="522" y="60">D6</text>
+          <text x="222" y="322">VUSB</text><text x="322" y="322">3V3</text><text x="372" y="322">D10</text><text x="422" y="322">D9</text><text x="472" y="322">D8</text><text x="522" y="322">D7</text>
+        </g>
+        <text x="272" y="60" text-anchor="middle" class="b">D1</text><text x="372" y="60" text-anchor="middle" class="b">D3</text><text x="272" y="322" text-anchor="middle" class="b">GND</text>
+        <path class="w or" d="M372 88 V168 H690"/>
+        <path class="w bl" d="M272 88 V186 H690"/>
+        <path class="bkc" d="M272 282 V204 H690"/><path class="w bk" d="M272 282 V204 H690"/>
+        <path class="dim" d="M600 150 V222 M594 150 H606 M594 222 H606"/>
+        <text x="704" y="140" text-anchor="end" class="s at">ここから出す</text>
+        <text x="704" y="242" text-anchor="end" class="s">本体では、柱の</text><text x="704" y="258" text-anchor="end" class="s">すき間を通る</text>
+        <text x="380" y="356" text-anchor="middle" class="s">上から 橙・青・黒 の順に、すき間なく平らに並べる</text>
+      </svg>
+      <figcaption>写真と同じ向き（USB が左）。線どうしを重ねたり交差させたりしないこと。XIAO の下のすき間は 1.4mm しかなく、2本重なると基板が浮きます。BAT＋／− と書かれたパッドの上は、あとで電池の線を付けるので空けておきます。</figcaption>
+    </figure>
     <ol>
       <li>USB ケーブルを抜く。microSD カードも抜いておくと安心です。</li>
       <li>D1・D3・GND の 3つの穴に、こてを当ててはんだを少しだけ流す（下準備）。</li>
       <li>線の先を 3mm 剥いてねじり、はんだを少し染み込ませる。</li>
       <li>線を<b>裏面から</b>穴に差し込み、部品面側からこてを当ててはんだを流す。<b>青 → D1</b>、<b>橙 → D3</b>、<b>黒 → GND</b> の順に。</li>
       <li>部品面に突き出た線の先を、ニッパーで根元から切る。部品面に残るのは、はんだの低い山だけにします。</li>
-      <li>線は裏面に沿わせて、基板の縁から外へ出す。部品面の上を横切らせない。</li>
+      <li>線は裏面に沿わせ、下の図のように<b>3本を重ねずに並べて、USB と反対の端の真ん中から</b>外へ出す。部品面の上を横切らせない。基板の長い辺から外へ出さない。</li>
     </ol>
     <h3>つなぐ前にテスターで確認（導通のブザー）</h3>
     <ul class="checks">
