@@ -14,6 +14,7 @@
 | - | MT5_SETUP.md | `MetaTrader5` IPC方式（接続失敗で廃止） | 🗄️ 歴史 |
 | - | PRODUCT_PROMPT.md | これを「製品」に引き上げるための、AIへの指示書（核）。場面ごとの手引きは `product/guide/` に7本。運用には不要 | 🧭 計画 |
 | - | product/FOR_OWNER.md | 上の計画の、**所有者向けの説明**（何が手に入るか・何をお願いするか・始め方・年末年始の備え） | 🧭 計画 |
+| - | product/ai_value/RESULTS.md | 「AIの判断は自分の費用を稼げるか」を設計の段階で計算した結果（いまの元手では稼げない。外すこと自体が高くつく）。残る問いを確かめる指示書は `AI_VALUE_PROMPT.md` | 🧭 計画 |
 | - | product/gap_baseline/ | 上の指示書の出発点：2026-11-22に測った製品化ギャップ63件（視点ごとに6ファイル。一覧は `README.md`）と、その再現スクリプト（`product/baseline/`） | 🧭 計画 |
 
 ## 今の構成（1枚で）
