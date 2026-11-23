@@ -1,0 +1,273 @@
+<title>MindClip 組み込み図解</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* layout: 組立説明書の1列。各手順 = 番号札 + 図 + 短い指示 + 確認チェック */
+:root{
+  --bg:#f3f5f8; --paper:#ffffff; --ink:#1c2533; --muted:#5a6678; --line:#c9d1dc;
+  --accent:#0b6bcb; --warn:#b3261e; --warn-bg:#fdecea; --ok:#1b7a3d; --ok-bg:#e7f5ec;
+  --part:#e3e8ef; --metal:#aeb7c4; --tube:rgba(11,107,203,.18);
+  --w-or:#e8730c; --w-bl:#1f6fd6; --w-rd:#d32f2f; --w-bk:#15181d; --tape:#f2d98a;
+  --font:"Zen Kaku Gothic New","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+  --num:"Space Grotesk","Zen Kaku Gothic New",sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#12161c; --paper:#1b212a; --ink:#e6eaf0; --muted:#9aa6b6; --line:#3a4453;
+  --accent:#6db3ff; --warn:#ff8a80; --warn-bg:#3a1f1d; --ok:#7bd69a; --ok-bg:#1b3325;
+  --part:#2a323e; --metal:#7f8a99; --tube:rgba(109,179,255,.22);
+  --w-or:#ff9a3d; --w-bl:#62a8ff; --w-rd:#ff6b6b; --w-bk:#0a0c10; --tape:#c9a94a; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#12161c; --paper:#1b212a; --ink:#e6eaf0; --muted:#9aa6b6; --line:#3a4453;
+  --accent:#6db3ff; --warn:#ff8a80; --warn-bg:#3a1f1d; --ok:#7bd69a; --ok-bg:#1b3325;
+  --part:#2a323e; --metal:#7f8a99; --tube:rgba(109,179,255,.22);
+  --w-or:#ff9a3d; --w-bl:#62a8ff; --w-rd:#ff6b6b; --w-bk:#0a0c10; --tape:#c9a94a; color-scheme:dark }
+
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:16px;line-height:1.75;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px 64px}
+.wrap{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:28px}
+h1{font-size:1.7rem;line-height:1.3;margin:0;text-wrap:balance}
+h2{font-size:1.25rem;line-height:1.35;margin:0;text-wrap:balance}
+h3{font-size:1rem;margin:0}
+p{margin:0}
+p,li,td,th,figcaption,h1,h2,h3,.sub,.lead{word-break:auto-phrase;line-break:strict;overflow-wrap:anywhere}
+p,li,figcaption{text-wrap:pretty}
+figure,.warn,.ok,.step-head,li,table,tr{break-inside:avoid}
+.step-head,h2,h3{break-after:avoid}
+figure .panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+figure .panels svg{min-width:0;border-bottom:1px solid var(--line)}
+@media (max-width:620px){figure:not(:has(.panels))::before{content:"図は横にスクロールできます →";display:block;font-size:.8rem;color:var(--muted);padding:6px 12px;border-bottom:1px solid var(--line);position:sticky;left:0}}
+svg .fl{fill:var(--w-or);stroke:var(--ink);stroke-width:1.2}
+svg .tubeS{fill:var(--accent);opacity:.55;stroke:var(--ink);stroke-width:1.2}
+.lead{color:var(--muted)}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.step-head{display:flex;gap:14px;align-items:center}
+.num{font-family:var(--num);font-weight:700;font-size:1.5rem;min-width:52px;height:52px;border:2px solid var(--ink);border-radius:8px;display:grid;place-items:center}
+.sub{color:var(--muted);font-size:.9rem}
+figure{margin:0;border:1px solid var(--line);border-radius:8px;overflow-x:auto;background:var(--paper)}
+figure svg{display:block;width:100%;min-width:560px;height:auto}
+figcaption{font-size:.85rem;color:var(--muted);padding:8px 12px;border-top:1px solid var(--line)}
+ol,ul{margin:0;padding-left:1.4em;display:flex;flex-direction:column;gap:6px}
+.warn{background:var(--warn-bg);border-left:4px solid var(--warn);padding:10px 14px;border-radius:4px}
+.warn b{color:var(--warn)}
+.ok{background:var(--ok-bg);border-left:4px solid var(--ok);padding:10px 14px;border-radius:4px}
+.checks{list-style:none;padding:0;gap:8px}
+.checks label{display:flex;gap:10px;align-items:flex-start;cursor:pointer}
+.checks input{width:20px;height:20px;margin-top:4px;flex:none;accent-color:var(--ok)}
+.checks input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+table{border-collapse:collapse;width:100%;font-size:.95rem}
+th,td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:500;font-size:.85rem}
+.tw{overflow-x:auto}
+.chip{display:inline-block;width:1.6em;height:.5em;border-radius:3px;vertical-align:middle;margin-right:.3em;border:1px solid var(--line)}
+.stop{border:2px solid var(--warn)}
+/* SVG parts */
+svg text{font-family:var(--font);fill:var(--ink);font-size:14px}
+svg .s{font-size:12px;fill:var(--muted)}
+svg .b{font-weight:700}
+svg .ln{stroke:var(--ink);stroke-width:1.6;fill:none}
+svg .pt{stroke:var(--ink);stroke-width:1.6;fill:var(--part)}
+svg .mt{stroke:var(--ink);stroke-width:1.2;fill:var(--metal)}
+svg .pp{stroke:var(--ink);stroke-width:1.6;fill:var(--paper)}
+svg .w{fill:none;stroke-width:4;stroke-linecap:round}
+svg .or{stroke:var(--w-or)} svg .bl{stroke:var(--w-bl)} svg .rd{stroke:var(--w-rd)}
+svg .bkc{stroke:var(--ink);stroke-width:6.5;fill:none;stroke-linecap:round} svg .bk{stroke:var(--w-bk)}
+svg .tube{fill:var(--tube);stroke:var(--accent);stroke-width:1.2;stroke-dasharray:4 3}
+svg .tape{fill:var(--tape);stroke:var(--ink);stroke-width:1}
+svg .dim{stroke:var(--muted);stroke-width:1;fill:none}
+svg .x{stroke:var(--warn);stroke-width:3;fill:none;stroke-linecap:round}
+svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
+</style>
+
+<div class="wrap" lang="ja">
+  <header style="display:flex;flex-direction:column;gap:8px">
+    <h1>MindClip 組み込み図解</h1>
+    <p class="lead">配線の済んだ部品を、一体型の本体に収めてフタを閉めるまで。図はすべて、フタを外して上から見た向き（USB の穴が右、マイク穴が上）です。</p>
+  </header>
+
+  <section class="card">
+    <h2>できあがりの配置</h2>
+    <figure>
+      <svg viewBox="0 0 810 613" role="img" aria-label="フタを外して上から見た配置図"><rect x="120.0" y="30.0" width="440.0" height="543.4" rx="44.0" fill="var(--part)" stroke="var(--ink)" stroke-width="2"/><rect x="137.6" y="47.600000000000016" width="404.79999999999995" height="508.20000000000005" rx="27.5" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.2"/><rect class="" x="542.4" y="94.4" width="17.6" height="115.5" fill="var(--accent)" opacity=".35"/><text x="573.2" y="152.1" class="s b" text-anchor="start">USB</text><circle cx="367.5" cy="38.79999999999997" r="8.25" fill="var(--ink)"/><circle cx="406.0" cy="38.79999999999997" r="8.25" fill="var(--ink)"/><circle cx="444.5" cy="38.79999999999997" r="8.25" fill="var(--ink)"/><text x="406.0" y="12.4" class="s" text-anchor="middle">マイク穴</text><rect class="" x="184.3" y="30.0" width="55.0" height="17.6" fill="var(--ink)"/><text x="211.8" y="12.4" class="s" text-anchor="middle">レバー穴</text><rect class="mt" x="164.0" y="263.2" width="352.0" height="275.0" /><text x="340.0" y="384.2" class="b" text-anchor="middle">③ 電池</text><text x="340.0" y="423.8" class="s" text-anchor="middle">左の柱に突き当てる</text><rect class="" x="516.0" y="263.2" width="26.4" height="275.0" fill="var(--warn-bg)" stroke="var(--warn)" stroke-dasharray="4 3"/><text x="529.2" y="562.4" class="s wt" text-anchor="middle">空ける</text><rect class="" x="137.6" y="474.4" width="24.2" height="44.0" fill="var(--muted)"/><rect class="" x="137.6" y="287.4" width="24.2" height="44.0" fill="var(--muted)"/><rect class="" x="278.4" y="188.4" width="27.5" height="69.3" fill="var(--muted)"/><rect class="" x="278.4" y="47.6" width="27.5" height="63.8" fill="var(--muted)"/><rect class="" x="151.9" y="47.6" width="8.8" height="40.7" fill="var(--muted)"/><rect class="" x="263.0" y="47.6" width="8.8" height="40.7" fill="var(--muted)"/><rect class="pt" x="311.4" y="54.2" width="231.0" height="195.8" style="stroke-width:2"/><text x="389.5" y="214.8" class="b" text-anchor="middle">② XIAO</text><text x="389.5" y="239.0" class="s" text-anchor="middle">USB を右の穴に合わせる</text><rect class="mt" x="164.0" y="39.9" width="95.7" height="44.0" /><text x="211.8" y="71.8" class="s b" text-anchor="middle">① スイッチ</text><rect class="" x="166.3" y="83.9" width="63.1" height="49.5" fill="none" stroke="var(--muted)" stroke-dasharray="3 3"/><rect class="pp" x="137.6" y="157.6" width="46.2" height="101.2" style="stroke-width:2"/><text x="160.7" y="208.2" class="s b" text-anchor="middle" transform="rotate(-90 160.7 208.2)">④ JST</text><circle cx="210.2" cy="177.39999999999998" r="18.7" fill="none" stroke="var(--w-rd)" stroke-width="2" stroke-dasharray="4 3"/><text x="210.2" y="232.4" class="s" text-anchor="middle">LED</text><rect class="" x="232.2" y="133.4" width="46.2" height="125.4" fill="var(--ok-bg)" stroke="var(--ok)" stroke-dasharray="4 3"/><rect class="" x="278.4" y="111.4" width="27.5" height="77.0" fill="var(--ok)" opacity=".35"/><path class="w rd" d="M153.0 408.4 L148.6 353.4 L148.6 258.8" /><path class="w bk" d="M153.0 157.6 L153.0 144.4 L252.0 144.4 L252.0 148.8 L311.4 148.8" /><path class="w rd" d="M159.6 157.6 L159.6 151.0 L258.6 151.0 L258.6 156.5 L311.4 156.5" /><path class="w bk" d="M311.4 148.8 L445.6 148.8 L445.6 89.4" stroke-dasharray="5 4"/><path class="w rd" d="M311.4 156.5 L421.4 156.5 L421.4 89.4" stroke-dasharray="5 4"/><path class="w bl" d="M219.0 133.4 L245.4 133.4 L245.4 124.6 L311.4 124.6 L480.8 124.6 L480.8 63.0" /><path class="w or" d="M219.0 210.4 L238.8 210.4 L238.8 170.8 L311.4 170.8 L425.8 170.8" /><path class="w or" d="M425.8 170.8 L425.8 63.0" stroke-dasharray="5 4"/><path class="" d="M291.6 177.4 L362.0 177.4" /><path class="w bk" d="M311.4 181.8 L480.8 181.8 L480.8 241.2" stroke-dasharray="5 4"/><text x="111.2" y="375.4" class="s" text-anchor="end">電池の線は</text><text x="111.2" y="395.2" class="s" text-anchor="end">左の溝を通す</text><rect x="578.0" y="177.39999999999998" width="18" height="18" fill="var(--ok-bg)" stroke="var(--ink)" stroke-width=".8"/><text x="602.0" y="191.39999999999998" class="s" text-anchor="start">線の通り道</text><rect x="578.0" y="207.39999999999998" width="18" height="18" fill="var(--ok)" stroke="var(--ink)" stroke-width=".8"/><text x="602.0" y="221.39999999999998" class="s" text-anchor="start">入口（5本通る）</text><rect x="578.0" y="237.39999999999998" width="18" height="18" fill="var(--warn-bg)" stroke="var(--ink)" stroke-width=".8"/><text x="602.0" y="251.39999999999998" class="s" text-anchor="start">何も入れない</text><text x="578.0" y="277.4" class="s" text-anchor="start">点線の線 = XIAO の下</text><text x="578.0" y="297.4" class="s" text-anchor="start">赤い点線の円 = フタの LED</text></svg>
+      <figcaption>数字は置く順番。寸法は本体の設計値どおりの縮尺です。XIAO の下へ線を通せるのは、緑の「入口」（2本の柱のすき間）だけです。</figcaption>
+    </figure>
+    <div class="tw"><table>
+      <tr><th>入れてはいけない場所</th><th>理由</th></tr>
+      <tr><td>電池の右（USB 側の壁との間）</td><td>フタの縁が入ってくる。何か入るとフタが閉まらない</td></tr>
+      <tr><td>XIAO の下に、線以外のもの</td><td>すき間は 1.4mm。テープの束や余った線が入ると基板が浮き、USB が挿さらなくなる</td></tr>
+      <tr><td>JST コネクタの上</td><td>すぐ上にフタの LED が下りてくる</td></tr>
+      <tr><td>電池の上面より高い所（電池の上）</td><td>フタの押さえが当たる</td></tr>
+      <tr><td>マイク穴のある壁の内側</td><td>穴をふさぐと録音できない</td></tr>
+    </table></div>
+  </section>
+
+  <section class="card">
+    <div class="step-head"><div class="num">0</div><div><h2>準備</h2><div class="sub">電池は外したまま進めます</div></div></div>
+    <ol>
+      <li><b>電池を JST から抜く。</b>つなぐのは手順4です。</li>
+      <li>アンテナを XIAO に付ける。XIAO の部品面にある<b>金色の小さな丸いコネクタ</b>に、アンテナの線の先を真上から押し当てて、パチッと鳴るまで押す。<b>拡張ボードを付ける前のほうが押しやすい</b>です。</li>
+      <li>拡張ボード（マイクと SD の板）を付ける。カメラが付いていたら外す。microSD カードを挿す。</li>
+      <li>裏面の BAT＋／BAT− のはんだの上に、カプトンテープを 1枚貼る。<b>線が重なる所には貼らない</b>（厚みが増えて基板が浮く）。</li>
+      <li>はんだの継ぎ目が、すべて熱収縮チューブで隠れているか見る。</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <div class="step-head"><div class="num">1</div><div><h2>LED をフタに付ける</h2><div class="sub">接着剤が固まるまで時間がかかるので、最初にやる</div></div></div>
+    <figure>
+      <svg viewBox="0 0 720 270" role="img" aria-label="LED をフタに付ける">
+        <text x="20" y="28" class="b">フタを表を下にして伏せ、内側から LED を差し込む</text>
+        <rect x="40" y="200" width="640" height="14" fill="var(--line)"/>
+        <text x="60" y="236" class="s">机</text>
+        <rect class="tape" x="300" y="190" width="120" height="10"/>
+        <text x="460" y="236" class="s">外の穴をマスキングテープでふさぐ</text><path class="dim" d="M456 230 L420 200"/>
+        <path d="M80 190 H640 V170 H610 V120 H590 V170 H130 V120 H110 V170 H80 Z" class="pt"/>
+        <text x="200" y="160" class="s">フタ（表が下）</text>
+        <rect class="pt" x="336" y="120" width="12" height="50"/><rect class="pt" x="384" y="120" width="12" height="50"/>
+        <text x="300" y="112" class="s">短い筒</text>
+        <path class="pt" d="M348 190 v-52 h36 v52 a18 18 0 0 1 -36 0" style="fill:var(--paper)"/>
+        <path class="pt" d="M352 190 v-46 h28 v46 z" fill="var(--w-rd)" opacity=".5"/>
+        <path class="ln" d="M358 138 V70 M374 138 V82"/>
+        <circle cx="347" cy="134" r="6" fill="var(--w-or)" stroke="var(--ink)"/><circle cx="385" cy="134" r="6" fill="var(--w-or)" stroke="var(--ink)"/>
+        <text x="420" y="100" class="s at">根元と筒の口の境目に、</text><text x="420" y="118" class="s at">つまようじで接着剤を少し</text><path class="dim" d="M416 104 L392 128"/>
+        <path class="dim" d="M366 50 V64 M360 58 l6 8 l6 -8"/>
+        <text x="380" y="52" class="s">先端がテープ越しに机に当たるまで押す</text>
+      </svg>
+    </figure>
+    <ol>
+      <li>フタの<b>表の LED の穴を、外からマスキングテープでふさぐ</b>。しっかり密着させる。</li>
+      <li>フタを<b>表を下にして</b>平らな机に伏せ、内側の短い筒に LED を差し込み、先端がテープ越しに机に当たるまで押す。</li>
+      <li>その姿勢のまま、<b>筒の口と LED の根元の境目にだけ</b>、つまようじの先で少しだけ接着剤を付ける。流し込まない。</li>
+      <li>固まったらフタを起こしてテープをはがす。LED の足は、根元から 2〜3mm で直角に曲げ、<b>フタを本体に載せたとき電池のほうへ</b>倒れる向きにする（JST のほうへ倒さない）。</li>
+    </ol>
+    <p class="warn"><b>瞬間接着剤は使わない。</b>LED が白く曇ります。2液エポキシか、多用途接着剤（セメダインのスーパーX など）を使います。<br>穴に入らないときは、<b>内側から</b>丸ヤスリで軽く広げます。表側は削りません。</p>
+  </section>
+
+  <section class="card">
+    <div class="step-head"><div class="num">2</div><div><h2>仮置きで確かめる（接着しない）</h2><div class="sub">ここで合わなければ、固定する前に直せます</div></div></div>
+    <figure>
+      <svg viewBox="0 0 720 230" role="img" aria-label="XIAO の下を線が通る様子">
+        <text x="20" y="28" class="b">横から見た図：XIAO は四隅の台に載り、その下を線が通る</text>
+        <rect x="40" y="180" width="640" height="16" fill="var(--part)" stroke="var(--ink)"/>
+        <text x="360" y="216" text-anchor="middle" class="s">本体の床</text>
+        <rect x="200" y="160" width="26" height="20" fill="var(--muted)"/><rect x="560" y="160" width="26" height="20" fill="var(--muted)"/>
+        <text x="213" y="152" text-anchor="middle" class="s">台</text><text x="573" y="152" text-anchor="middle" class="s">台</text>
+        <rect class="pt" x="190" y="140" width="406" height="20" rx="2"/>
+        <text x="393" y="135" text-anchor="middle" class="s">XIAO（裏面が下）</text>
+        <rect class="pt" x="190" y="96" width="406" height="20" rx="2" style="fill:var(--paper)"/>
+        <text x="393" y="90" text-anchor="middle" class="s">拡張ボード</text>
+        <g><circle cx="280" cy="171" r="7" fill="var(--w-bl)"/><circle cx="296" cy="171" r="7" fill="var(--w-or)"/><circle cx="312" cy="171" r="7" fill="var(--w-bk)"/><circle cx="328" cy="171" r="7" fill="var(--w-rd)"/><circle cx="344" cy="171" r="7" fill="var(--w-bk)"/></g>
+        <path class="dim" d="M640 160 V180 M632 160 H648 M632 180 H648"/><text x="656" y="175" class="s">1.4mm</text>
+        <text x="420" y="176" class="s">5本を重ねずに 1列に並べる</text>
+      </svg>
+    </figure>
+    <ol>
+      <li>スイッチを、上の壁の内側の浅いくぼみにはめる。レバーが上の壁の穴から出て、左右に動くこと。<b>黒い線 2本の端子が左（壁側）</b>に来る向きにする。逆なら、スイッチを前後に裏返す。</li>
+      <li>XIAO の裏の 5本の線を 1列に並べ、<b>緑の入口</b>を通して、XIAO を USB 側から入れて四隅の台に載せる。</li>
+      <li>確かめる：<b>XIAO が押さなくても平らに座る</b>。外から USB ケーブルが奥まで挿さる。</li>
+    </ol>
+    <p class="warn"><b>XIAO が浮く・傾くとき</b>は、線が入口で噛んでいます。入口の上側の柱（マイク穴の壁につながっている柱）の<b>下の端を、ニッパーで 2mm ほど切り取って</b>入口を広げてください。今の印刷データ（v1.15）は、最初から入口を広げてあります。</p>
+  </section>
+
+  <section class="card">
+    <div class="step-head"><div class="num">3</div><div><h2>固定する</h2><div class="sub">スイッチ → XIAO → 電池の順</div></div></div>
+    <ol>
+      <li><b>スイッチ</b>：スイッチの金属ケースと、左右の細い柱が触れる所に、接着剤を少しだけ付ける。<b>レバーと穴のまわりには付けない</b>（レバーが固まって動かなくなる）。</li>
+      <li><b>XIAO</b>：四隅の台の上に、薄い両面テープを小さく切って貼り、XIAO を載せて押さえる。USB の口が右の穴の真ん中に来ること。</li>
+      <li><b>電池</b>：床の丸い台と細い台の上に薄い両面テープを貼り、電池を<b>左の柱に突き当てて</b>置く。右の壁との間に約 2.4mm のすき間が残るのが正解。<b>すき間を詰めない。</b></li>
+      <li>電池の線は、電池の左の端から出し、<b>左の壁ぞいの溝</b>を上へ通す。途中の小さな柱は上を越えてよい。<b>電池の上面より高くしない。</b>余った線は溝の中で折りたたむ。</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <div class="step-head"><div class="num">4</div><div><h2>電池をつないで JST を置く</h2><div class="sub">ここで初めて電池をつなぐ</div></div></div>
+    <figure>
+      <svg viewBox="0 0 720 260" role="img" aria-label="JST の置き方">
+        <text x="20" y="28" class="b">左の壁に寄せて、縦に寝かせる</text>
+        <rect x="60" y="44" width="16" height="200" fill="var(--part)" stroke="var(--ink)"/>
+        <text x="50" y="150" text-anchor="end" class="s">左の壁</text>
+        <rect class="pp" x="76" y="80" width="46" height="50" rx="3"/><rect class="pp" x="76" y="130" width="46" height="50" rx="3"/>
+        <text x="140" y="110" class="s">XIAO へ行く線が出る口（上・スイッチ側）</text>
+        <text x="140" y="164" class="s">電池から来る線が出る口（下・電池側）</text>
+        <path class="w rd" d="M90 80 V60 H260"/><path class="bkc" d="M106 80 V66 H260"/><path class="w bk" d="M106 80 V66 H260"/>
+        <text x="270" y="68" class="s">すぐ右へ曲げて「通り道」へ</text>
+        <path class="w rd" d="M90 180 V240"/><path class="bkc" d="M106 180 V240"/><path class="w bk" d="M106 180 V240"/>
+        <text x="120" y="232" class="s">電池へ（左の溝）</text>
+        <circle cx="72" cy="130" r="7" fill="var(--w-or)" stroke="var(--ink)"/>
+        <text x="140" y="200" class="s at">接着剤は、左の壁との間に 1点だけ</text>
+        <path class="dim" d="M136 196 L82 134"/>
+        <text x="420" y="150" class="s">厚み 3.3mm の向きを上下にして寝かせる</text>
+        <text x="420" y="170" class="s">上には何も載せない</text>
+      </svg>
+    </figure>
+    <ol>
+      <li>電池のプラグを、XIAO の JST に<b>指先の軽い力でまっすぐ</b>挿す。</li>
+      <li>つないだ JST を、<b>左の壁にぴったり寄せて縦に寝かせる</b>。電池側の口が下、XIAO 側の口が上。</li>
+      <li>左の壁との間に、ホットボンドか接着剤を<b>1点だけ</b>付けて固定する。JST を埋めない（電池を外せなくなる）。</li>
+      <li>XIAO へ行く 2本の線は、すぐ右へ曲げて「通り道」へ。<b>余った線は通り道でたるませる</b>（XIAO の下に押し込まない）。</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <div class="step-head"><div class="num">5</div><div><h2>アンテナと残りの線を収める</h2><div class="sub"></div></div></div>
+    <ol>
+      <li>アンテナのフィルムを、<b>左の壁の内側</b>（JST とスイッチがある区画）に貼る。高さは、床から 5mm より上で、壁の上の縁から 2.5mm より下。</li>
+      <li>入らなければ、<b>スイッチの下の床</b>に貼る。マイク穴のある壁と、右の壁には貼らない。</li>
+      <li>LED とスイッチの線の余りは、JST の右側の空いた所（通り道を含む左の区画）に収める。左の壁の上の縁ぞい（フタの縁が下りてくる所）は空ける。</li>
+      <li>外から上の壁を見て、<b>マイクの穴 3つが向こうまで見通せる</b>こと。</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <div class="step-head"><div class="num">6</div><div><h2>フタを閉める前の動作確認</h2><div class="sub">フタは横に置いたまま</div></div></div>
+    <ul class="checks">
+      <li><label><input type="checkbox" id="a6a"><span>スイッチを倒すと、フタの LED が点いたり消えたりする（今入っているテスト用のプログラム）</span></label></li>
+      <li><label><input type="checkbox" id="a6b"><span>外から USB を挿すと、XIAO の充電ランプが点滅する</span></label></li>
+      <li><label><input type="checkbox" id="a6c"><span>USB を挿しても XIAO が動かない（ぐらつかない）</span></label></li>
+      <li><label><input type="checkbox" id="a6d"><span>マイクの穴 3つが見通せる</span></label></li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <div class="step-head"><div class="num">7</div><div><h2>フタを閉める</h2><div class="sub">順番があります</div></div></div>
+    <figure>
+      <svg viewBox="0 0 720 300" role="img" aria-label="フタを閉める順番">
+        <rect x="200" y="40" width="300" height="230" rx="30" class="pt"/>
+        <text x="350" y="160" text-anchor="middle" class="s">フタ（上から見た図）</text>
+        <text x="350" y="30" text-anchor="middle" class="s">マイク穴の側</text>
+        <text x="520" y="160" class="s">USB の側</text>
+        <circle cx="222" cy="62" r="16" fill="var(--accent)"/><text x="222" y="67" text-anchor="middle" class="b" style="fill:var(--paper)">①</text>
+        <text x="40" y="66" class="s">左上の角の出っ張りを</text><text x="40" y="84" class="s">先に引っかける</text>
+        <circle cx="200" cy="160" r="16" fill="var(--accent)"/><text x="200" y="165" text-anchor="middle" class="b" style="fill:var(--paper)">②</text>
+        <text x="40" y="164" class="s">左の辺を差し込む</text>
+        <circle cx="350" cy="270" r="16" fill="var(--accent)"/><text x="350" y="275" text-anchor="middle" class="b" style="fill:var(--paper)">③</text>
+        <text x="380" y="292" class="s">下の辺を押してパチン</text>
+      </svg>
+    </figure>
+    <ol>
+      <li>① 左上の角の出っ張りを引っかける → ② 左の辺を差し込む → ③ 下の辺を押してパチンと入れる。</li>
+      <li><b>無理に押さない。</b>硬いときは、線を噛んでいないか、電池が右にずれていないか、JST の上や LED のまわりに線が入っていないかを先に見る。</li>
+      <li>開けるときは、下の辺の真ん中の小さな切り欠きに爪を掛けて起こす。</li>
+    </ol>
+  </section>
+
+  <section class="card stop">
+    <div class="step-head"><div class="num">■</div><div><h2>閉まったら連絡してください</h2><div class="sub">次は本番のプログラムとサーバ</div></div></div>
+    <p>フタを閉めた状態で、スイッチで LED が点くか、USB が挿さるかを教えてください。写真（フタを開けた中の様子）があると、線の収まりを確認できます。</p>
+  </section>
+</div>
+
+<script>
+(function(){
+  var boxes = document.querySelectorAll('.checks input[type=checkbox]');
+  var KEY = 'mindclip-assembly-checks';
+  var state = {};
+  try { state = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { state = {}; }
+  boxes.forEach(function(b){
+    if (state[b.id]) b.checked = true;
+    b.addEventListener('change', function(){
+      state[b.id] = b.checked;
+      try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+    });
+  });
+})();
+</script>
