@@ -23,4 +23,4 @@
 | `security/probe.py` | ダッシュボードの認証と入力処理の探針 | `python security/probe.py` |
 
 **残していないもの**：網羅率の測定結果（cov.json）は保存していません。測り直すときは、測定の道具を固定した環境の外に入れて（`pip install --target <作業フォルダ> coverage`）、`scripts/run_ai_bridge.py` を対象に分岐つきでテスト全体を走らせます。
-**注意**：再生スクリプト（`repro_1116.py`・`incident_sim.py`・`blind.py`）は「ログアウト中のEAは残高0・建玉なしと書く」を**仮定として**埋め込んでいます。走らせ直しても、この仮定は確かめられません。
+**注意**：再生スクリプト（`sre/repro_1116.py`・`assurance/incident_sim.py`・`maintain/blind.py`）は「ログアウト中のEAは残高0・建玉なしと書く」を**仮定として**埋め込んでいます。走らせ直しても、この仮定は確かめられません。`sre/repro_1116.py` は決済の試行が16回になり、一次記録の17回と合いません（`sre/logs_1116_anonymised.txt` の末尾）。
