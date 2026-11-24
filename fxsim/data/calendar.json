@@ -1,0 +1,283 @@
+{
+  "events": [
+    {
+      "time": "2026-05-01T14:00:00+00:00",
+      "currency": "USD",
+      "title": "ISM Manufacturing PMI (Apr)",
+      "impact": "high",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-01T14:00:00+00:00",
+      "currency": "USD",
+      "title": "Factory Orders (Mar)",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-05T14:00:00+00:00",
+      "currency": "USD",
+      "title": "ISM Services PMI (Apr)",
+      "impact": "high",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-06T12:15:00+00:00",
+      "currency": "USD",
+      "title": "ADP Employment Change (Apr)",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-07T12:30:00+00:00",
+      "currency": "USD",
+      "title": "Initial Jobless Claims",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-08T12:30:00+00:00",
+      "currency": "USD",
+      "title": "Nonfarm Payrolls / Employment Situation (Apr)",
+      "impact": "high",
+      "forecast": "62K",
+      "previous": "178K",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-08T12:30:00+00:00",
+      "currency": "USD",
+      "title": "Unemployment Rate (Apr)",
+      "impact": "high",
+      "forecast": "4.3%",
+      "previous": "4.3%",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-08T12:30:00+00:00",
+      "currency": "USD",
+      "title": "Average Hourly Earnings MoM (Apr)",
+      "impact": "medium",
+      "forecast": "0.3%",
+      "previous": "0.2%",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-12T12:30:00+00:00",
+      "currency": "USD",
+      "title": "CPI (Apr)",
+      "impact": "high",
+      "forecast": "",
+      "previous": "0.9%",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-12T12:30:00+00:00",
+      "currency": "USD",
+      "title": "Core CPI (Apr)",
+      "impact": "high",
+      "forecast": "",
+      "previous": "0.4%",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-14T12:30:00+00:00",
+      "currency": "USD",
+      "title": "PPI (Apr)",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-14T12:30:00+00:00",
+      "currency": "USD",
+      "title": "Initial Jobless Claims",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-15T12:30:00+00:00",
+      "currency": "USD",
+      "title": "Advance Retail Sales (Apr)",
+      "impact": "high",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-15T12:30:00+00:00",
+      "currency": "USD",
+      "title": "Empire State Manufacturing Survey (May)",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-15T13:15:00+00:00",
+      "currency": "USD",
+      "title": "Industrial Production (Apr)",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-15T14:00:00+00:00",
+      "currency": "USD",
+      "title": "Michigan Consumer Sentiment (Prelim, May)",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-17T23:50:00+00:00",
+      "currency": "JPY",
+      "title": "GDP (Q1, Preliminary)",
+      "impact": "high",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-21T23:30:00+00:00",
+      "currency": "JPY",
+      "title": "National CPI (Apr)",
+      "impact": "high",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-21T23:50:00+00:00",
+      "currency": "JPY",
+      "title": "Trade Balance (Apr)",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-21T13:45:00+00:00",
+      "currency": "USD",
+      "title": "S&P Global Flash PMIs (May)",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-21T14:00:00+00:00",
+      "currency": "USD",
+      "title": "Existing Home Sales (Apr)",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-22T23:30:00+00:00",
+      "currency": "JPY",
+      "title": "Tokyo flash / National CPI follow-up reference",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-22T14:00:00+00:00",
+      "currency": "USD",
+      "title": "New Home Sales (Apr)",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-27T12:30:00+00:00",
+      "currency": "USD",
+      "title": "Durable Goods Orders (Apr)",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-27T14:00:00+00:00",
+      "currency": "USD",
+      "title": "Consumer Confidence (May)",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-28T12:30:00+00:00",
+      "currency": "USD",
+      "title": "GDP Q1 2026 (Second Estimate)",
+      "impact": "high",
+      "forecast": "2.0%",
+      "previous": "0.5%",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-28T12:30:00+00:00",
+      "currency": "USD",
+      "title": "Initial Jobless Claims",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-28T12:30:00+00:00",
+      "currency": "USD",
+      "title": "PCE Price Index (Apr) / Personal Income & Outlays",
+      "impact": "high",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-28T23:30:00+00:00",
+      "currency": "JPY",
+      "title": "Tokyo CPI (May)",
+      "impact": "medium",
+      "forecast": "1.5% core YoY",
+      "previous": "1.5%",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-28T23:50:00+00:00",
+      "currency": "JPY",
+      "title": "Industrial Production (Apr, Prelim)",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    },
+    {
+      "time": "2026-05-28T23:50:00+00:00",
+      "currency": "JPY",
+      "title": "Retail Sales (Apr)",
+      "impact": "medium",
+      "forecast": "",
+      "previous": "",
+      "actual": ""
+    }
+  ]
+}

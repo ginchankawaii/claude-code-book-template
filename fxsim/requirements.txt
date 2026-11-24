@@ -1,0 +1,22 @@
+# Exact pins of the direct dependencies (Round-10); constraints.txt pins every
+# transitive one as well (Round-10B). `docker compose up -d --build` used to
+# resolve "latest" on every rebuild, so the live money path could change under
+# the owner without a line of this repository changing. The Dockerfile and
+# .github/workflows/fxsim-tests.yml both install `-r requirements.txt -c
+# constraints.txt` on Python 3.12; the workflow runs on every push to main or
+# to a claude/** branch and on pull requests. Still floating: the patch level
+# of the python:3.12-slim base image. Raise a pin deliberately, regenerate
+# constraints.txt, keep the tests green — never by rebuilding.
+# python-dotenv is imported by app/config.py (it used to arrive only through
+# uvicorn[standard]); jinja2 is not imported today and stays only because every
+# image so far has carried it.
+fastapi==0.156.4
+uvicorn[standard]==0.54.0
+requests==2.34.2
+pandas==3.0.6
+numpy==2.4.6
+jinja2==3.1.6
+python-dotenv==1.2.4
+anthropic==1.17.0
+httpx==0.28.1
+pytest==9.1.1

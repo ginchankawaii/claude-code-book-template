@@ -1,0 +1,37 @@
+M01 KILLED       3s | decide on the FORMING bar again (the Round-2..9 defect) | tests/test_ai_bridge.py::test_forming_bar_crossing_is_not_a_signal
+M02 SURVIVED    66s | probe trusts a status row with equity 0 (EA not logged in: book reads empty) | 274 passed, 2 warnings in 65.85s (0:01:05)
+M03 SURVIVED    65s | stop distance 1.5 ATR -> 2.5 ATR | 274 passed, 2 warnings in 64.61s (0:01:04)
+M04 KILLED      25s | a HOLD decision mints a new order id (licenses the EA to re-buy) | tests/test_ai_bridge.py::test_hold_reuses_the_standing_order_seq
+M05 SURVIVED    64s | decision line carries no broker stop | 274 passed, 2 warnings in 63.70s (0:01:03)
+M06 KILLED      31s | decision line carries no EXP (time-unbounded order) | tests/test_ai_bridge.py::test_a_long_survives_the_christmas_closure[True]
+M07 KILLED      26s | blind brain never withholds the heartbeat (fail-safe unreachable) | tests/test_ai_bridge.py::test_a_dead_feed_stays_refused_through_christmas_day[fixed]
+M08 SURVIVED    65s | external close (broker SL fill) is never reconciled | 274 passed, 2 warnings in 64.56s (0:01:04)
+M09 KILLED      25s | python-side stop never fires | tests/test_ai_bridge.py::test_resident_loop_reenters_only_after_the_stop_bar_has_closed[None-None]
+M10 KILLED      25s | no re-entry block after a python stop (I12) | tests/test_ai_bridge.py::test_resident_loop_reenters_only_after_the_stop_bar_has_closed[None-None]
+M11 SURVIVED    63s | trend-down no longer triggers a gate exit (waits for the 20h daily slot) | 274 passed, 2 warnings in 62.83s (0:01:02)
+M12 SURVIVED    65s | new order id not stepped over the EA's executed id | 274 passed, 2 warnings in 64.17s (0:01:04)
+M13 SURVIVED    63s | heartbeat EXP written in the container clock, not the EA's | 274 passed, 2 warnings in 62.76s (0:01:02)
+M14 KILLED      26s | stop-liveness withholding removed | tests/test_ai_bridge.py::test_a_dead_feed_stays_refused_through_christmas_day[fixed]
+M15 SURVIVED    67s | keeps heartbeating after losing the lock | 274 passed, 2 warnings in 66.14s (0:01:06)
+M16 SURVIVED    65s | heartbeats 'LONG 0.00' (EA reads close-everything) | 274 passed, 2 warnings in 64.50s (0:01:04)
+M17 SURVIVED    62s | heartbeat drops the broker stop | 274 passed, 2 warnings in 61.93s (0:01:01)
+M18 SURVIVED    67s | frozen/torn EA status is trusted by the loop | 274 passed, 2 warnings in 65.85s (0:01:05)
+M19 SURVIVED    66s | external shrink not adopted (heartbeat keeps the old target) | 274 passed, 2 warnings in 65.57s (0:01:05)
+M20 KILLED      26s | blind poll still runs scheduled decisions | tests/test_ai_bridge.py::test_resident_loop_reenters_only_after_the_stop_bar_has_closed[None-blind_daily]
+M21 KILLED       4s | stale bars accepted | tests/test_ai_bridge.py::test_stale_bars_are_refused
+M22 KILLED       4s | implausible bar accepted | tests/test_ai_bridge.py::test_implausible_last_bar_quarantines_feed
+M23 KILLED      25s | order ids not wall-clock monotone across restarts | tests/test_ai_bridge.py::test_seq_is_monotonic_across_restarts
+M24 SURVIVED    63s | implausible restored stop not discarded | 274 passed, 2 warnings in 62.04s (0:01:02)
+M25 SURVIVED    64s | unfilled order not cancelled when the trend turns | 274 passed, 2 warnings in 63.18s (0:01:03)
+M26 KILLED      26s | stop hit writes a new LONG order instead of FLAT | tests/test_ai_bridge.py::test_resident_loop_reenters_only_after_the_stop_bar_has_closed[None-None]
+M27 KILLED      25s | restored id-less LONG never settled against the book | tests/test_ai_bridge.py::test_resident_loop_reenters_only_after_the_stop_bar_has_closed[2-lost_stop_row]
+M28 SURVIVED    63s | restored decision clock may sit in the future | 274 passed, 2 warnings in 62.97s (0:01:02)
+M29 KILLED      26s | FLAT-pending no longer blocks decisions (hold re-adopts) | tests/test_ai_bridge.py::test_resident_loop_reenters_only_after_the_stop_bar_has_closed[None-ea_lag_blind]
+M30 KILLED       3s | decision signal from the live price, not the closed bar | tests/test_ai_bridge.py::test_forming_bar_crossing_is_not_a_signal
+M31 KILLED      25s | signal file never carries SEQ | tests/test_ai_bridge.py::test_signal_seq_round_trips_through_the_bridge
+M32 KILLED      34s | status all-or-nothing parse relaxed (torn ea_time trusted) | tests/test_bridge.py::test_read_status_rejects_a_torn_extended_row_as_a_whole
+M33 KILLED       4s | size rounds to nearest instead of truncating (can exceed the cap) | tests/test_ai_bridge.py::test_the_leverage_dial_is_always_a_real_cap
+M34 KILLED      66s | ramp disabled: always full cap | tests/test_sizing.py::test_floor_at_or_below_sma
+M35 SURVIVED    64s | hold/FLAT path leverage doubled (I2 probe) | 274 passed, 2 warnings in 63.70s (0:01:03)
+M36 KILLED      25s | re-entry block not restored after restart | tests/test_ai_bridge.py::test_resident_loop_reenters_only_after_the_stop_bar_has_closed[2-None]
+TOTAL 36 mutants: 20 killed, 16 survived

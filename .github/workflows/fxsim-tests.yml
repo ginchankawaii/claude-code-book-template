@@ -1,0 +1,59 @@
+# Runs the fxsim test suite and the research-harness validations.
+# Until Round-10 the only check on this repository was a code-review job: no
+# push ever ran a test. This installs fxsim/requirements.txt with
+# fxsim/constraints.txt exactly as the Docker image does (same Python, every
+# package pinned), so what the owner rebuilds is what was tested here. Pushes
+# to the claude/** work branches run it too: the owner pulls from one, and a
+# test that runs only while a pull request is open can be skipped (Round-10B).
+name: fxsim tests
+
+on:
+  pull_request:
+    paths:
+      - "fxsim/**"
+      - ".github/workflows/fxsim-tests.yml"
+  push:
+    branches: [main, "claude/**"]
+    paths:
+      - "fxsim/**"
+      - ".github/workflows/fxsim-tests.yml"
+  workflow_dispatch:      # offered by GitHub only once this file is on the default branch
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: fxsim
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"          # the Dockerfile's interpreter
+          cache: pip
+          cache-dependency-path: |
+            fxsim/requirements.txt
+            fxsim/constraints.txt
+      - name: Install the pinned dependencies
+        run: pip install -r requirements.txt -c constraints.txt
+      - name: Exactly the pinned packages are installed, at their pinned versions
+        # both ways: a package added to requirements.txt without regenerating
+        # constraints.txt would otherwise install unpinned and pass (review of dae5183)
+        run: |
+          pip freeze | LC_ALL=C sort > /tmp/installed.txt
+          grep -v '^#' constraints.txt | grep . | LC_ALL=C sort > /tmp/pinned.txt
+          missing=$(LC_ALL=C comm -23 /tmp/pinned.txt /tmp/installed.txt)
+          extra=$(LC_ALL=C comm -13 /tmp/pinned.txt /tmp/installed.txt)
+          if [ -n "$missing" ]; then echo "not installed as pinned:"; echo "$missing"; fi
+          if [ -n "$extra" ]; then echo "installed but not pinned in constraints.txt:"; echo "$extra"; fi
+          [ -z "$missing" ] && [ -z "$extra" ]
+      - name: Test suite
+        run: python -m pytest tests -q
+      - name: Research harness reproduces the engine (14 OK lines)
+        run: python -m scripts.research_harness
+      - name: Daily port reproduces the harness (4 OK lines)
+        run: python -m scripts.research_daily_port
