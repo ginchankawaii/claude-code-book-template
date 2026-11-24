@@ -353,6 +353,20 @@ USB_OPEN_W, USB_OPEN_H = 10.5, 4.8              # y方向 x z方向
 USB_CENTER_ABOVE_STACK = 2.9
 USB_Z0 = WALL + XIAO_LIFT + USB_CENTER_ABOVE_STACK - USB_OPEN_H / 2.0   # 3.5 (開口 z3.5..8.3)
 USB_CB_W, USB_CB_H, USB_CB_D = 13.0, 8.0, 0.8   # プラグ逃がし座ぐり (オーバーモールド対応)
+# --- microSD カードの逃げ (v1.16) -------------------------------------------
+#   Sense 拡張ボードの microSD スロットは USB 側の端にあり、挿したカードは USB-C の先端から
+#   さらに 2.0mm 外へ出る (実測 M10)。旧版はカードがはみ出さない前提で、右の壁に当たって入らなかった。
+#   カードはスタックの最上段 (厚さ 1.0mm 実測) にあるので、右の壁の上側に「上が開いた切り欠き」を設け、
+#   XIAO を上から下ろすときにカードが通り、閉じたあとはカードの先が外へ少し出る形にする。
+SD_PROTRUDE_FROM_USB_TIP = 2.0                  # 実測 M10
+SD_T = 1.0                                      # 実測 M10
+SD_Y_ON_BOARD = (4.1, 15.7)                     # 基板の電池側の縁からの範囲 (写真からの推定。±1mm を見込む)
+SD_MARGIN = 1.2
+_sd_z1 = xiao[5]                                # カード上面 = スタック上面
+sd_card = (xiao[2] - 4.0, xiao[1] + SD_Y_ON_BOARD[0], xiao[2] + USB_PROTRUDE + SD_PROTRUDE_FROM_USB_TIP,
+           xiao[1] + SD_Y_ON_BOARD[1], _sd_z1 - SD_T, _sd_z1)
+sd_notch = (WALL + IW - 0.5, sd_card[1] - SD_MARGIN, None, sd_card[3] + SD_MARGIN,
+            sd_card[4] - 1.0, None)             # x1 / z1 は build_body で外面・上端まで
 # マイク開口: 上面。Sense拡張ボード上面 (z=11.2) 近傍の高さに合わせる
 MIC_Z = xiao[5] - 0.9                           # 10.3 (開口 z 9.55..11.05)
 MIC_HOLE_R = 0.75                               # φ1.5
@@ -748,6 +762,14 @@ def check_layout():
     # XIAO とリッド内面のクリアランス
     assert BODY_D - xiao[5] >= 0.5 - 1e-6, "XIAO stack too close to lid"
     # XIAO 横方向拘束: 左ストップリブの面が基板左端に 0.1-0.3mm で対向
+    # microSD (v1.16): 切り欠きがカードを y / z とも 1mm 以上の余裕で囲み、USB 開口との間に壁が残る
+    assert sd_notch[1] <= sd_card[1] - 1.0 + 1e-6 and sd_notch[3] >= sd_card[3] + 1.0 - 1e-6, "SD notch too narrow"
+    assert sd_notch[4] <= sd_card[4] - 1.0 + 1e-6, "SD notch bottom too high"
+    assert sd_notch[4] - (USB_Z0 + USB_OPEN_H) >= 0.8 - 1e-6, "no wall left between the USB opening and the SD notch"
+    assert sd_notch[3] <= WALL + IH - 1.0, "SD notch reaches the top wall"
+    print(f"[layout] microSD: card y{sd_card[1]:.1f}..{sd_card[3]:.1f} z{sd_card[4]:.1f}..{sd_card[5]:.1f}, "
+          f"tip x{sd_card[2]:.1f} ({sd_card[2] - W:.1f} mm outside) | notch y{sd_notch[1]:.1f}..{sd_notch[3]:.1f} "
+          f"z{sd_notch[4]:.1f}..top | wall above USB {sd_notch[4] - (USB_Z0 + USB_OPEN_H):.1f} mm")
     if xiao_stops:
         assert 0.1 <= xiao[0] - xiao_stops[0][2] <= 0.6 + 1e-6, "XIAO left stop gap wrong"
     else:
@@ -1150,6 +1172,9 @@ def build_body():
     body = body.cut(cq.Workplane(obj=bbox_solid(
         (WALL + IW - 0.5, USB_CY - USB_OPEN_W / 2, W + 0.5, USB_CY + USB_OPEN_W / 2,
          USB_Z0, USB_Z0 + USB_OPEN_H))))
+    # microSD カードの逃げ (v1.16): 右の壁の上側を、上が開いた切り欠きにする
+    body = body.cut(cq.Workplane(obj=bbox_solid(
+        (sd_notch[0], sd_notch[1], W + 0.5, sd_notch[3], sd_notch[4], BODY_D + 0.5))))
     # スイッチ位置決め凹み (上壁内面) + レバースロット (上面貫通)
     body = body.cut(cq.Workplane(obj=bbox_solid(sw_recess_pocket)))
     sw_cx = (sw[0] + sw[2]) / 2
