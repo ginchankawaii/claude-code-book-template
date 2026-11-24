@@ -360,8 +360,12 @@ USB_CB_W, USB_CB_H, USB_CB_D = 13.0, 8.0, 0.8   # プラグ逃がし座ぐり (�
 #   XIAO を上から下ろすときにカードが通り、閉じたあとはカードの先が外へ少し出る形にする。
 SD_PROTRUDE_FROM_USB_TIP = 2.0                  # 実測 M10
 SD_T = 1.0                                      # 実測 M10
-SD_Y_ON_BOARD = (4.1, 15.7)                     # 基板の電池側の縁からの範囲 (写真からの推定。±1mm を見込む)
-SD_MARGIN = 1.2
+SD_W = 11.1                                     # 実測 M10
+SD_GAP_A = 3.9                                  # マイクの無い側 (電池側) の長辺 → カードの端 (実測 M10)
+SD_GAP_B = 1.8                                  # マイクの有る側 (上の壁側) の長辺 → カードの端 (実測 M10)
+#   A + W + B = 16.8 で基板幅 17.8 と 1.0 合わないため、A 基準と B 基準の両方の位置を包む範囲をカードとする
+SD_Y_ON_BOARD = (min(SD_GAP_A, XIAO_H - SD_GAP_B - SD_W), max(SD_GAP_A + SD_W, XIAO_H - SD_GAP_B))
+SD_MARGIN = 1.0
 _sd_z1 = xiao[5]                                # カード上面 = スタック上面
 sd_card = (xiao[2] - 4.0, xiao[1] + SD_Y_ON_BOARD[0], xiao[2] + USB_PROTRUDE + SD_PROTRUDE_FROM_USB_TIP,
            xiao[1] + SD_Y_ON_BOARD[1], _sd_z1 - SD_T, _sd_z1)
@@ -763,7 +767,7 @@ def check_layout():
     assert BODY_D - xiao[5] >= 0.5 - 1e-6, "XIAO stack too close to lid"
     # XIAO 横方向拘束: 左ストップリブの面が基板左端に 0.1-0.3mm で対向
     # microSD (v1.16): 切り欠きがカードを y / z とも 1mm 以上の余裕で囲み、USB 開口との間に壁が残る
-    assert sd_notch[1] <= sd_card[1] - 1.0 + 1e-6 and sd_notch[3] >= sd_card[3] + 1.0 - 1e-6, "SD notch too narrow"
+    assert sd_notch[1] <= sd_card[1] - SD_MARGIN + 1e-6 and sd_notch[3] >= sd_card[3] + SD_MARGIN - 1e-6, "SD notch too narrow"
     assert sd_notch[4] <= sd_card[4] - 1.0 + 1e-6, "SD notch bottom too high"
     assert sd_notch[4] - (USB_Z0 + USB_OPEN_H) >= 0.8 - 1e-6, "no wall left between the USB opening and the SD notch"
     assert sd_notch[3] <= WALL + IH - 1.0, "SD notch reaches the top wall"
