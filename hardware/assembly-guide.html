@@ -81,14 +81,8 @@ svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
 <div class="wrap" lang="ja">
   <header style="display:flex;flex-direction:column;gap:8px">
     <h1>MindClip 組み込み図解</h1>
-    <p class="lead">配線の済んだ部品を、一体型の本体に収めてフタを閉めるまで。図はすべて、フタを外して上から見た向き（USB の穴が右、マイク穴が上）です。</p>
+    <p class="lead">配線の済んだ部品を、一体型の本体に収めてフタを閉めるまで。手順ごとの図は、プラモデルの説明書と同じく、その手順で入れる部品に色を付け、入れ済みの部品を灰色で描いています。</p>
   </header>
-
-  <section class="card">
-    <h2>組み込みの流れ（アニメーション）</h2>
-    <figure><img src="assembly.gif" alt="スイッチ、XIAO、電池、JST の順に本体へ入れ、最後にフタを閉める様子のアニメーション" style="display:block;width:100%;height:auto"></figure>
-    <p class="sub">部品は箱の形で単純にしています。XIAO は透けて見えるように描いてあり、<b>点線が XIAO の下を通る線</b>です。右の断面図のとおり、5本は XIAO と床のすき間（1.4mm）に 1列に並びます。フタは左に置いたまま作業し、最後に左の辺を軸にかぶせます。</p>
-  </section>
 
   <section class="card">
     <h2>できあがりの配置</h2>
@@ -150,6 +144,8 @@ svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
 
   <section class="card">
     <div class="step-head"><div class="num">2</div><div><h2>仮置きで確かめる（接着しない）</h2><div class="sub">ここで合わなければ、固定する前に直せます</div></div></div>
+    <figure><img src="manual_1.png" alt="スイッチを上の壁のくぼみにはめる図" style="display:block;width:100%;height:auto"></figure>
+    <figure><img src="manual_2.png" alt="XIAO を四隅の台に載せ、線5本を XIAO の下に通す図" style="display:block;width:100%;height:auto"></figure>
     <figure>
       <svg viewBox="0 0 720 230" role="img" aria-label="XIAO の下を線が通る様子">
         <text x="20" y="28" class="b">横から見た図：XIAO は四隅の台に載り、その下を線が通る</text>
@@ -176,6 +172,7 @@ svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
 
   <section class="card">
     <div class="step-head"><div class="num">3</div><div><h2>固定する</h2><div class="sub">スイッチ → XIAO → 電池の順</div></div></div>
+    <figure><img src="manual_3.png" alt="電池を左の柱に突き当てて置く図" style="display:block;width:100%;height:auto"></figure>
     <ol>
       <li><b>スイッチ</b>：スイッチの金属ケースと、左右の細い柱が触れる所に、接着剤を少しだけ付ける。<b>レバーと穴のまわりには付けない</b>（レバーが固まって動かなくなる）。</li>
       <li><b>XIAO</b>：四隅の台の上に、薄い両面テープを小さく切って貼り、XIAO を載せて押さえる。USB の口が右の穴の真ん中に来ること。</li>
@@ -186,6 +183,7 @@ svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
 
   <section class="card">
     <div class="step-head"><div class="num">4</div><div><h2>電池をつないで JST を置く</h2><div class="sub">ここで初めて電池をつなぐ</div></div></div>
+    <figure><img src="manual_4.png" alt="電池をつなぎ JST を左の壁に縦に寝かせる図" style="display:block;width:100%;height:auto"></figure>
     <figure>
       <svg viewBox="0 0 720 260" role="img" aria-label="JST の置き方">
         <text x="20" y="28" class="b">左の壁に寄せて、縦に寝かせる</text>
@@ -215,6 +213,7 @@ svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
 
   <section class="card">
     <div class="step-head"><div class="num">5</div><div><h2>アンテナと残りの線を収める</h2><div class="sub"></div></div></div>
+    <figure><img src="manual_5.png" alt="アンテナのフィルムを左の壁の内側に貼る図" style="display:block;width:100%;height:auto"></figure>
     <ol>
       <li>アンテナのフィルムを、<b>左の壁の内側</b>（JST とスイッチがある区画）に貼る。高さは、床から 5mm より上で、壁の上の縁から 2.5mm より下。</li>
       <li>入らなければ、<b>スイッチの下の床</b>に貼る。マイク穴のある壁と、右の壁には貼らない。</li>
@@ -235,6 +234,7 @@ svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
 
   <section class="card">
     <div class="step-head"><div class="num">7</div><div><h2>フタを閉める</h2><div class="sub">順番があります</div></div></div>
+    <figure><img src="manual_6.png" alt="フタを左の辺から掛けて閉める図" style="display:block;width:100%;height:auto"></figure>
     <figure>
       <svg viewBox="0 0 720 300" role="img" aria-label="フタを閉める順番">
         <rect x="200" y="40" width="300" height="230" rx="30" class="pt"/>
