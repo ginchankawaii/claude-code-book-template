@@ -1,0 +1,226 @@
+<title>MindClip サーバ設置</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* layout: 組立説明書の1列。各手順 = 番号札 + 図 + 短い指示 + 確認チェック */
+:root{
+  --bg:#f3f5f8; --paper:#ffffff; --ink:#1c2533; --muted:#5a6678; --line:#c9d1dc;
+  --accent:#0b6bcb; --warn:#b3261e; --warn-bg:#fdecea; --ok:#1b7a3d; --ok-bg:#e7f5ec;
+  --part:#e3e8ef; --metal:#aeb7c4; --tube:rgba(11,107,203,.18);
+  --w-or:#e8730c; --w-bl:#1f6fd6; --w-rd:#d32f2f; --w-bk:#15181d; --tape:#f2d98a;
+  --font:"Zen Kaku Gothic New","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+  --num:"Space Grotesk","Zen Kaku Gothic New",sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#12161c; --paper:#1b212a; --ink:#e6eaf0; --muted:#9aa6b6; --line:#3a4453;
+  --accent:#6db3ff; --warn:#ff8a80; --warn-bg:#3a1f1d; --ok:#7bd69a; --ok-bg:#1b3325;
+  --part:#2a323e; --metal:#7f8a99; --tube:rgba(109,179,255,.22);
+  --w-or:#ff9a3d; --w-bl:#62a8ff; --w-rd:#ff6b6b; --w-bk:#0a0c10; --tape:#c9a94a; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#12161c; --paper:#1b212a; --ink:#e6eaf0; --muted:#9aa6b6; --line:#3a4453;
+  --accent:#6db3ff; --warn:#ff8a80; --warn-bg:#3a1f1d; --ok:#7bd69a; --ok-bg:#1b3325;
+  --part:#2a323e; --metal:#7f8a99; --tube:rgba(109,179,255,.22);
+  --w-or:#ff9a3d; --w-bl:#62a8ff; --w-rd:#ff6b6b; --w-bk:#0a0c10; --tape:#c9a94a; color-scheme:dark }
+
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:16px;line-height:1.75;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px 64px}
+.wrap{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:28px}
+h1{font-size:1.7rem;line-height:1.3;margin:0;text-wrap:balance}
+h2{font-size:1.25rem;line-height:1.35;margin:0;text-wrap:balance}
+h3{font-size:1rem;margin:0}
+p{margin:0}
+p,li,td,th,figcaption,h1,h2,h3,.sub,.lead{word-break:auto-phrase;line-break:strict;overflow-wrap:anywhere}
+p,li,figcaption{text-wrap:pretty}
+figure,.warn,.ok,.step-head,li,table,tr{break-inside:avoid}
+.step-head,h2,h3{break-after:avoid}
+figure .panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+figure .panels svg{min-width:0;border-bottom:1px solid var(--line)}
+@media (max-width:620px){figure:not(:has(.panels))::before{content:"図は横にスクロールできます →";display:block;font-size:.8rem;color:var(--muted);padding:6px 12px;border-bottom:1px solid var(--line);position:sticky;left:0}}
+svg .fl{fill:var(--w-or);stroke:var(--ink);stroke-width:1.2}
+svg .tubeS{fill:var(--accent);opacity:.55;stroke:var(--ink);stroke-width:1.2}
+.lead{color:var(--muted)}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.step-head{display:flex;gap:14px;align-items:center}
+.num{font-family:var(--num);font-weight:700;font-size:1.5rem;min-width:52px;height:52px;border:2px solid var(--ink);border-radius:8px;display:grid;place-items:center}
+.sub{color:var(--muted);font-size:.9rem}
+figure{margin:0;border:1px solid var(--line);border-radius:8px;overflow-x:auto;background:var(--paper)}
+figure svg{display:block;width:100%;min-width:560px;height:auto}
+figcaption{font-size:.85rem;color:var(--muted);padding:8px 12px;border-top:1px solid var(--line)}
+ol,ul{margin:0;padding-left:1.4em;display:flex;flex-direction:column;gap:6px}
+.warn{background:var(--warn-bg);border-left:4px solid var(--warn);padding:10px 14px;border-radius:4px}
+.warn b{color:var(--warn)}
+.ok{background:var(--ok-bg);border-left:4px solid var(--ok);padding:10px 14px;border-radius:4px}
+.checks{list-style:none;padding:0;gap:8px}
+.checks label{display:flex;gap:10px;align-items:flex-start;cursor:pointer}
+.checks input{width:20px;height:20px;margin-top:4px;flex:none;accent-color:var(--ok)}
+.checks input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+table{border-collapse:collapse;width:100%;font-size:.95rem}
+th,td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:500;font-size:.85rem}
+.tw{overflow-x:auto}
+.chip{display:inline-block;width:1.6em;height:.5em;border-radius:3px;vertical-align:middle;margin-right:.3em;border:1px solid var(--line)}
+.stop{border:2px solid var(--warn)}
+/* SVG parts */
+svg text{font-family:var(--font);fill:var(--ink);font-size:14px}
+svg .s{font-size:12px;fill:var(--muted)}
+svg .b{font-weight:700}
+svg .ln{stroke:var(--ink);stroke-width:1.6;fill:none}
+svg .pt{stroke:var(--ink);stroke-width:1.6;fill:var(--part)}
+svg .mt{stroke:var(--ink);stroke-width:1.2;fill:var(--metal)}
+svg .pp{stroke:var(--ink);stroke-width:1.6;fill:var(--paper)}
+svg .w{fill:none;stroke-width:4;stroke-linecap:round}
+svg .or{stroke:var(--w-or)} svg .bl{stroke:var(--w-bl)} svg .rd{stroke:var(--w-rd)}
+svg .bkc{stroke:var(--ink);stroke-width:6.5;fill:none;stroke-linecap:round} svg .bk{stroke:var(--w-bk)}
+svg .tube{fill:var(--tube);stroke:var(--accent);stroke-width:1.2;stroke-dasharray:4 3}
+svg .tape{fill:var(--tape);stroke:var(--ink);stroke-width:1}
+svg .dim{stroke:var(--muted);stroke-width:1;fill:none}
+svg .x{stroke:var(--warn);stroke-width:3;fill:none;stroke-linecap:round}
+svg .wt{fill:var(--warn)} svg .at{fill:var(--accent)}
+
+pre{margin:0;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px 12px;overflow-x:auto;font-family:ui-monospace,Consolas,monospace;font-size:.9rem;line-height:1.55}
+.cmd{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.cmd button{align-self:flex-start;font:inherit;font-size:.85rem;padding:4px 12px;border-radius:6px;border:1px solid var(--line);background:var(--paper);color:var(--ink);cursor:pointer}
+.cmd button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+code{font-family:ui-monospace,Consolas,monospace;font-size:.92em;background:var(--bg);padding:1px 4px;border-radius:4px}
+</style>
+<div class="wrap" lang="ja">
+  <header style="display:flex;flex-direction:column;gap:8px">
+    <h1>MindClip サーバ設置（Surface）</h1>
+    <p class="lead">Surface の Docker に、文字起こしと日記まとめのサーバを立てます。この回は、<b>Surface で録った試しの音声が Obsidian の日記に入るところまで</b>。MindClip 本体とつなぐのは次の回です。</p>
+  </header>
+
+  <section class="card">
+    <h2>できあがりの形</h2>
+    <figure>
+      <svg viewBox="0 0 720 300" role="img" aria-label="サーバの構成図">
+        <defs><marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--ink)"/></marker></defs>
+        <rect x="20" y="40" width="680" height="240" rx="12" class="pp"/>
+        <text x="40" y="66" class="b">Surface（Docker Desktop の中）</text>
+        <rect x="50" y="90" width="170" height="70" rx="8" class="pt"/>
+        <text x="135" y="120" text-anchor="middle" class="b">data\inbox</text>
+        <text x="135" y="142" text-anchor="middle" class="s">音声を置くフォルダ</text>
+        <rect x="270" y="80" width="190" height="90" rx="8" class="pt"/>
+        <text x="365" y="110" text-anchor="middle" class="b">voice-logger</text>
+        <text x="365" y="132" text-anchor="middle" class="s">文字起こし（Whisper）</text>
+        <text x="365" y="152" text-anchor="middle" class="s">inbox を見張って自動処理</text>
+        <rect x="270" y="190" width="190" height="70" rx="8" class="pt"/>
+        <text x="365" y="220" text-anchor="middle" class="b">ollama</text>
+        <text x="365" y="242" text-anchor="middle" class="s">要約する AI（qwen3:4b）</text>
+        <rect x="510" y="90" width="170" height="70" rx="8" class="pt"/>
+        <text x="595" y="120" text-anchor="middle" class="b">Obsidian の保管庫</text>
+        <text x="595" y="142" text-anchor="middle" class="s">Daily Notes に追記</text>
+        <path class="ln" d="M220 125 H262" marker-end="url(#ar)"/><path class="ln" d="M460 125 H502" marker-end="url(#ar)"/>
+        <path class="ln" d="M345 170 V184" marker-end="url(#ar)"/><path class="ln" d="M385 190 V176" marker-end="url(#ar)"/>
+      </svg>
+      <figcaption>音声も文字も、Surface の外へは出ません。インターネットを使うのは、最初に AI のモデルをダウンロードするときだけです。</figcaption>
+    </figure>
+    <p class="warn"><b>Surface では、ほかのシステムも Docker で動いています。</b>手順2で Docker を一度止めるので、<b>ほかのシステムも数分止まります</b>。止めてよい時間にやってください。</p>
+  </section>
+
+  <section class="card">
+    <h2>用意するもの</h2>
+    <ul class="checks">
+      <li><label><input type="checkbox" id="p1"><span>Docker Desktop が動いている（タスクバーにクジラのアイコン）</span></label></li>
+      <li><label><input type="checkbox" id="p2"><span>Obsidian の保管庫（Vault）が Surface にある</span></label></li>
+      <li><label><input type="checkbox" id="p3"><span>空き容量 15GB 以上（AI のモデル約 4GB と、作業用）</span></label></li>
+      <li><label><input type="checkbox" id="p4"><span>1時間ほどの時間（ダウンロード待ちが長い）</span></label></li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <div class="step-head"><div class="num">1</div><div><h2>Obsidian の保管庫の場所を調べる</h2></div></div>
+    <ol>
+      <li>Obsidian を開き、左のファイル一覧で、どれかのノートを<b>右クリック →「エクスプローラーで表示」</b>。</li>
+      <li>開いたエクスプローラーの<b>アドレス欄をクリック</b>すると、<code>C:\Users\○○\Documents\MyVault</code> のような場所が出ます。保管庫のいちばん上のフォルダまでをメモします（ノートがフォルダの中にあれば、その一つ上）。</li>
+      <li>日記（デイリーノート）を入れているフォルダ名も見ておきます。このサーバは <b><code>Daily Notes</code></b> というフォルダに書きます。違う名前なら、手順4で合わせます。</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <div class="step-head"><div class="num">2</div><div><h2>Docker に使わせるメモリを増やす</h2><div class="sub">ほかのシステムも一度止まります</div></div></div>
+    <p>文字起こしと AI で、合わせて約 10GB 使います。Windows の初期設定では Docker（WSL）は 8GB までしか使えないので、12GB に増やします。</p>
+    <ol>
+      <li>スタートボタンを右クリック →「ターミナル」（または PowerShell）を開く。</li>
+      <li>次を貼り付けて Enter。メモ帳が開きます。<div class="cmd"><pre>notepad $env:USERPROFILE\.wslconfig</pre><button type="button" class="copy">コピー</button></div></li>
+      <li><b>すでに中身がある場合</b>（ほかのシステム用の設定）：<code>memory=</code> の行だけ <code>memory=12GB</code> に直し、ほかは消さない。<b>空の場合</b>：次を貼り付ける。<div class="cmd"><pre>[wsl2]
+memory=12GB
+swap=4GB</pre><button type="button" class="copy">コピー</button></div></li>
+      <li>保存してメモ帳を閉じる。ターミナルで次を実行（ここで Docker がいったん止まります）。<div class="cmd"><pre>wsl --shutdown</pre><button type="button" class="copy">コピー</button></div></li>
+      <li>Docker Desktop を開き直し、左下が緑（Engine running）になるまで待つ。ほかのシステムが自動で起き上がったかも確かめます。</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <div class="step-head"><div class="num">3</div><div><h2>プログラムを Surface に置く</h2></div></div>
+    <ol>
+      <li>ブラウザで GitHub にログインした状態で、次を開くと ZIP がダウンロードされます。<br><a href="https://github.com/ginchankawaii/claude-code-book-template/archive/refs/heads/claude/local-llm-voice-device-0hcvx9.zip" style="word-break:break-all">https://github.com/ginchankawaii/claude-code-book-template/archive/refs/heads/claude/local-llm-voice-device-0hcvx9.zip</a></li>
+      <li>ZIP を右クリック →「すべて展開」。展開先は <code>C:\mindclip</code> にします（日本語や空白を含まない場所）。</li>
+      <li>中の <code>voice-logger</code> フォルダをエクスプローラーで開き、アドレス欄をコピーしておく。<br>例：<code style="word-break:break-all">C:\mindclip\claude-code-book-template-claude-local-llm-voice-device-0hcvx9\voice-logger</code></li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <div class="step-head"><div class="num">4</div><div><h2>設定を書き換える</h2></div></div>
+    <ol>
+      <li>ターミナルで、さっきコピーした場所へ移動する（<code>cd</code> のあとに貼り付け。例）。<div class="cmd"><pre>cd &quot;C:\mindclip\claude-code-book-template-claude-local-llm-voice-device-0hcvx9\voice-logger&quot;</pre><button type="button" class="copy">コピー</button></div></li>
+      <li>設定ファイルと作業用フォルダを作る。<div class="cmd"><pre>Copy-Item config.container.toml config.toml
+mkdir data\inbox, data\archive, data\state, data\failed, data\test</pre><button type="button" class="copy">コピー</button></div></li>
+      <li>保管庫の場所を書き込む。次でメモ帳を開き、<code>C:/Users/you/Documents/Obsidian/MyVault</code> の部分を、手順1で調べた場所に置き換える。<b>区切りは <code>\</code> ではなく <code>/</code></b> にします。<div class="cmd"><pre>notepad docker-compose.yml</pre><button type="button" class="copy">コピー</button></div>
+        <p class="sub">例：<code>- C:/Users/taro/Documents/MyVault:/vault</code>（最後の <code>:/vault</code> は消さない）</p></li>
+      <li>日記のフォルダ名が <code>Daily Notes</code> でない場合だけ、<code>notepad config.toml</code> で <code>daily_notes_dir = "Daily Notes"</code> を自分のフォルダ名に直す。</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <div class="step-head"><div class="num">5</div><div><h2>起動して、AI のモデルを取ってくる</h2><div class="sub">ここだけインターネットを使います（合わせて 20〜40分）</div></div></div>
+    <ol>
+      <li>サーバを組み立てて起動する（初回は 5〜10分）。<div class="cmd"><pre>docker compose up -d --build</pre><button type="button" class="copy">コピー</button></div></li>
+      <li>要約用の AI（約 2.5GB）を取ってくる。<div class="cmd"><pre>docker compose exec ollama ollama pull qwen3:4b</pre><button type="button" class="copy">コピー</button></div></li>
+      <li>動いているか見る。<code>ollama</code> と <code>voice-logger</code> の 2つが <code>running</code>（または <code>Up</code>）なら成功です。<div class="cmd"><pre>docker compose ps</pre><button type="button" class="copy">コピー</button></div></li>
+    </ol>
+    <p class="ok">Docker Desktop の画面にも <code>voice-logger</code> というまとまりで表示されます。ほかのシステムとは別の名前なので、混ざりません。</p>
+  </section>
+
+  <section class="card">
+    <div class="step-head"><div class="num">6</div><div><h2>試しの音声で確かめる</h2><div class="sub">日記には書かずに、結果だけ見る</div></div></div>
+    <ol>
+      <li>Windows の<b>「サウンド レコーダー」</b>アプリで、30秒ほど話して録音する。保存された音声（<code>.m4a</code>）は、録音一覧で右クリック →「ファイルの場所を開く」で見つかります。</li>
+      <li>その音声を <code>voice-logger\data\test</code> にコピーし、名前を <code>test.m4a</code> に変える。</li>
+      <li>試しに処理する（初回は文字起こしのモデル 約 1.6GB をダウンロードするので、10分ほどかかります）。<div class="cmd"><pre>docker compose run --rm voice-logger process --dry-run /data/test/test.m4a</pre><button type="button" class="copy">コピー</button></div></li>
+      <li>最後に、文字起こしと要約が画面に出れば成功です。</li>
+    </ol>
+    <p class="sub">試しの音声は Surface の中だけで処理されます。スマホから送ると途中で外のサービスを通ることがあるので、この確認は Surface で録った音声で行います。</p>
+  </section>
+
+  <section class="card">
+    <div class="step-head"><div class="num">7</div><div><h2>本番：日記に書き込ませる</h2></div></div>
+    <ol>
+      <li><code>test.m4a</code> を <code>data\inbox</code> にコピーする。</li>
+      <li>1〜数分待つ。サーバが自動で見つけて処理し、終わると音声は <code>data\archive</code> へ移ります。様子は次で見られます（止めるときは Ctrl+C）。<div class="cmd"><pre>docker compose logs -f voice-logger</pre><button type="button" class="copy">コピー</button></div></li>
+      <li>Obsidian の <code>Daily Notes</code> の今日のノートに、<b>「🎙️ 会話ログ（自動生成）」</b>が追記されていれば完成です。</li>
+    </ol>
+  </section>
+
+  <section class="card stop">
+    <div class="step-head"><div class="num">■</div><div><h2>ここまでできたら連絡してください</h2><div class="sub">次は MindClip 本体とつなぐ回</div></div></div>
+    <p>日記に入った内容のスクリーンショット（見せてよい範囲で）か、うまくいかなかったときの画面の文字を送ってください。次は、本体からの録音を受け取る入口（暗号化した通信）と、本番のプログラムの書き込みです。</p>
+  </section>
+</div>
+
+<script>
+(function(){
+  var KEY='mindclip-server-checks', st={};
+  try{ st=JSON.parse(localStorage.getItem(KEY)||'{}')||{}; }catch(e){ st={}; }
+  document.querySelectorAll('.checks input[type=checkbox]').forEach(function(b){
+    if(st[b.id]) b.checked=true;
+    b.addEventListener('change',function(){ st[b.id]=b.checked; try{localStorage.setItem(KEY,JSON.stringify(st));}catch(e){} });
+  });
+  document.querySelectorAll('.cmd button.copy').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      var pre=btn.parentNode.querySelector('pre'), t=pre.textContent;
+      function sel(){ var r=document.createRange(); r.selectNodeContents(pre); var s=window.getSelection(); s.removeAllRanges(); s.addRange(r); btn.textContent='選択しました。Ctrl+C でコピー'; }
+      try{ navigator.clipboard.writeText(t).then(function(){ btn.textContent='コピーしました'; setTimeout(function(){btn.textContent='コピー';},1500); }, sel); }catch(e){ sel(); }
+    });
+  });
+})();
+</script>
