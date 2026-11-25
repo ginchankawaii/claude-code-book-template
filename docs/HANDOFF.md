@@ -1,7 +1,7 @@
 # 引き継ぎメモ（MindClip DIY）
 
 新しいセッション（Surface のローカルなど）で作業を続けるときに、最初に読むメモ。
-最終更新: 2026-11-25
+最終更新: 2026-11-26
 
 ## これは何か
 
@@ -32,10 +32,21 @@ Obsidian の日記に追記する装置「MindClip DIY」。
 
 1. **Surface にサーバを立てる** — 手順書 `hardware/server-guide.html`（公開版: https://claude.ai/artifact/Y2jR7JB4TtgmZ8S1ApCw1C ）。
    ゴールは「Surface で録った試しの音声が Obsidian の日記に入る」まで。
-   - Surface: Surface Pro 9（Intel i5、16GB）、Windows、Docker Desktop。**ほかのシステムも Docker で動いている**ので、
-     コンテナで分離し、干渉させない。`.wslconfig` は既存の設定を消さず `memory=` だけ直す。`wsl --shutdown` は
-     ほかのシステムも止めるので、利用者に時間を確認してから。
-   - Obsidian の保管庫の場所と、日記のフォルダ名（既定 `Daily Notes`）はまだ聞けていない。
+   - Surface: **Surface Pro 8**（i5-1135G7、4コア8スレッド、16GB）、Windows、Docker Desktop。
+     （以前は Pro 9 と書いていたが、2026-11-26 に実機で確認したら Pro 8 だった。）
+     **ほかのシステム（fxsim）も Docker で動いている**ので、コンテナで分離し、干渉させない。
+   - 2026-11-26 に済ませたこと: `C:\mindclip` に clone（ZIP 展開の代わり）、`.wslconfig` を新規作成（memory=12GB,
+     swap=4GB。それまでは無かった）、`wsl --shutdown`（fxsim は restart=unless-stopped で自動復帰した）。
+     `voice-logger/docker-compose.override.yml`（git 管理外、`.git/info/exclude`）で CPU 上限を ollama・voice-logger
+     とも 4 に下げ、保管庫のマウントを差し替えた。
+   - **日記の書き込み先は専用の保管庫 `C:\MindClipVault`（フォルダ `Daily Notes`）。** 既存の Obsidian 保管庫は
+     毎朝クラウドの AI による自動処理が日記を読むため、そこに書くと録音の要約が家の外へ出る。利用者が専用の
+     保管庫を選んだ。Obsidian で「保管庫を開く」から 2つ目の保管庫として開く。
+   - **2026-11-26 に通しで動いた。** Windows 内蔵の音声合成（Haruka）で作った 16秒の試し音声を `data/inbox` に置くと、
+     自動で文字起こし→要約→`C:\MindClipVault\Daily Notes\2026-11-26.md` に追記→`data/archive` へ移動した。
+     処理時間（CPU 上限 4）: 文字起こし 約15秒、要約（qwen3:4b）2〜5分。初回の Whisper モデル取得で一度 DNS の
+     名前解決に失敗したが、再実行で通った（`wsl --shutdown` 直後だったためと推測）。
+   - 残り: 利用者の肉声（サウンド レコーダーの .m4a）での確認と、Obsidian で `C:\MindClipVault` を開いて見てもらうこと。
 2. **本体とサーバをつなぐ** — プライベート CA と証明書・HMAC 鍵を作り（`voice-logger/README.md` の「PKI の用意」、
    `firmware/README.md` §4〜5）、`docker compose --profile device up -d` で受信 API を起動、本番ファームを書き込んで
    シリアルからプロビジョニング（Wi-Fi・証明書・鍵）。
