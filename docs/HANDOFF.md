@@ -46,6 +46,10 @@ Obsidian の日記に追記する装置「MindClip DIY」。
      自動で文字起こし→要約→`C:\MindClipVault\Daily Notes\2026-11-26.md` に追記→`data/archive` へ移動した。
      処理時間（CPU 上限 4）: 文字起こし 約15秒、要約（qwen3:4b）2〜5分。初回の Whisper モデル取得で一度 DNS の
      名前解決に失敗したが、再実行で通った（`wsl --shutdown` 直後だったためと推測）。
+   - 要約が同じ 16秒の音声で 2分→5分とばらつく。`timeout_sec = 600`（1チャンク）なので、長い録音では時間切れの
+     おそれがある。一日分を流す前に、長め（数十分）の音声で確かめる。
+   - 本物の録音の文字起こし・日記の中身は、クラウドの AI（Claude）のセッションに読ませない（家の外へ出るため）。
+     確認はログの行・ファイルの移動・`data/failed` が空かどうかだけで行い、中身は利用者が Obsidian で見る。
    - 残り: 利用者の肉声（サウンド レコーダーの .m4a）での確認と、Obsidian で `C:\MindClipVault` を開いて見てもらうこと。
 2. **本体とサーバをつなぐ** — プライベート CA と証明書・HMAC 鍵を作り（`voice-logger/README.md` の「PKI の用意」、
    `firmware/README.md` §4〜5）、`docker compose --profile device up -d` で受信 API を起動、本番ファームを書き込んで
