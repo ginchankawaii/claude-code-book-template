@@ -70,7 +70,8 @@ Obsidian の日記に追記する装置「MindClip DIY」。
      まとめ方（`cfg.gap_sec` やサーバ側での結合）は今後の検討事項。
    - **要約が一度ハングした。** 15秒の断片で ollama の応答が 600秒来ず時間切れ → 60秒後の再試行では 10秒で完了。
      `analyze.py` の要求に `num_predict`（出力トークンの上限）が無く、JSON スキーマ付き出力が止まらなくなった可能性
-     （推測・未確認）。上限を付けるのが次の手。
+     （推測・未確認）。→ **対策済み:** `[ollama] num_predict`（既定 1536）を追加して上限を付けた。上限で切れたら
+     分かるエラーにして、watch の再試行に任せる（何度も続けば隔離）。再発するかは様子見。
    - 元の手順メモ: プライベート CA と証明書・HMAC 鍵を作り（`voice-logger/README.md` の「PKI の用意」、
    `firmware/README.md` §4〜5）、`docker compose --profile device up -d` で受信 API を起動、本番ファームを書き込んで
    シリアルからプロビジョニング（Wi-Fi・証明書・鍵）。

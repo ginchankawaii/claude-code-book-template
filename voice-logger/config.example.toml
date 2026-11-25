@@ -43,6 +43,7 @@ chunk_chars = 12000
 num_ctx = 16384
 # 1回の推論を待つ上限（秒）
 timeout_sec = 600
+num_predict = 1536          # 出力トークンの上限。JSON が止まらず timeout_sec まで生成し続けるのを防ぐ（0 で無制限）
 # 思考モードを持つモデル (qwen3 等) で思考を切るなら false。書かなければモデルの既定
 # think = false
 

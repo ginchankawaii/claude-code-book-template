@@ -30,6 +30,7 @@ model = "qwen3:4b"                 # 16GB RAM / GPU なしの現実解。余裕�
 chunk_chars = 4000
 num_ctx = 8192
 timeout_sec = 600                  # 1チャンクの推論を待つ上限
+num_predict = 1536                 # 出力トークンの上限（JSON が止まらず時間切れになるのを防ぐ。0 で無制限）
 think = false                      # qwen3 の思考モードを切る（CPU では思考だけで時間切れになる）
 
 [watch]

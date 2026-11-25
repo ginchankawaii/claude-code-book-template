@@ -84,6 +84,8 @@ def _request_body(cfg: OllamaConfig, prompt: str) -> dict:
         "format": ANALYSIS_SCHEMA,
         "options": {"temperature": 0.2, "num_ctx": cfg.num_ctx},
     }
+    if cfg.num_predict > 0:
+        body["options"]["num_predict"] = cfg.num_predict
     if cfg.think is not None:
         body["think"] = cfg.think
     return body
@@ -123,7 +125,14 @@ def _chat_json(cfg: OllamaConfig, prompt: str) -> dict:
             f"Ollama ({cfg.url}) に接続できません。起動しているか確認してください: {exc}"
         ) from exc
     _raise_for_ollama_status(cfg, resp)
-    return json.loads(resp.json()["message"]["content"])
+    payload = resp.json()
+    if payload.get("done_reason") == "length":
+        # 上限で切られた JSON は壊れている。ファイル単位の失敗にして、watch の再試行に任せる
+        # （temperature > 0 なので次は収まることが多い。何度も続くなら隔離される）
+        raise ValueError(
+            f"LLM の出力が上限 (num_predict={cfg.num_predict}) に達して途中で切れました。"
+            "続く場合は config.toml の [ollama] num_predict を上げてください")
+    return json.loads(payload["message"]["content"])
 
 
 def _timestamped_lines(transcript: Transcript, start: datetime) -> list[str]:

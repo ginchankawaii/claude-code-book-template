@@ -552,6 +552,7 @@ class TestServeStartupErrors(TempDirTest):
 
 class _FakeOllama(http.server.BaseHTTPRequestHandler):
     status = 200
+    done_reason = "stop"
     requests: list[dict] = []
 
     def do_POST(self):  # noqa: N802
@@ -559,7 +560,9 @@ class _FakeOllama(http.server.BaseHTTPRequestHandler):
         type(self).requests.append(body)
         if self.status == 200:
             content = json.dumps({"summary": "要約", "todos": [], "topics": [], "reflection": ""})
-            payload = {"message": {"content": content}}
+            if self.done_reason == "length":
+                content = content[:20]   # 上限で切られた JSON
+            payload = {"message": {"content": content}, "done_reason": self.done_reason}
         else:
             payload = {"error": f"model '{body['model']}' not found"}
         data = json.dumps(payload).encode("utf-8")
@@ -578,7 +581,7 @@ class TestOllamaClient(unittest.TestCase):
             import requests  # noqa: F401
         except ImportError:
             self.skipTest("requests が必要")
-        _FakeOllama.status, _FakeOllama.requests = 200, []
+        _FakeOllama.status, _FakeOllama.done_reason, _FakeOllama.requests = 200, "stop", []
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _FakeOllama)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
@@ -605,6 +608,23 @@ class TestOllamaClient(unittest.TestCase):
         self.assertEqual(first["options"]["num_ctx"], 8192)
         self.assertIs(first["think"], False)
         self.assertNotIn("think", second)
+
+    def test_output_is_capped_by_num_predict(self):
+        """JSON 出力が止まらず timeout_sec まで居座らないよう、出力トークンに上限を付ける。"""
+        self.analyze()
+        self.analyze(num_predict=0)
+        capped, unlimited = _FakeOllama.requests
+        self.assertEqual(capped["options"]["num_predict"], OllamaConfig().num_predict)
+        self.assertGreater(capped["options"]["num_predict"], 0)
+        self.assertNotIn("num_predict", unlimited["options"])
+
+    def test_truncated_output_is_a_file_failure_not_an_outage(self):
+        """上限で切れた応答は壊れた JSON として読まず、分かる言葉で失敗させる（watch が再試行する）。"""
+        _FakeOllama.done_reason = "length"
+        with self.assertRaises(ValueError) as caught:
+            self.analyze(num_predict=64)
+        self.assertNotIsInstance(caught.exception, ServiceUnavailable)
+        self.assertIn("num_predict=64", str(caught.exception))
 
     def test_missing_model_tells_how_to_pull_it(self):
         _FakeOllama.status = 404
