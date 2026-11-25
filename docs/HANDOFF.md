@@ -53,10 +53,26 @@ Obsidian の日記に追記する装置「MindClip DIY」。
    - **肉声でも確認済み（2026-11-26）。** サウンド レコーダーの .m4a（33秒）が文字起こし約20秒・要約約1分20秒で
      日記に入り、利用者が Obsidian（`C:\MindClipVault` を 2つ目の保管庫として開いた）で表示を確かめた。→ 手順1は完了。
    - 読み上げ音声の試し（作り話）の記録は、利用者の指示で日記から削除し、試しの音声ファイルも消した。
-2. **本体とサーバをつなぐ** — プライベート CA と証明書・HMAC 鍵を作り（`voice-logger/README.md` の「PKI の用意」、
+2. **【2026-11-26 済】本体とサーバをつなぐ。** 本体で話した音声が mTLS + HMAC で届き、日記に入るところまで通った。
+   - PKI: CA の秘密鍵と本体の鍵は Surface の `%USERPROFILE%\.mindclip-pki`（リポジトリ外）。サーバ用の
+     `server.crt/server.key/ca.crt/hmac.key` だけを `voice-logger/data/pki` に置いた（コンテナにマウントされるため）。
+     サーバ証明書の SAN は `192.168.11.74`。`.env` に `INGEST_BIND=192.168.11.74`。
+   - **Surface の IP は DHCP のまま。** ルーターで予約（固定）するまでは、IP が変わると証明書の作り直しになる。
+   - Windows: Wi-Fi を「プライベート」に変更、受信規則「MindClip ingest 8443」（TCP 8443、Private のみ、
+     ローカル 192.168.11.74、リモート LocalSubnet）を追加。Docker 関係の受信規則は元から無い（fxsim の 8000 は閉じたまま）。
+   - ファーム: Surface の Arduino IDE 同梱の arduino-cli（esp32 core **3.3.12**）で `PSRAM=opi` を付けて書き込み。
+     起動行 `buf=60s psram=1` を確認。フタが接着でボタンが押せないので、リセットは esptool の `read-mac`
+     （`--after hard-reset`）で行い、起動直後 3秒の受付窓で CLI に入る。
+   - プロビジョニングは `firmware/tools/provision.ps1`（Wi-Fi パスワードはその場で入力、鍵・パスワードは画面に出さない）。
+     `test wifi` OK（**RSSI -72dBm**。目安 -75 にぎりぎり。アンテナが電池の上にある影響かも）、`test server` OK。
+   - 30秒の会話 → スイッチ OFF で 4ファイル（3秒の無音で分割）が届き、文字起こし・要約されて日記に追記された。
+     3秒しかない断片は 0 セグメントで、日記には書かれない。**短い断片ごとに日記の記録が分かれる**ので、
+     まとめ方（`cfg.gap_sec` やサーバ側での結合）は今後の検討事項。
+   - 元の手順メモ: プライベート CA と証明書・HMAC 鍵を作り（`voice-logger/README.md` の「PKI の用意」、
    `firmware/README.md` §4〜5）、`docker compose --profile device up -d` で受信 API を起動、本番ファームを書き込んで
    シリアルからプロビジョニング（Wi-Fi・証明書・鍵）。
-3. 通しの確認（録音 → スイッチ OFF で同期 → 日記に追記）、Wi-Fi が届くか、消費電流。
+3. 長めの録音（数十分）で要約が時間切れにならないか、身につけたときの Wi-Fi（RSSI）、消費電流（28mA ゲート）、
+   Surface の IP 固定。MagSafe リングを付属の粘着で貼る（切れ目はふだんの付け方で下側に）。
 4. 最後に note の記事（有料 100円程度）を Claude が書く。材料は `docs/build-log.md`。
 
 ## 利用者について（進め方の好み）
